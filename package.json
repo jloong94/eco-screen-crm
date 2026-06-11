@@ -1,0 +1,12 @@
+{
+  "name": "eco-screen-quote-mvp",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "node scripts/serve.mjs standalone-preview.html",
+    "build": "node scripts/build.mjs",
+    "preview": "node scripts/serve.mjs dist"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
