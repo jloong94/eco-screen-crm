@@ -144,7 +144,7 @@
         margin-top: 12px;
       }
       .item-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; }
-      .item-grid { display: grid; grid-template-columns: 1.2fr 1.2fr .75fr .75fr .55fr 1fr; gap: 10px; align-items: end; }
+      .item-grid { display: grid; grid-template-columns: 1.15fr 1.15fr .65fr .65fr .45fr .75fr .9fr; gap: 10px; align-items: end; }
       .mini-total {
         min-height: 88px;
         border-radius: 12px;
@@ -481,7 +481,7 @@
           <button class="btn" id="cloudStatusButton" onclick="showCloudModal()">Cloud Login</button>
           <button class="btn" onclick="newQuote()">New</button>
           <button class="btn" onclick="copyWhatsapp()">WhatsApp</button>
-          <button class="btn" onclick="window.print()">PDF</button>
+          <button class="btn" onclick="downloadQuotationPdf()">PDF File</button>
           <button class="btn primary" onclick="saveQuote()">Save Quote</button>
         </div>
       </div>
@@ -535,6 +535,8 @@
 
           <section class="panel summary">
             <p style="color:#cbd5e1;font-weight:800">Quote Summary</p>
+            <div class="summary-row"><span>Subtotal</span><strong id="summarySubtotal">RM 0.00</strong></div>
+            <div class="field" style="margin-top:12px"><label>Discount RM</label><input id="discount" type="number" min="0" oninput="render()" placeholder="0.00" /></div>
             <div class="summary-row"><span>Total</span><strong id="summaryTotal">RM 0.00</strong></div>
             <div class="field" style="margin-top:12px"><label>Deposit</label><input id="deposit" type="number" min="0" oninput="render()" /></div>
             <div class="summary-row"><span>Balance</span><strong id="summaryBalance">RM 0.00</strong></div>
@@ -635,7 +637,7 @@
       <div class="actions">
         <button class="btn" onclick="newQuote()">New</button>
         <button class="btn" onclick="copyWhatsapp()">Copy</button>
-        <button class="btn" onclick="window.print()">PDF</button>
+        <button class="btn" onclick="downloadQuotationPdf()">PDF File</button>
         <button class="btn primary" onclick="saveQuote()">Save</button>
       </div>
     </div>
@@ -734,11 +736,26 @@
         ["explained", "Usage Explained"],
         ["balanceCollected", "Balance Collected"]
       ];
+      const preInstallCheckLabels = [
+        ["productChecked", "Product Checked"],
+        ["frameColorChecked", "Frame Color Checked"],
+        ["sizeChecked", "Size Checked"],
+        ["accessoriesComplete", "Accessories Complete"]
+      ];
+      const customerConfirmationLabels = [
+        ["productInstalledCorrectly", "Customer Confirm Product Installed Correctly"],
+        ["warrantyInformationReceived", "Customer Received Warranty Information"]
+      ];
+      const installationPaymentMethods = ["Cash", "Bank Transfer", "DuitNow QR"];
       let products = JSON.parse(localStorage.getItem(productsKey) || "null") || [
         { id: "roller", name: "Roller", price: 33, minimumSqft: 11 },
+        { id: "removeable-screen", name: "Removeable Screen", price: 36, minimumSqft: 11 },
         { id: "three-section-screen", name: "3 Section Screen", price: 0, minimumSqft: 11 },
         { id: "pocket-lock-screen", name: "Pocket Lock Screen", price: 50, minimumSqft: 11 },
         { id: "roller-door", name: "Roller Door", price: 41, minimumSqft: 21 },
+        { id: "sliding-screen", name: "Sliding Screen / 推拉纱窗", price: 55, minimumSqft: 11 },
+        { id: "sliding-security-window", name: "Sliding Security Window / 推拉防盗窗", price: 90, minimumSqft: 11 },
+        { id: "sliding-door", name: "Sliding Door / 推拉门", price: 100, minimumSqft: 21 },
         { id: "sliding-stainless-steel-net", name: "Sliding Stainless Steel Net", price: 55, minimumSqft: 21 },
         { id: "magnetic-screen", name: "Magnetic Screen", price: 10, minimumSqft: 11 },
         { id: "security-mesh-window", name: "Security Mesh Window", price: 90, minimumSqft: 11 },
@@ -747,6 +764,7 @@
         { id: "opening", name: "Opening", price: 35, minimumSqft: 11 },
         { id: "digital-lock", name: "Digital Lock", price: 0, minimumSqft: 21 }
       ];
+      products = ensureProductList(products);
       let quotes = normalizeQuotes(JSON.parse(localStorage.getItem(quotesKey) || "[]"));
       let orders = normalizeOrders(JSON.parse(localStorage.getItem(ordersKey) || "[]"));
       let productions = normalizeProductions(JSON.parse(localStorage.getItem(productionsKey) || "[]"));
@@ -817,18 +835,356 @@
           "Dashboard": "Dashboard"
         }
       };
+      const uiTranslationsZh = {
+        "Eco Screen": "Eco Screen",
+        "Quotation CRM": "报价 CRM 系统",
+        "Cloud Login": "云端登录",
+        "New": "新建",
+        "WhatsApp": "WhatsApp",
+        "Copy": "复制",
+        "PDF File": "PDF 文件",
+        "Save": "保存",
+        "Save Quote": "保存报价",
+        "Update Quote": "更新报价",
+        "New Quote": "新报价",
+        "Customer Name": "客户名字",
+        "Phone Number": "电话号码",
+        "Area": "地区",
+        "Appointment Date": "预约日期",
+        "Address": "地址",
+        "Products": "产品",
+        "Add Item": "新增项目",
+        "Quote Summary": "报价总结",
+        "Subtotal": "小计",
+        "Discount RM": "折扣 RM",
+        "Total": "总额",
+        "Deposit": "订金",
+        "Balance": "尾款",
+        "Order Conversion": "转换订单",
+        "Installation Date": "安装日期",
+        "Installation Notes": "安装备注",
+        "Convert to Order": "转换成订单",
+        "New Quote": "新报价",
+        "Line Item": "项目",
+        "Location": "安装位置",
+        "Product": "产品",
+        "Width mm": "宽度 mm",
+        "Height mm": "高度 mm",
+        "Qty": "数量",
+        "Colour": "颜色",
+        "Actual": "实际",
+        "Charge": "计算",
+        "Remove": "删除",
+        "Track Type": "轨道类型",
+        "Track Width mm": "轨道宽度 mm",
+        "Handle Height mm": "把手高度 mm",
+        "Installation Type": "安装方式",
+        "Opening Direction": "开向",
+        "Quotation": "报价单",
+        "Bill To": "客户资料",
+        "Job Details": "工程资料",
+        "Description": "说明",
+        "Size": "尺寸",
+        "Sqft": "方尺",
+        "Rate": "单价",
+        "Amount": "金额",
+        "Terms & Conditions": "条款与条件",
+        "Follow Up Page": "跟进页面",
+        "Quote History": "报价记录",
+        "Orders Page": "订单页面",
+        "Total Amount": "总金额",
+        "Paid Amount": "已收金额",
+        "Unpaid Amount": "未收金额",
+        "Payment Status": "付款状态",
+        "Payment": "付款",
+        "Method": "付款方式",
+        "Date": "日期",
+        "Add Payment": "新增付款",
+        "Remark": "备注",
+        "Production Status": "生产状态",
+        "Installation Status": "安装状态",
+        "Material Cost": "材料成本",
+        "Hardware Cost": "五金成本",
+        "Installation Cost": "安装成本",
+        "Transport Cost": "交通成本",
+        "Total Cost": "总成本",
+        "Profit": "利润",
+        "Margin": "利润率",
+        "Material Cost Override": "材料成本手动覆盖",
+        "Hardware Cost Override": "五金成本手动覆盖",
+        "Cost Debug Panel": "成本检查面板",
+        "Sales Formula": "销售公式",
+        "Mapped Inventory Category": "对应库存分类",
+        "Mapped Materials": "对应材料数量",
+        "Material Cost Formula": "材料成本公式",
+        "Hardware Cost Formula": "五金成本公式",
+        "Generate Production": "生成生产单",
+        "Generate Installation": "生成安装单",
+        "Delete Order": "删除订单",
+        "Pending Balance Page": "未收尾款页面",
+        "Copy WhatsApp": "复制 WhatsApp",
+        "Customer Page": "客户页面",
+        "Follow Up Date": "跟进日期",
+        "Customer Status": "客户状态",
+        "Follow Up Note": "跟进备注",
+        "Financial Dashboard": "财务 Dashboard",
+        "Profit Analysis": "利润分析",
+        "Inventory Management": "库存管理",
+        "Currency Conversion": "汇率转换",
+        "RMB to MYR Rate": "人民币转马币汇率",
+        "Formula": "公式",
+        "Stock Auto Tracking": "库存自动追踪",
+        "Current Quantity": "当前数量",
+        "Safety Quantity": "安全数量",
+        "Usage Per Production Item": "每个生产项目用量",
+        "Unit": "单位",
+        "RMB Unit Cost": "人民币单价",
+        "RM Unit Cost": "马币单价",
+        "Stock Value": "库存价值",
+        "Price Settings": "价格设置",
+        "RM/sqft": "RM/方尺",
+        "Min sqft": "最低方尺",
+        "Not Yet Produced": "还没生产",
+        "In Production": "生产中",
+        "Completed": "生产完毕",
+        "Not Ready Reason / Delay Reason": "未完成原因 / 延迟原因",
+        "Stock Deduction Tracking": "扣库存记录",
+        "Color": "颜色",
+        "Lock": "锁具",
+        "Installation Order": "安装单",
+        "Installer Name": "安装员名字",
+        "Completed Date": "完成日期",
+        "Arrival Time": "到场时间",
+        "Finish Time": "完成时间",
+        "Duration": "用时",
+        "Customer Rating": "客户评分",
+        "Installation Photo Uploaded": "安装照片已上传",
+        "Customer Referred Friend": "客户介绍朋友",
+        "Referral Name": "介绍人名字",
+        "Referral Phone": "介绍人电话",
+        "Payment Method": "付款方式",
+        "Amount Collected RM": "已收金额 RM",
+        "Receipt Uploaded": "收据已上传",
+        "Site Issue / Problem Record": "现场问题记录",
+        "Customer Remarks": "客户备注",
+        "Pre-install Check": "安装前检查",
+        "Product Checked": "产品已检查",
+        "Frame Color Checked": "框颜色已检查",
+        "Size Checked": "尺寸已检查",
+        "Accessories Complete": "配件齐全",
+        "Installation Checklist": "安装检查清单",
+        "Arrived On Site": "已到现场",
+        "Installation Completed": "安装完成",
+        "Completion Photo Taken": "完成照片已拍",
+        "Site Cleaned": "现场已清理",
+        "Usage Explained": "已解释使用方法",
+        "Balance Collected": "尾款已收",
+        "Customer Confirmation": "客户确认",
+        "Customer Confirm Product Installed Correctly": "客户确认产品安装正确",
+        "Customer Received Warranty Information": "客户已收到保固资料",
+        "Customer Signature": "客户签名",
+        "Clear Signature": "清除签名",
+        "Generate Completion Record": "生成完成记录",
+        "Completion Records": "完成记录",
+        "Warranty Search": "保固查询",
+        "Phone": "电话",
+        "Search": "查询",
+        "Copy Warranty Card": "复制保固卡",
+        "Print / PDF": "打印 / PDF",
+        "Warranty Card": "保固卡",
+        "Warranty Period": "保固期",
+        "Coverage": "保固年限",
+        "Installation No": "安装单编号",
+        "Top Product": "热门产品",
+        "Top Area": "热门地区",
+        "Today's Sales": "今日销售",
+        "Monthly Sales": "本月销售",
+        "Today's Collection": "今日收款",
+        "Monthly Collection": "本月收款",
+        "Pending Production": "待生产",
+        "Pending Installation": "待安装",
+        "Need Rework": "需返工",
+        "Low Stock Items": "低库存项目",
+        "Today Follow Up": "今日跟进",
+        "Won Orders": "成交订单",
+        "Unpaid Orders": "未收清订单",
+        "Overdue": "逾期",
+        "Sales": "销售额",
+        "Customer": "客户",
+        "Order": "订单",
+        "Admin": "老板",
+        "Sales": "销售",
+        "Production": "生产",
+        "Installer": "安装",
+        "Settings": "设置",
+        "Inventory": "库存",
+        "Warranty": "保固"
+        ,"Quoted": "已报价",
+        "Won": "已成交",
+        "Cancelled": "已取消",
+        "Pending Production": "待生产",
+        "Pending Installation": "待安装",
+        "Installed": "已安装",
+        "Need Rework": "需返工",
+        "Paid Full": "已收清",
+        "Unpaid": "未收款",
+        "Deposit Paid": "已收订金",
+        "Partially Paid": "部分收款",
+        "Overdue": "逾期未收",
+        "Screen and Security Mesh Specialist": "纱窗与防盗网专家",
+        "Supply and installation quotation for insect screen, roller screen, stainless steel net and security mesh products.": "纱窗、卷帘纱窗、不锈钢网和防盗网产品供应与安装报价。",
+        "Prices quoted are valid for a period of two (2) weeks from the quotation date.": "本报价自报价日期起两（2）星期内有效。",
+        "50% deposit is required upon confirmation, balance of payment upon completion.": "确认订单时需支付 50% 订金，余额在完工后支付。",
+        "Deposit paid is non-refundable.": "已支付订金不可退还。",
+        "All cheques should not be crossed and make payable to:": "所有支票请勿划线，并支付给：",
+        "Select": "请选择",
+        "Inside Mount": "内装",
+        "Outside Mount": "外装",
+        "Left": "左",
+        "Right": "右",
+        "Middle": "中间",
+        "Not Applicable": "不适用",
+        "Cash": "现金",
+        "Bank Transfer": "银行转账",
+        "DuitNow QR": "DuitNow QR",
+        "Card": "银行卡",
+        "Save Config": "保存设置",
+        "Login": "登录",
+        "Create User": "创建用户",
+        "Logout": "登出",
+        "Close": "关闭",
+        "Select Text": "选择文字",
+        "Copy Google Review WhatsApp": "复制 Google 评价 WhatsApp",
+        "Google Review Link": "Google 评价链接",
+        "Customer Referrals": "客户介绍",
+        "Production Alerts": "生产提醒",
+        "Sliding Items": "推拉项目",
+        "Installer Performance Ranking": "安装员表现排名",
+        "Sliding Track Details": "推拉轨道资料"
+        ,"Roller": "卷帘纱窗",
+        "Removeable Screen": "可拆洗纱窗",
+        "3 Section Screen": "三节纱窗",
+        "Pocket Lock Screen": "口袋锁纱窗",
+        "Roller Door": "卷帘纱门",
+        "Sliding Stainless Steel Net": "推拉不锈钢网",
+        "Magnetic Screen": "磁吸纱窗",
+        "Security Mesh Window": "防盗网窗口",
+        "Security Mesh Door": "防盗网门",
+        "With Grill": "加花铁",
+        "Opening": "开口",
+        "Digital Lock": "电子锁",
+        "Sliding Screen / 推拉纱窗": "推拉纱窗",
+        "Sliding Security Window / 推拉防盗窗": "推拉防盗窗",
+        "Sliding Door / 推拉门": "推拉门"
+      };
 
       function today() { return new Date().toISOString().slice(0, 10); }
       function uid() { return crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()); }
-      function makeItem() { return { id: uid(), label: "", productId: "roller", widthMm: 0, heightMm: 0, quantity: 1 }; }
+      function makeItem() { return { id: uid(), createdAt: Date.now(), label: "", productId: "roller", widthMm: 0, heightMm: 0, quantity: 1, color: "", ...makeSlidingFields() }; }
+      function orderedItems(list = items) {
+        return (list || [])
+          .map((item, index) => ({ item, index }))
+          .sort((a, b) => Number(b.item.createdAt || 0) - Number(a.item.createdAt || 0) || a.index - b.index)
+          .map((row) => row.item);
+      }
       function money(value) { return "RM " + Number(value || 0).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
       function labelText(label) { return currentLanguage === "zh" ? (labelTranslations.zh[label] || label) : label; }
+      function translateText(text) {
+        if (currentLanguage !== "zh") return text;
+        const trimmed = String(text || "").trim();
+        if (!trimmed) return text;
+        if (/^Line Item \d+$/.test(trimmed)) return trimmed.replace("Line Item", "项目");
+        if (/^Editing ESQ-/.test(trimmed)) return trimmed.replace("Editing", "编辑");
+        if (/^New Quote ESQ-/.test(trimmed)) return trimmed.replace("New Quote", "新报价");
+        if (/^No .+ yet\.?$/.test(trimmed)) return trimmed.replace(/^No /, "暂无").replace(/ yet\.?$/, "");
+        const termMatch = trimmed.match(/^([ivx]+\)\s)(.+)$/i);
+        if (termMatch && uiTranslationsZh[termMatch[2]]) return `${termMatch[1]}${uiTranslationsZh[termMatch[2]]}`;
+        if (uiTranslationsZh[trimmed]) return uiTranslationsZh[trimmed];
+        return text;
+      }
+      function applyLanguageToDom() {
+        if (currentLanguage !== "zh") return;
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+          acceptNode(node) {
+            const parent = node.parentElement;
+            if (!parent || ["SCRIPT", "STYLE", "TEXTAREA"].includes(parent.tagName)) return NodeFilter.FILTER_REJECT;
+            if (parent.closest("canvas")) return NodeFilter.FILTER_REJECT;
+            return NodeFilter.FILTER_ACCEPT;
+          }
+        });
+        const nodes = [];
+        while (walker.nextNode()) nodes.push(walker.currentNode);
+        nodes.forEach((node) => {
+          const original = node.nodeValue;
+          const translated = translateText(original);
+          if (translated !== original) node.nodeValue = original.replace(String(original).trim(), translated);
+        });
+        document.querySelectorAll("input[placeholder], textarea[placeholder]").forEach((field) => {
+          const translated = translateText(field.getAttribute("placeholder"));
+          if (translated) field.setAttribute("placeholder", translated);
+        });
+        document.querySelectorAll("input[value][readonly]").forEach((field) => {
+          const translated = translateText(field.value);
+          if (translated !== field.value) field.value = translated;
+        });
+      }
       function digitsOnly(value) { return String(value || "").replace(/\D/g, ""); }
+      function ensureProductList(list) {
+        const required = [
+          { id: "sliding-screen", name: "Sliding Screen / 推拉纱窗", price: 55, minimumSqft: 11 },
+          { id: "sliding-security-window", name: "Sliding Security Window / 推拉防盗窗", price: 90, minimumSqft: 11 },
+          { id: "sliding-door", name: "Sliding Door / 推拉门", price: 100, minimumSqft: 21 },
+          { id: "removeable-screen", name: "Removeable Screen", price: 36, minimumSqft: 11 }
+        ];
+        const next = [...(list || [])];
+        required.forEach((item) => {
+          if (!next.some((existing) => existing.id === item.id || existing.name === item.name)) next.push(item);
+        });
+        return next;
+      }
       function product(id) { return products.find((item) => item.id === id) || products[0]; }
+      function isSlidingProductName(name) {
+        const text = String(name || "").toLowerCase();
+        return text.includes("sliding screen") ||
+          text.includes("sliding security window") ||
+          text.includes("sliding door") ||
+          text.includes("sliding stainless") ||
+          text.includes("推拉纱窗") ||
+          text.includes("推拉防盗窗") ||
+          text.includes("推拉门");
+      }
+      function isSlidingItem(item) { return isSlidingProductName(product(item.productId).name); }
+      function makeSlidingFields() {
+        return { trackType: "", trackWidthMm: 0, handleHeightMm: 0, installationType: "", openingDirection: "Not Applicable" };
+      }
+      function slidingDetails(item) {
+        if (!isSlidingItem(item)) return "";
+        return `Track: ${item.trackType || "-"} | Track Width: ${item.trackWidthMm || 0} mm | Handle Height: ${item.handleHeightMm || item.trackHeightMm || 0} mm | Installation: ${item.installationType || "-"} | Opening: ${item.openingDirection || "Not Applicable"}`;
+      }
+      function itemExtraDetails(item) {
+        const details = [];
+        if (item.color) details.push(`Colour: ${item.color}`);
+        const trackDetails = slidingDetails(item);
+        if (trackDetails) details.push(trackDetails);
+        return details.join(" | ");
+      }
+      function validateSlidingItems(list) {
+        const invalid = (list || []).find((item) => isSlidingItem(item) && (!item.trackType || !Number(item.trackWidthMm || 0) || !Number(item.handleHeightMm || item.trackHeightMm || 0) || !item.installationType));
+        if (invalid) {
+          toast(`Sliding item "${invalid.label || product(invalid.productId).name}" needs Track Type, Track Width, Handle Height and Installation Type.`);
+          return false;
+        }
+        return true;
+      }
       function actualSqft(item) { return item.widthMm && item.heightMm ? item.widthMm * item.heightMm / mm2PerSqft : 0; }
       function chargeableSqft(item) { return Math.max(actualSqft(item), product(item.productId).minimumSqft || 0); }
       function itemTotal(item) { return chargeableSqft(item) * (product(item.productId).price || 0) * (item.quantity || 0); }
-      function total() { return items.reduce((sum, item) => sum + itemTotal(item), 0); }
+      function subtotal() { return items.reduce((sum, item) => sum + itemTotal(item), 0); }
+      function discount() {
+        const field = document.getElementById("discount");
+        return Math.max(Number(field && field.value || 0), 0);
+      }
+      function total() { return Math.max(subtotal() - discount(), 0); }
       function deposit() { return Number(document.getElementById("deposit").value || 0); }
       function balance() { return Math.max(total() - deposit(), 0); }
       function getCustomer() {
@@ -862,7 +1218,9 @@
           ...quote,
           quoteNo: quote.quoteNo || `ESQ-${new Date(quote.createdAt || Date.now()).getFullYear()}-${String(index + 1).padStart(4, "0")}`,
           updatedAt: quote.updatedAt || quote.createdAt || new Date().toISOString(),
-          status: quote.status || "quoted"
+          status: quote.status || "quoted",
+          subtotal: Number(quote.subtotal || quote.total || 0),
+          discount: Number(quote.discount || 0)
         }));
       }
       function normalizeOrders(rawOrders) {
@@ -873,7 +1231,9 @@
           installationNotes: order.installationNotes || "",
           costs: {
             material: Number(order.costs && order.costs.material || 0),
+            hardware: Number(order.costs && order.costs.hardware || 0),
             installation: Number(order.costs && order.costs.installation || 0),
+            transport: Number(order.costs && order.costs.transport || 0),
             ads: Number(order.costs && order.costs.ads || 0),
             other: Number(order.costs && order.costs.other || 0)
           },
@@ -891,13 +1251,21 @@
         return rawProductions.map((production, index) => ({
           ...production,
           productionNo: production.productionNo || `ESP-${new Date(production.createdAt || Date.now()).getFullYear()}-${String(index + 1).padStart(4, "0")}`,
+          createdAt: production.createdAt || new Date().toISOString(),
           status: production.status || "pending-production",
           inventoryDeducted: Boolean(production.inventoryDeducted),
+          stockMovements: production.stockMovements || [],
+          startedAt: production.startedAt || "",
+          completedAt: production.completedAt || "",
+          delayReason: production.delayReason || production.reason || "",
           items: (production.items || []).map((item) => ({
-            color: "",
+            color: item.color || "",
             openingDirection: "",
             lockSet: "",
             trackType: "",
+            trackWidthMm: 0,
+            handleHeightMm: item.handleHeightMm || item.trackHeightMm || 0,
+            installationType: "",
             remark: "",
             ...item
           }))
@@ -913,8 +1281,26 @@
           customerRating: Number(installation.customerRating || 0),
           photoUploaded: Boolean(installation.photoUploaded || (installation.checklist && installation.checklist.photoTaken)),
           referredFriend: Boolean(installation.referredFriend),
+          referralName: installation.referralName || "",
+          referralPhone: installation.referralPhone || "",
           referralNote: installation.referralNote || "",
+          arrivalTime: installation.arrivalTime || "",
+          finishTime: installation.finishTime || "",
+          paymentMethod: installation.paymentMethod || "",
+          amountCollected: Number(installation.amountCollected || 0),
+          receiptUploaded: Boolean(installation.receiptUploaded),
+          siteIssue: installation.siteIssue || "",
+          customerRemarks: installation.customerRemarks || "",
+          customerConfirmation: {
+            productInstalledCorrectly: false,
+            warrantyInformationReceived: false,
+            ...(installation.customerConfirmation || {})
+          },
           checklist: {
+            productChecked: false,
+            frameColorChecked: false,
+            sizeChecked: false,
+            accessoriesComplete: false,
             arrived: false,
             installed: false,
             photoTaken: false,
@@ -1878,8 +2264,8 @@
         return Math.max(Number(order.total || 0) - paidTotal(order), 0);
       }
       function orderCostTotal(order) {
-        const costs = order.costs || {};
-        return Number(costs.material || 0) + Number(costs.installation || 0) + Number(costs.ads || 0) + Number(costs.other || 0);
+        const breakdown = orderCostBreakdown(order);
+        return breakdown.total;
       }
       function orderGrossProfit(order) {
         return Number(order.total || 0) - orderCostTotal(order);
@@ -1895,6 +2281,114 @@
         if (paid <= 0) return "Unpaid";
         if (paid <= Number(order.deposit || 0)) return "Deposit Paid";
         return "Partially Paid";
+      }
+      function orderQtyTotal(order) {
+        return (order.items || []).reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+      }
+      function productInventoryCategories(item) {
+        const name = product(item.productId).name.toLowerCase();
+        if (name.includes("pocket lock")) return ["65口袋锁"];
+        if (name.includes("security mesh")) return ["D6代三推防护"];
+        if (name.includes("sliding") || name.includes("推拉")) return ["75推拉门"];
+        if (name.includes("roller door")) return ["65隐形纱门"];
+        if (name.includes("roller") || name.includes("removeable") || name.includes("3 section") || name.includes("magnetic")) return ["32拆洗款卷纱"];
+        return [];
+      }
+      function inventoryForOrderItem(item) {
+        const categories = productInventoryCategories(item);
+        return inventory.filter((stock) => categories.includes(stock.category));
+      }
+      function isHardwareStock(stock) {
+        const text = `${stock.name || ""} ${stock.category || ""}`.toLowerCase();
+        return /锁|轮|角码|合页|螺丝|配件|传动|堵头|拉手|胶条|毛条|组角|护角|锁座|lock|wheel|hinge|screw|accessor|handle/.test(text);
+      }
+      function itemCostSplit(item) {
+        const stockItems = inventoryForOrderItem(item);
+        const qty = Number(item.quantity || 0);
+        return stockItems.reduce((split, stock) => {
+          const cost = qty * Number(stock.usagePerItem || 0) * Number(stock.unitCost || 0);
+          if (isHardwareStock(stock)) split.hardware += cost;
+          else split.material += cost;
+          return split;
+        }, { material: 0, hardware: 0 });
+      }
+      function itemMaterialCost(item) {
+        return itemCostSplit(item).material;
+      }
+      function itemHardwareCost(item) {
+        return itemCostSplit(item).hardware;
+      }
+      function autoMaterialCost(order) {
+        return (order.items || []).reduce((sum, item) => sum + itemMaterialCost(item), 0);
+      }
+      function autoHardwareCost(order) {
+        return (order.items || []).reduce((sum, item) => sum + itemHardwareCost(item), 0);
+      }
+      function orderCostBreakdown(order) {
+        const costs = order.costs || {};
+        const material = Number(costs.material || 0) > 0 ? Number(costs.material || 0) : autoMaterialCost(order);
+        const hardware = Number(costs.hardware || 0) > 0 ? Number(costs.hardware || 0) : autoHardwareCost(order);
+        const installation = Number(costs.installation || 0);
+        const transport = Number(costs.transport || 0);
+        const total = material + hardware + installation + transport;
+        const profit = Number(order.total || 0) - total;
+        const margin = Number(order.total || 0) > 0 ? profit / Number(order.total || 0) * 100 : 0;
+        return { material, hardware, installation, transport, total, profit, margin };
+      }
+      function costDebugRows(order) {
+        return (order.items || []).map((item) => {
+          const categories = productInventoryCategories(item);
+          const stockItems = inventoryForOrderItem(item);
+          const stockCost = stockItems.reduce((sum, stock) => sum + Number(stock.usagePerItem || 0) * Number(stock.unitCost || 0), 0);
+          const materialStockCost = stockItems.filter((stock) => !isHardwareStock(stock)).reduce((sum, stock) => sum + Number(stock.usagePerItem || 0) * Number(stock.unitCost || 0), 0);
+          const hardwareStockCost = stockItems.filter((stock) => isHardwareStock(stock)).reduce((sum, stock) => sum + Number(stock.usagePerItem || 0) * Number(stock.unitCost || 0), 0);
+          const costSplit = itemCostSplit(item);
+          return {
+            item,
+            productName: product(item.productId).name,
+            categories,
+            stockItems,
+            stockCost,
+            materialStockCost,
+            hardwareStockCost,
+            materialCost: costSplit.material,
+            hardwareCost: costSplit.hardware,
+            actualSqft: actualSqft(item),
+            chargeableSqft: chargeableSqft(item),
+            quantity: Number(item.quantity || 0),
+            saleAmount: itemTotal(item)
+          };
+        });
+      }
+      function linkedProduction(order) {
+        return productions.find((production) => production.orderNo === order.orderNo);
+      }
+      function linkedInstallation(order) {
+        return installations.find((installation) => installation.orderNo === order.orderNo);
+      }
+      function productionSummary(order) {
+        const production = linkedProduction(order);
+        if (!production) return { label: "No production sheet", detail: "Click Generate Production to create one.", done: false };
+        const done = production.status === "completed";
+        return {
+          label: statusLabelFromList(productionStatuses, production.status),
+          detail: done ? (production.completedAt ? `Completed on ${String(production.completedAt).slice(0, 10)}` : "Production completed") : (production.delayReason || productionAlertText(production) || "No delay reason entered."),
+          done
+        };
+      }
+      function installationSummary(order) {
+        const installation = linkedInstallation(order);
+        if (!installation) return { label: "No installation sheet", detail: "Click Generate Installation to create one.", done: false };
+        const done = installation.status === "installed" || installation.status === "balance-collected" || Boolean(installation.checklist && installation.checklist.installed);
+        return {
+          label: statusLabelFromList(installationStatuses, installation.status),
+          detail: done ? `Completed: ${installation.completedDate || "-"} | Duration: ${installationDuration(installation.arrivalTime, installation.finishTime)}` : (installation.siteIssue || installation.installationNotes || "Not installed yet."),
+          done
+        };
+      }
+      function statusLabelFromList(list, value) {
+        const found = list.find((item) => item[0] === value);
+        return found ? found[1] : value || "-";
       }
       function isOverdue(order) {
         if (!order.installationDate || unpaidTotal(order) <= 0) return false;
@@ -1927,6 +2421,20 @@
           const score = row.completed * 10 + onTimeRate / 10 + rating * 4 + photoRate / 20 - row.rework * 8;
           return { ...row, onTimeRate, photoRate, rating, score };
         }).sort((a, b) => b.score - a.score);
+      }
+      function slidingDashboardRows() {
+        return quotes.flatMap((quote) => (quote.items || [])
+          .filter((item) => isSlidingItem(item))
+          .map((item) => ({
+            quoteNo: quote.quoteNo,
+            customer: quote.customer && quote.customer.name || "-",
+            productName: product(item.productId).name,
+            location: item.label || "Item",
+            widthMm: item.widthMm || 0,
+            heightMm: item.heightMm || 0,
+            quantity: item.quantity || 0,
+            details: slidingDetails(item)
+          })));
       }
       function topProductFromOrders() {
         const counts = {};
@@ -2144,7 +2652,6 @@
           toast("Cloud login successful.");
         } catch (error) {
           toast("Cloud login failed. Check Supabase config.");
-          console.error(error);
         }
       }
       function cloudLogout() {
@@ -2194,6 +2701,7 @@
           applyCloudSnapshot(rows[0].data);
           if (reloadAfter) location.reload();
         } else {
+          await loadNormalizedQuotations();
           await saveCloudSnapshot(true);
         }
       }
@@ -2211,6 +2719,7 @@
             headers: { Prefer: "resolution=merge-duplicates" },
             body: JSON.stringify({ id: "main", data, updated_at: new Date().toISOString() })
           });
+          await saveNormalizedTables(data);
           const todayKey = `backup-${today()}`;
           if (forceBackup || localStorage.getItem("eco-screen-last-cloud-backup") !== todayKey) {
             await supabaseFetch("/rest/v1/eco_screen_backups", {
@@ -2221,15 +2730,224 @@
           }
           renderCloudStatus();
         } catch (error) {
-          console.error(error);
           toast("Cloud sync failed. Data is still saved locally.");
         }
       }
-      function addItem() { items.push(makeItem()); render(); }
+      function customerKey(customer) {
+        const phone = digitsOnly(customer && customer.phone);
+        if (phone) return `phone-${phone}`;
+        return `customer-${String(customer && customer.name || "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "-") || "unknown"}`;
+      }
+      function uniqueCustomersFrom(data) {
+        const map = {};
+        const sources = [
+          ...(data[quotesKey] || []).map((item) => item.customer),
+          ...(data[ordersKey] || []).map((item) => item.customer),
+          ...(data[installationsKey] || []).map((item) => item.customer),
+          ...(data[productionsKey] || []).map((item) => item.customer)
+        ];
+        sources.filter(Boolean).forEach((customer) => {
+          const id = customerKey(customer);
+          map[id] = {
+            id,
+            name: customer.name || "",
+            phone: customer.phone || "",
+            address: customer.address || "",
+            area: customer.area || "",
+            appointment_date: customer.appointmentDate || null,
+            updated_at: new Date().toISOString()
+          };
+        });
+        return Object.values(map);
+      }
+      function normalizedRowsFrom(data) {
+        const productsList = data[productsKey] || products;
+        const productMap = new Map(productsList.map((item) => [item.id, item]));
+        const quoteRows = [];
+        const itemRows = [];
+        (data[quotesKey] || []).forEach((quote) => {
+          quoteRows.push({
+            id: quote.id,
+            quote_no: quote.quoteNo,
+            customer_id: customerKey(quote.customer),
+            status: quote.status || "quoted",
+            total: Number(quote.total || 0),
+            deposit: Number(quote.deposit || 0),
+            balance: Number(quote.balance || 0),
+            created_at: quote.createdAt || new Date().toISOString(),
+            updated_at: quote.updatedAt || quote.createdAt || new Date().toISOString()
+          });
+          (quote.items || []).forEach((line, index) => {
+            const p = productMap.get(line.productId) || product(line.productId);
+            itemRows.push({
+              id: line.id,
+              quotation_id: quote.id,
+              sort_order: index + 1,
+              line_label: line.label || "",
+              product_id: line.productId,
+              product_name: p && p.name || line.productId,
+              width_mm: Number(line.widthMm || 0),
+              height_mm: Number(line.heightMm || 0),
+              quantity: Number(line.quantity || 0),
+              actual_sqft: Number(actualSqft(line).toFixed(2)),
+              chargeable_sqft: Number(chargeableSqft(line).toFixed(2)),
+              unit_price: Number(p && p.price || 0),
+              line_total: Number((chargeableSqft(line) * Number(p && p.price || 0) * Number(line.quantity || 0)).toFixed(2)),
+              track_type: line.trackType || "",
+              track_width_mm: Number(line.trackWidthMm || 0),
+              handle_height_mm: Number(line.handleHeightMm || line.trackHeightMm || 0),
+              installation_type: line.installationType || "",
+              opening_direction: line.openingDirection || "Not Applicable"
+            });
+          });
+        });
+        const productionRows = (data[productionsKey] || []).map((row) => ({
+          id: row.id,
+          production_no: row.productionNo,
+          order_no: row.orderNo,
+          quote_no: row.quoteNo,
+          customer_id: customerKey(row.customer),
+          status: row.status || "pending-production",
+          items: row.items || [],
+          inventory_deducted: Boolean(row.inventoryDeducted),
+          created_at: row.createdAt || new Date().toISOString()
+        }));
+        const installationRows = (data[installationsKey] || []).map((row) => ({
+          id: row.id,
+          installation_no: row.installationNo,
+          order_no: row.orderNo,
+          quote_no: row.quoteNo,
+          customer_id: customerKey(row.customer),
+          installation_date: row.installationDate || null,
+          completed_date: row.completedDate || null,
+          installer_name: row.installerName || "",
+          status: row.status || "pending-installation",
+          balance: Number(row.balance || 0),
+          customer_rating: Number(row.customerRating || 0),
+          photo_uploaded: Boolean(row.photoUploaded || row.checklist && row.checklist.photoTaken),
+          referred_friend: Boolean(row.referredFriend),
+          referral_note: row.referralNote || "",
+          checklist: row.checklist || {},
+          items: row.items || [],
+          signature: row.signature || "",
+          installation_notes: row.installationNotes || "",
+          created_at: row.createdAt || new Date().toISOString()
+        }));
+        const collectionRows = [];
+        (data[ordersKey] || []).forEach((order) => {
+          (order.payments || []).forEach((payment) => {
+            collectionRows.push({
+              id: payment.id,
+              order_id: order.id,
+              order_no: order.orderNo,
+              customer_id: customerKey(order.customer),
+              label: payment.label || "Payment",
+              amount: Number(payment.amount || 0),
+              method: payment.method || "",
+              payment_date: payment.date || null,
+              remark: payment.remark || "",
+              created_at: order.createdAt || new Date().toISOString()
+            });
+          });
+        });
+        return { customers: uniqueCustomersFrom(data), quotations: quoteRows, quotation_items: itemRows, production_orders: productionRows, installations: installationRows, collections: collectionRows };
+      }
+      async function upsertRows(table, rows) {
+        if (!rows.length) return;
+        await supabaseFetch(`/rest/v1/${table}`, {
+          method: "POST",
+          headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+          body: JSON.stringify(rows)
+        });
+      }
+      async function saveNormalizedTables(data) {
+        const rows = normalizedRowsFrom(data);
+        await upsertRows("customers", rows.customers);
+        await upsertRows("quotations", rows.quotations);
+        if (rows.quotations.length) {
+          const ids = rows.quotations.map((quote) => quote.id).join(",");
+          await supabaseFetch(`/rest/v1/quotation_items?quotation_id=in.(${ids})`, { method: "DELETE" });
+        }
+        await upsertRows("quotation_items", rows.quotation_items);
+        await upsertRows("production_orders", rows.production_orders);
+        await upsertRows("installations", rows.installations);
+        await upsertRows("collections", rows.collections);
+      }
+      async function loadNormalizedQuotations() {
+        try {
+          const quoteRows = await supabaseFetch("/rest/v1/quotations?select=*,customers(*)&order=created_at.desc");
+          const itemRows = await supabaseFetch("/rest/v1/quotation_items?select=*&order=sort_order.asc");
+          if (!quoteRows || !quoteRows.length) return;
+          const itemsByQuote = {};
+          (itemRows || []).forEach((item) => {
+            itemsByQuote[item.quotation_id] = [...(itemsByQuote[item.quotation_id] || []), item];
+          });
+          const loadedQuotes = quoteRows.map((quote) => ({
+            id: quote.id,
+            quoteNo: quote.quote_no,
+            createdAt: quote.created_at,
+            updatedAt: quote.updated_at,
+            status: quote.status,
+            customer: {
+              name: quote.customers && quote.customers.name || "",
+              phone: quote.customers && quote.customers.phone || "",
+              address: quote.customers && quote.customers.address || "",
+              area: quote.customers && quote.customers.area || "",
+              appointmentDate: quote.customers && quote.customers.appointment_date || today()
+            },
+            items: (itemsByQuote[quote.id] || []).map((item) => ({
+              id: item.id,
+              label: item.line_label || "",
+              productId: item.product_id || "roller",
+              widthMm: Number(item.width_mm || 0),
+              heightMm: Number(item.height_mm || 0),
+              quantity: Number(item.quantity || 0),
+              trackType: item.track_type || "",
+              trackWidthMm: Number(item.track_width_mm || 0),
+              handleHeightMm: Number(item.handle_height_mm || item.track_height_mm || 0),
+              installationType: item.installation_type || "",
+              openingDirection: item.opening_direction || "Not Applicable"
+            })),
+            subtotal: Number(quote.subtotal || quote.total || 0),
+            discount: Number(quote.discount || 0),
+            total: Number(quote.total || 0),
+            deposit: Number(quote.deposit || 0),
+            balance: Number(quote.balance || 0)
+          }));
+          cloudState.applying = true;
+          nativeSetItem(quotesKey, JSON.stringify(loadedQuotes));
+          cloudState.applying = false;
+        } catch (error) {
+          toast("Cloud quotation loading failed. Local data is still available.");
+        }
+      }
+      function addItem() {
+        const nextItem = makeItem();
+        items = [nextItem, ...orderedItems(items)];
+        render();
+        const firstField = document.querySelector(`[data-item-id="${nextItem.id}"][data-field="label"]`);
+        if (firstField) {
+          firstField.closest(".item-card").scrollIntoView({ behavior: "smooth", block: "start" });
+          firstField.focus();
+        }
+      }
+      function downloadQuotationPdf() {
+        if (currentPage !== "quotation") setPage("quotation");
+        render();
+        toast("PDF window opening. Choose Save as PDF in the print window.");
+        setTimeout(() => {
+          try {
+            window.focus();
+            window.print();
+          } catch (error) {
+            toast("Please press Ctrl + P, then choose Save as PDF.");
+          }
+        }, 150);
+      }
       function removeItem(id) { if (items.length > 1) items = items.filter((item) => item.id !== id); render(); }
       function updateItem(id, field, value) {
         const focusInfo = captureItemFocus();
-        const numberFields = ["widthMm","heightMm","quantity"];
+        const numberFields = ["widthMm","heightMm","quantity","trackWidthMm","handleHeightMm"];
         const nextValue = numberFields.includes(field) ? Number(String(value).replace(/[^\d.]/g, "") || 0) : value;
         items = items.map((item) => item.id === id ? { ...item, [field]: nextValue } : item);
         render();
@@ -2264,6 +2982,7 @@
         });
       }
       function saveQuote() {
+        if (!validateSlidingItems(items)) return;
         const now = new Date().toISOString();
         const existing = quotes.find((item) => item.id === editingId);
         const quote = {
@@ -2273,7 +2992,9 @@
           updatedAt: now,
           status: document.getElementById("status").value,
           customer: getCustomer(),
-          items,
+          items: orderedItems(),
+          subtotal: subtotal(),
+          discount: discount(),
           deposit: deposit(),
           total: total(),
           balance: balance()
@@ -2285,6 +3006,7 @@
         render();
       }
       function currentQuoteSnapshot() {
+        if (!validateSlidingItems(items)) return null;
         const now = new Date().toISOString();
         const existing = quotes.find((item) => item.id === editingId);
         return {
@@ -2294,7 +3016,9 @@
           updatedAt: now,
           status: document.getElementById("status").value,
           customer: getCustomer(),
-          items,
+          items: orderedItems(),
+          subtotal: subtotal(),
+          discount: discount(),
           deposit: deposit(),
           total: total(),
           balance: balance()
@@ -2312,6 +3036,7 @@
         }
 
         const quote = currentQuoteSnapshot();
+        if (!quote) return;
         const existing = quotes.find((item) => item.id === quote.id);
         quotes = existing ? quotes.map((item) => item.id === quote.id ? quote : item) : [quote, ...quotes];
         localStorage.setItem(quotesKey, JSON.stringify(quotes));
@@ -2323,10 +3048,12 @@
           createdAt: new Date().toISOString(),
           customer: quote.customer,
           items: quote.items,
+          subtotal: quote.subtotal,
+          discount: quote.discount,
           total: quote.total,
           deposit: quote.deposit,
           balance: quote.balance,
-          costs: { material: 0, installation: 0, ads: 0, other: 0 },
+          costs: { material: 0, hardware: 0, installation: 0, transport: 0 },
           payments: Number(quote.deposit || 0) > 0 ? [{
             id: uid(),
             label: "Deposit",
@@ -2365,10 +3092,13 @@
             widthMm: item.widthMm,
             heightMm: item.heightMm,
             quantity: item.quantity,
-            color: "",
-            openingDirection: "",
+            trackType: item.trackType || "",
+            trackWidthMm: item.trackWidthMm || 0,
+            handleHeightMm: item.handleHeightMm || item.trackHeightMm || 0,
+            installationType: item.installationType || "",
+            openingDirection: item.openingDirection || "Not Applicable",
+            color: item.color || "",
             lockSet: "",
-            trackType: "",
             remark: ""
           }))
         };
@@ -2405,9 +3135,9 @@
           ...order,
           costs: {
             material: Number(order.costs && order.costs.material || 0),
+            hardware: Number(order.costs && order.costs.hardware || 0),
             installation: Number(order.costs && order.costs.installation || 0),
-            ads: Number(order.costs && order.costs.ads || 0),
-            other: Number(order.costs && order.costs.other || 0),
+            transport: Number(order.costs && order.costs.transport || 0),
             [field]: Number(value || 0)
           }
         } : order);
@@ -2450,8 +3180,25 @@
           customerRating: 0,
           photoUploaded: false,
           referredFriend: false,
+          referralName: "",
+          referralPhone: "",
           referralNote: "",
+          arrivalTime: "",
+          finishTime: "",
+          paymentMethod: "",
+          amountCollected: 0,
+          receiptUploaded: false,
+          siteIssue: "",
+          customerRemarks: "",
+          customerConfirmation: {
+            productInstalledCorrectly: false,
+            warrantyInformationReceived: false
+          },
           checklist: {
+            productChecked: false,
+            frameColorChecked: false,
+            sizeChecked: false,
+            accessoriesComplete: false,
             arrived: false,
             installed: false,
             photoTaken: false,
@@ -2469,26 +3216,97 @@
       function productionQtyTotal(production) {
         return (production.items || []).reduce((sum, item) => sum + Number(item.quantity || 0), 0);
       }
+      function daysSince(value) {
+        if (!value) return 0;
+        const start = new Date(value);
+        if (Number.isNaN(start.getTime())) return 0;
+        return Math.max(Math.floor((Date.now() - start.getTime()) / 86400000), 0);
+      }
+      function installationDuration(arrivalTime, finishTime) {
+        if (!arrivalTime || !finishTime) return "-";
+        const [startH, startM] = String(arrivalTime).split(":").map(Number);
+        const [endH, endM] = String(finishTime).split(":").map(Number);
+        if (![startH, startM, endH, endM].every(Number.isFinite)) return "-";
+        let minutes = endH * 60 + endM - (startH * 60 + startM);
+        if (minutes < 0) minutes += 24 * 60;
+        const hours = Math.floor(minutes / 60);
+        const mins = minutes % 60;
+        return `${hours ? `${hours}h ` : ""}${mins}m`;
+      }
+      function productionAgeDays(production) {
+        return daysSince(production.createdAt);
+      }
+      function isProductionOverdue(production) {
+        if (!production || production.status === "completed") return false;
+        if (production.status === "pending-production") return productionAgeDays(production) > 2;
+        if (production.status === "in-production") return daysSince(production.startedAt || production.createdAt) > 3;
+        return false;
+      }
+      function productionAlertText(production) {
+        if (production.status === "completed") return production.completedAt ? `Completed on ${String(production.completedAt).slice(0, 10)}` : "Production completed";
+        if (production.status === "pending-production" && isProductionOverdue(production)) return `Not started for ${productionAgeDays(production)} days`;
+        if (production.status === "in-production" && isProductionOverdue(production)) return `In production for ${daysSince(production.startedAt || production.createdAt)} days`;
+        return "";
+      }
       function deductInventoryForProduction(production) {
-        if (production.inventoryDeducted) return false;
-        const qty = productionQtyTotal(production);
+        if (production.inventoryDeducted) return null;
+        const deductions = {};
+        (production.items || []).forEach((line) => {
+          const qty = Number(line.quantity || 0);
+          inventoryForOrderItem(line).forEach((stock) => {
+            const deductQty = qty * Number(stock.usagePerItem || 0);
+            if (deductQty <= 0) return;
+            deductions[stock.id] = (deductions[stock.id] || 0) + deductQty;
+          });
+        });
+        const movements = [];
         inventory = inventory.map((item) => ({
-          ...item,
-          quantity: Math.max(Number(item.quantity || 0) - qty * Number(item.usagePerItem || 0), 0)
-        }));
+          ...item
+        })).map((item) => {
+          const beforeQty = Number(item.quantity || 0);
+          const deductQty = Number(deductions[item.id] || 0);
+          const afterQty = Math.max(beforeQty - deductQty, 0);
+          if (deductQty > 0) {
+            movements.push({
+              id: uid(),
+              date: new Date().toISOString(),
+              inventoryId: item.id,
+              name: item.name,
+              category: item.category || "General",
+              beforeQty,
+              deductQty,
+              afterQty,
+              unit: item.unit,
+              unitCost: Number(item.unitCost || 0),
+              totalCost: Number((deductQty * Number(item.unitCost || 0)).toFixed(2))
+            });
+          }
+          return { ...item, quantity: afterQty };
+        });
         localStorage.setItem(inventoryKey, JSON.stringify(inventory));
-        return true;
+        return movements;
       }
       function updateProductionStatus(id, value) {
         const production = productions.find((item) => item.id === id);
-        let deducted = false;
+        let movements = null;
         if (production && value === "completed" && !production.inventoryDeducted) {
-          deducted = deductInventoryForProduction(production);
+          movements = deductInventoryForProduction(production);
         }
-        productions = productions.map((item) => item.id === id ? { ...item, status: value, inventoryDeducted: item.inventoryDeducted || deducted } : item);
+        productions = productions.map((item) => item.id === id ? {
+          ...item,
+          status: value,
+          startedAt: value === "in-production" ? (item.startedAt || new Date().toISOString()) : item.startedAt,
+          completedAt: value === "completed" ? (item.completedAt || new Date().toISOString()) : item.completedAt,
+          stockMovements: movements ? [...(item.stockMovements || []), ...movements] : (item.stockMovements || []),
+          inventoryDeducted: item.inventoryDeducted || Boolean(movements)
+        } : item);
         localStorage.setItem(productionsKey, JSON.stringify(productions));
-        if (deducted) toast("Production completed. Inventory deducted.");
+        if (value === "completed") toast(movements ? "Production completed. Inventory deducted and tracked." : "Production marked as completed.");
         render();
+      }
+      function updateProductionField(id, field, value) {
+        productions = productions.map((item) => item.id === id ? { ...item, [field]: value } : item);
+        localStorage.setItem(productionsKey, JSON.stringify(productions));
       }
       function updateInventory(id, field, value) {
         inventory = inventory.map((item) => {
@@ -2520,9 +3338,10 @@
         localStorage.setItem(productionsKey, JSON.stringify(productions));
       }
       function updateProductionItem(productionId, itemId, field, value) {
+        const nextValue = ["trackWidthMm","handleHeightMm"].includes(field) ? Number(String(value).replace(/[^\d.]/g, "") || 0) : value;
         productions = productions.map((production) => production.id === productionId ? {
           ...production,
-          items: production.items.map((item) => item.id === itemId ? { ...item, [field]: value } : item)
+          items: production.items.map((item) => item.id === itemId ? { ...item, [field]: nextValue } : item)
         } : production);
         localStorage.setItem(productionsKey, JSON.stringify(productions));
       }
@@ -2538,7 +3357,15 @@
       function updateInstallationField(id, field, value) {
         installations = installations.map((item) => item.id === id ? {
           ...item,
-          [field]: field === "customerRating" ? Number(value || 0) : value
+          [field]: field === "customerRating" || field === "amountCollected" ? Number(value || 0) : value
+        } : item);
+        localStorage.setItem(installationsKey, JSON.stringify(installations));
+        render();
+      }
+      function updateCustomerConfirmation(id, field, checked) {
+        installations = installations.map((item) => item.id === id ? {
+          ...item,
+          customerConfirmation: { ...(item.customerConfirmation || {}), [field]: checked }
         } : item);
         localStorage.setItem(installationsKey, JSON.stringify(installations));
         render();
@@ -2582,7 +3409,18 @@
           customerRating: installation.customerRating,
           photoUploaded: installation.photoUploaded || (installation.checklist && installation.checklist.photoTaken),
           referredFriend: installation.referredFriend,
+          referralName: installation.referralName,
+          referralPhone: installation.referralPhone,
           referralNote: installation.referralNote,
+          arrivalTime: installation.arrivalTime,
+          finishTime: installation.finishTime,
+          duration: installationDuration(installation.arrivalTime, installation.finishTime),
+          paymentMethod: installation.paymentMethod,
+          amountCollected: installation.amountCollected,
+          receiptUploaded: installation.receiptUploaded,
+          siteIssue: installation.siteIssue,
+          customerRemarks: installation.customerRemarks,
+          customerConfirmation: installation.customerConfirmation,
           status: installation.status,
           checklist: installation.checklist,
           signature: installation.signature,
@@ -2626,8 +3464,9 @@
         if (!quote) return;
         editingId = quote.id;
         quoteNo = quote.quoteNo;
-        items = quote.items && quote.items.length ? quote.items : [makeItem()];
+        items = quote.items && quote.items.length ? quote.items.map((item) => ({ ...makeSlidingFields(), ...item })) : [makeItem()];
         setCustomer(quote.customer || {});
+        document.getElementById("discount").value = quote.discount || "";
         document.getElementById("deposit").value = quote.deposit || "";
         document.getElementById("status").value = quote.status || "quoted";
         window.scrollTo({ top: 0, behavior: "smooth" });
@@ -2664,6 +3503,7 @@
         quoteNo = makeQuoteNo();
         items = [makeItem()];
         setCustomer({ appointmentDate: today() });
+        document.getElementById("discount").value = "";
         document.getElementById("deposit").value = "";
         document.getElementById("status").value = "quoted";
         document.getElementById("installationDate").value = "";
@@ -2691,15 +3531,17 @@
             ["Today's Collection", money(allPayments.filter((payment) => payment.date === todayValue).reduce((sum, payment) => sum + Number(payment.amount || 0), 0))],
             ["Monthly Collection", money(allPayments.filter((payment) => (payment.date || "").slice(0, 7) === month).reduce((sum, payment) => sum + Number(payment.amount || 0), 0))],
             ["Pending Balance", money(orders.reduce((sum, order) => sum + unpaidTotal(order), 0))],
-            ["Gross Profit", money(adminProfit)],
-            ["Gross Margin", `${adminSales > 0 ? (adminProfit / adminSales * 100).toFixed(1) : "0.0"}%`],
+            ["Profit", money(adminProfit)],
+            ["Margin", `${adminSales > 0 ? (adminProfit / adminSales * 100).toFixed(1) : "0.0"}%`],
             ["Won Orders", orders.length],
             ["Unpaid Orders", orders.filter((order) => unpaidTotal(order) > 0).length],
             ["Overdue", orders.filter((order) => isOverdue(order)).length],
             ["Pending Production", productions.filter((item) => item.status !== "completed").length],
+            ["Production Alerts", productions.filter((item) => isProductionOverdue(item)).length],
             ["Pending Installation", installations.filter((item) => item.status === "pending-installation").length],
             ["Today's Install", installations.filter((item) => item.installationDate === todayValue).length],
             ["Need Rework", installations.filter((item) => item.status === "rework").length],
+            ["Sliding Items", slidingDashboardRows().length],
             ["Customer Referrals", installations.filter((item) => item.referredFriend).length],
             ["Low Stock Items", inventory.filter((item) => Number(item.quantity || 0) <= Number(item.safetyQuantity || 0)).length],
             ["Today Follow Up", customersDueToday().length],
@@ -2721,6 +3563,7 @@
             ["Pending Production", productions.filter((item) => item.status === "pending-production").length],
             ["In Production", productions.filter((item) => item.status === "in-production").length],
             ["Completed", productions.filter((item) => item.status === "completed").length],
+            ["Production Alerts", productions.filter((item) => isProductionOverdue(item)).length],
             ["Production Orders", productions.length]
           ],
           installer: [
@@ -2733,6 +3576,7 @@
         };
         const metrics = dashboardByRole[currentRole];
         const installerRows = installerPerformanceRows();
+        const slidingRows = slidingDashboardRows();
         const installerRanking = currentRole === "admin" ? `
           <div class="order-items" style="margin-top:12px">
             <strong>Installer Performance Ranking</strong>
@@ -2744,8 +3588,21 @@
             `).join("") : `<p style="color:var(--muted);margin-top:8px">No installer performance records yet.</p>`}
           </div>
         ` : "";
+        const slidingDetailsPanel = currentRole === "admin" ? `
+          <div class="order-items" style="margin-top:12px">
+            <strong>Sliding Track Details</strong>
+            ${slidingRows.length ? slidingRows.map((row) => `
+              <div style="border-top:1px solid var(--line);padding-top:8px;margin-top:8px">
+                <strong>${row.quoteNo} - ${row.customer}</strong>
+                <p style="color:var(--muted);font-size:13px">${row.productName} | ${row.location} | ${row.widthMm} x ${row.heightMm} mm | Qty ${row.quantity}</p>
+                <p style="color:var(--muted);font-size:13px">${row.details}</p>
+              </div>
+            `).join("") : `<p style="color:var(--muted);margin-top:8px">No Sliding track details yet.</p>`}
+          </div>
+        ` : "";
         document.getElementById("dashboard").innerHTML = `<div class="boss-grid">${metrics.map(([label, value]) => `<div class="metric"><span class="eyebrow">${label}</span><strong>${value}</strong></div>`).join("")}</div>` +
           installerRanking +
+          slidingDetailsPanel +
           (currentRole === "admin" || currentRole === "sales" ? statuses.map(([value, label]) => `<div class="status-row"><span>${label}</span><strong>${quotes.filter((quote) => quote.status === value).length}</strong></div>`).join("") : "");
       }
       function renderSettings() {
@@ -2786,6 +3643,13 @@
               <div class="field"><label>Formula</label><input value="RM Unit Cost = RMB Unit Cost x Exchange Rate" readonly /></div>
             </div>
           </div>
+          <div class="item-card">
+            <div class="item-head">
+              <h3>Stock Auto Tracking</h3>
+              <span class="pill">Production Completed = Auto Deduct</span>
+            </div>
+            <p style="color:var(--muted)">When a production sheet is marked Completed, the system deducts stock automatically using: production quantity x Usage Per Production Item. The deduction record is saved in that production sheet.</p>
+          </div>
         ` + Object.entries(categories).map(([category, items]) => `
           <div class="item-card">
             <div class="item-head">
@@ -2813,7 +3677,7 @@
         `).join("");
       }
       function renderItems() {
-        document.getElementById("items").innerHTML = items.map((item, index) => `
+        document.getElementById("items").innerHTML = orderedItems().map((item, index) => `
           <div class="item-card">
             <div class="item-head">
               <h3>Line Item ${index + 1}</h3>
@@ -2825,11 +3689,29 @@
               <div class="field"><label>Width mm</label><input data-item-id="${item.id}" data-field="widthMm" type="text" inputmode="numeric" value="${item.widthMm || ""}" oninput="updateItem('${item.id}','widthMm',this.value)" /></div>
               <div class="field"><label>Height mm</label><input data-item-id="${item.id}" data-field="heightMm" type="text" inputmode="numeric" value="${item.heightMm || ""}" oninput="updateItem('${item.id}','heightMm',this.value)" /></div>
               <div class="field"><label>Qty</label><input data-item-id="${item.id}" data-field="quantity" type="text" inputmode="numeric" value="${item.quantity || ""}" oninput="updateItem('${item.id}','quantity',this.value)" /></div>
+              <div class="field"><label>Colour</label><input data-item-id="${item.id}" data-field="color" value="${item.color || ""}" oninput="updateItem('${item.id}','color',this.value)" placeholder="White / Black / Brown" /></div>
               <div class="mini-total">
                 <div class="line"><span>Actual</span><strong>${actualSqft(item).toFixed(2)}</strong></div>
                 <div class="line"><span>Charge</span><strong>${chargeableSqft(item).toFixed(2)}</strong></div>
                 <div class="line"><span>Total</span><strong>${money(itemTotal(item))}</strong></div>
               </div>
+              <div style="grid-column:1/-1;border-top:1px solid var(--line);padding-top:12px;margin-top:4px">
+                <p class="eyebrow">${isSlidingItem(item) ? "Sliding Track Details / Sliding 必填" : "Production Details / 非 Sliding 可选填"}</p>
+              </div>
+              <div class="field"><label>Track Type / 轨道类型 ${isSlidingItem(item) ? "*" : ""}</label><select data-item-id="${item.id}" data-field="trackType" onchange="updateItem('${item.id}','trackType',this.value)">
+                  <option value="">Select</option>
+                  ${["1 Track","2 Track","3 Track"].map((value) => `<option value="${value}" ${item.trackType === value ? "selected" : ""}>${value}</option>`).join("")}
+              </select></div>
+              <div class="field"><label>Track Width mm / 轨道宽度 ${isSlidingItem(item) ? "*" : ""}</label><input data-item-id="${item.id}" data-field="trackWidthMm" type="text" inputmode="numeric" value="${item.trackWidthMm || ""}" oninput="updateItem('${item.id}','trackWidthMm',this.value)" placeholder="76" /></div>
+              <div class="field"><label>Handle Height mm / 把手高度 ${isSlidingItem(item) ? "*" : ""}</label><input data-item-id="${item.id}" data-field="handleHeightMm" type="text" inputmode="numeric" value="${item.handleHeightMm || item.trackHeightMm || ""}" oninput="updateItem('${item.id}','handleHeightMm',this.value)" /></div>
+              <div class="field"><label>Installation Type / 安装方式 ${isSlidingItem(item) ? "*" : ""}</label><select data-item-id="${item.id}" data-field="installationType" onchange="updateItem('${item.id}','installationType',this.value)">
+                  <option value="">Select</option>
+                  <option value="Inside Mount" ${item.installationType === "Inside Mount" ? "selected" : ""}>Inside Mount / 内装</option>
+                  <option value="Outside Mount" ${item.installationType === "Outside Mount" ? "selected" : ""}>Outside Mount / 外装</option>
+              </select></div>
+              <div class="field"><label>Opening Direction / 开向</label><select data-item-id="${item.id}" data-field="openingDirection" onchange="updateItem('${item.id}','openingDirection',this.value)">
+                  ${["Left","Right","Middle","Not Applicable"].map((value) => `<option value="${value}" ${(item.openingDirection || "Not Applicable") === value ? "selected" : ""}>${value}</option>`).join("")}
+              </select></div>
             </div>
           </div>
         `).join("");
@@ -2837,6 +3719,8 @@
       function renderQuote() {
         const customer = getCustomer();
         const date = new Date().toLocaleDateString("en-MY", { year: "numeric", month: "long", day: "numeric" });
+        const discountAmount = discount();
+        const discountLine = discountAmount > 0 ? `<div class="line"><span>Discount</span><strong>- ${money(discountAmount)}</strong></div>` : "";
         document.getElementById("quotePreview").innerHTML = `
           <div class="quote-head">
             <div>
@@ -2850,9 +3734,9 @@
             <div class="info-box"><p class="eyebrow">Job Details</p><p style="margin-top:8px"><strong>Area:</strong> ${customer.area || "-"}</p><p><strong>Appointment:</strong> ${customer.appointmentDate || "-"}</p></div>
           </div>
           <div class="table-wrap"><table><thead><tr><th>Description</th><th>Product</th><th class="right">Size</th><th class="right">Sqft</th><th class="right">Rate</th><th class="right">Qty</th><th class="right">Amount</th></tr></thead><tbody>
-            ${items.map((item, index) => `<tr><td>${item.label || `Item ${index + 1}`}</td><td>${product(item.productId).name}</td><td class="right">${item.widthMm || 0} x ${item.heightMm || 0} mm</td><td class="right">${chargeableSqft(item).toFixed(2)}</td><td class="right">${money(product(item.productId).price)}</td><td class="right">${item.quantity || 0}</td><td class="right"><strong>${money(itemTotal(item))}</strong></td></tr>`).join("")}
+            ${orderedItems().map((item, index) => `<tr><td>${item.label || `Item ${index + 1}`}${itemExtraDetails(item) ? `<p style="color:var(--muted);font-size:12px;margin-top:4px">${itemExtraDetails(item)}</p>` : ""}</td><td>${product(item.productId).name}</td><td class="right">${item.widthMm || 0} x ${item.heightMm || 0} mm</td><td class="right">${chargeableSqft(item).toFixed(2)}</td><td class="right">${money(product(item.productId).price)}</td><td class="right">${item.quantity || 0}</td><td class="right"><strong>${money(itemTotal(item))}</strong></td></tr>`).join("")}
           </tbody></table></div>
-          <div class="quote-bottom"><div class="notes"><strong style="color:var(--ink)">Notes</strong><p style="margin-top:8px">This quotation is based on provided measurements. Final amount may change after site measurement.</p><p style="margin-top:8px">Minimum charge applies: window products 11 sqft, door products 21 sqft.</p></div><div><div class="line"><span>Subtotal</span><strong>${money(total())}</strong></div><div class="line"><span>Deposit</span><strong>${money(deposit())}</strong></div><div class="total-box" style="margin-top:10px"><div class="line"><span>Balance</span><strong>${money(balance())}</strong></div></div></div></div>
+          <div class="quote-bottom"><div class="notes"><strong style="color:var(--ink)">Terms & Conditions</strong><p style="margin-top:8px">i) Prices quoted are valid for a period of two (2) weeks from the quotation date.</p><p style="margin-top:8px">ii) 50% deposit is required upon confirmation, balance of payment upon completion.</p><p style="margin-top:8px">iii) Deposit paid is non-refundable.</p><p style="margin-top:8px">iv) All cheques should not be crossed and make payable to:</p><p style="margin-top:8px"><strong>ECO SCREEN SDN BHD<br>PUBLIC BANK<br>3242952413</strong></p></div><div><div class="line"><span>Subtotal</span><strong>${money(subtotal())}</strong></div>${discountLine}<div class="line"><span>Total</span><strong>${money(total())}</strong></div><div class="line"><span>Deposit</span><strong>${money(deposit())}</strong></div><div class="total-box" style="margin-top:10px"><div class="line"><span>Balance</span><strong>${money(balance())}</strong></div></div></div></div>
         `;
       }
       function renderHistory() {
@@ -2884,7 +3768,12 @@
         `).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No follow-ups for today.</p>`;
       }
       function renderOrders() {
-        document.getElementById("orders").innerHTML = orders.length ? orders.map((order) => `
+        document.getElementById("orders").innerHTML = orders.length ? orders.map((order) => {
+          const productionInfo = productionSummary(order);
+          const installationInfo = installationSummary(order);
+          const cost = orderCostBreakdown(order);
+          const debugRows = costDebugRows(order);
+          return `
           <div class="order-card">
             <div>
               <p class="eyebrow">${companyInfo.name}</p>
@@ -2894,6 +3783,12 @@
               <p style="margin-top:6px"><strong>Installation:</strong> ${order.installationDate || "-"}</p>
               <p style="margin-top:6px"><strong>Payment Status:</strong> ${paymentStatus(order)}</p>
               <p style="color:var(--muted);white-space:pre-wrap">${order.installationNotes || "No installation notes"}</p>
+              <div class="order-items">
+                <div class="payment-row"><span>Production Status</span><strong>${productionInfo.label}</strong></div>
+                <p style="color:${productionInfo.done ? "var(--muted)" : "#991b1b"};margin:4px 0 8px">${productionInfo.detail}</p>
+                <div class="payment-row"><span>Installation Status</span><strong>${installationInfo.label}</strong></div>
+                <p style="color:${installationInfo.done ? "var(--muted)" : "#991b1b"};margin-top:4px">${installationInfo.detail}</p>
+              </div>
               <div class="order-items">
                 <div class="payment-row"><span>Total Amount</span><strong>${money(order.total)}</strong></div>
                 <div class="payment-row"><span>Deposit</span><strong>${money(order.deposit)}</strong></div>
@@ -2913,19 +3808,38 @@
               </div>
               ${currentRole === "admin" ? `
                 <div class="order-items">
-                  <div class="payment-row"><span>Total Cost</span><strong>${money(orderCostTotal(order))}</strong></div>
-                  <div class="payment-row"><span>Gross Profit</span><strong>${money(orderGrossProfit(order))}</strong></div>
-                  <div class="payment-row"><span>Gross Margin</span><strong>${orderGrossMargin(order).toFixed(1)}%</strong></div>
+                  <div class="payment-row"><span>Material Cost</span><strong>${money(cost.material)}</strong></div>
+                  <div class="payment-row"><span>Hardware Cost</span><strong>${money(cost.hardware)}</strong></div>
+                  <div class="payment-row"><span>Installation Cost</span><strong>${money(cost.installation)}</strong></div>
+                  <div class="payment-row"><span>Transport Cost</span><strong>${money(cost.transport)}</strong></div>
+                  <div class="payment-row"><span>Total Cost</span><strong>${money(cost.total)}</strong></div>
+                  <div class="payment-row"><span>Profit</span><strong>${money(cost.profit)}</strong></div>
+                  <div class="payment-row"><span>Margin</span><strong>${cost.margin.toFixed(1)}%</strong></div>
                 </div>
                 <div class="payment-grid">
-                  <div class="field"><label>Material Cost</label><input type="number" value="${order.costs && order.costs.material || 0}" onchange="updateOrderCost('${order.id}','material',this.value)" /></div>
+                  <div class="field"><label>Material Cost Override</label><input type="number" value="${order.costs && order.costs.material || 0}" onchange="updateOrderCost('${order.id}','material',this.value)" placeholder="Auto: ${autoMaterialCost(order).toFixed(2)}" /></div>
+                  <div class="field"><label>Hardware Cost Override</label><input type="number" value="${order.costs && order.costs.hardware || 0}" onchange="updateOrderCost('${order.id}','hardware',this.value)" placeholder="Auto: ${autoHardwareCost(order).toFixed(2)}" /></div>
                   <div class="field"><label>Installation Cost</label><input type="number" value="${order.costs && order.costs.installation || 0}" onchange="updateOrderCost('${order.id}','installation',this.value)" /></div>
-                  <div class="field"><label>Ads Cost</label><input type="number" value="${order.costs && order.costs.ads || 0}" onchange="updateOrderCost('${order.id}','ads',this.value)" /></div>
-                  <div class="field"><label>Other Cost</label><input type="number" value="${order.costs && order.costs.other || 0}" onchange="updateOrderCost('${order.id}','other',this.value)" /></div>
+                  <div class="field"><label>Transport Cost</label><input type="number" value="${order.costs && order.costs.transport || 0}" onchange="updateOrderCost('${order.id}','transport',this.value)" /></div>
+                </div>
+                <div class="order-items">
+                  <strong>Cost Debug Panel</strong>
+                  <p style="color:var(--muted);font-size:13px;margin-top:4px">Checks: SQFT = width x height / 92903.04. Chargeable SQFT applies product minimum. Cost uses mapped Excel inventory categories, split into material and hardware.</p>
+                  ${debugRows.map((row) => `
+                    <div style="border-top:1px solid var(--line);padding-top:8px;margin-top:8px">
+                      <strong>${row.item.label || "Item"} - ${row.productName}</strong>
+                      <div class="payment-row"><span>Area / Chargeable / Qty</span><strong>${row.actualSqft.toFixed(2)} sqft / ${row.chargeableSqft.toFixed(2)} sqft / ${row.quantity}</strong></div>
+                      <div class="payment-row"><span>Sales Formula</span><strong>${row.chargeableSqft.toFixed(2)} x ${money(product(row.item.productId).price)} x ${row.quantity} = ${money(row.saleAmount)}</strong></div>
+                      <div class="payment-row"><span>Mapped Inventory Category</span><strong>${row.categories.length ? row.categories.join(", ") : "Unmapped"}</strong></div>
+                      <div class="payment-row"><span>Mapped Materials</span><strong>${row.stockItems.length}</strong></div>
+                      <div class="payment-row"><span>Material Cost Formula</span><strong>${money(row.materialStockCost)} x ${row.quantity} = ${money(row.materialCost)}</strong></div>
+                      <div class="payment-row"><span>Hardware Cost Formula</span><strong>${money(row.hardwareStockCost)} x ${row.quantity} = ${money(row.hardwareCost)}</strong></div>
+                    </div>
+                  `).join("")}
                 </div>
               ` : ""}
               <div class="order-items">
-                ${(order.items || []).map((item) => `<div>${item.label || "Item"} - ${product(item.productId).name} - ${item.widthMm || 0} x ${item.heightMm || 0} mm - Qty ${item.quantity || 0}</div>`).join("")}
+                ${(order.items || []).map((item) => `<div>${item.label || "Item"} - ${product(item.productId).name} - ${item.widthMm || 0} x ${item.heightMm || 0} mm - Qty ${item.quantity || 0}${itemExtraDetails(item) ? `<p style="color:var(--muted);font-size:12px">${itemExtraDetails(item)}</p>` : ""}</div>`).join("")}
               </div>
             </div>
             <div style="display:grid;gap:8px;text-align:right">
@@ -2935,7 +3849,8 @@
               <button class="btn danger" onclick="deleteOrder('${order.id}')">Delete Order</button>
             </div>
           </div>
-        `).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No orders yet. Change a quotation status to Won, then click Convert to Order.</p>`;
+        `;
+        }).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No orders yet. Change a quotation status to Won, then click Convert to Order.</p>`;
       }
       function renderPendingBalances() {
         const pending = orders.filter((order) => unpaidTotal(order) > 0);
@@ -3001,61 +3916,108 @@
           <div class="boss-grid">
             <div class="metric"><span class="eyebrow">Total Sales</span><strong>${money(sales)}</strong></div>
             <div class="metric"><span class="eyebrow">Total Cost</span><strong>${money(cost)}</strong></div>
-            <div class="metric"><span class="eyebrow">Gross Profit</span><strong>${money(profit)}</strong></div>
-            <div class="metric"><span class="eyebrow">Gross Margin</span><strong>${margin.toFixed(1)}%</strong></div>
+            <div class="metric"><span class="eyebrow">Profit</span><strong>${money(profit)}</strong></div>
+            <div class="metric"><span class="eyebrow">Margin</span><strong>${margin.toFixed(1)}%</strong></div>
           </div>
           <div class="table-wrap" style="margin-top:14px">
             <table>
-              <thead><tr><th>Order</th><th>Customer</th><th class="right">Sales</th><th class="right">Cost</th><th class="right">Gross Profit</th><th class="right">Margin</th></tr></thead>
+              <thead><tr><th>Order</th><th>Customer</th><th class="right">Sales</th><th class="right">Material</th><th class="right">Hardware</th><th class="right">Installation</th><th class="right">Transport</th><th class="right">Total Cost</th><th class="right">Profit</th><th class="right">Margin</th></tr></thead>
               <tbody>
-                ${orders.map((order) => `<tr><td>${order.orderNo}</td><td>${order.customer.name || "-"}</td><td class="right">${money(order.total)}</td><td class="right">${money(orderCostTotal(order))}</td><td class="right">${money(orderGrossProfit(order))}</td><td class="right">${orderGrossMargin(order).toFixed(1)}%</td></tr>`).join("") || `<tr><td colspan="6">No orders yet.</td></tr>`}
+                ${orders.map((order) => {
+                  const rowCost = orderCostBreakdown(order);
+                  return `<tr><td>${order.orderNo}</td><td>${order.customer.name || "-"}</td><td class="right">${money(order.total)}</td><td class="right">${money(rowCost.material)}</td><td class="right">${money(rowCost.hardware)}</td><td class="right">${money(rowCost.installation)}</td><td class="right">${money(rowCost.transport)}</td><td class="right">${money(rowCost.total)}</td><td class="right">${money(rowCost.profit)}</td><td class="right">${rowCost.margin.toFixed(1)}%</td></tr>`;
+                }).join("") || `<tr><td colspan="10">No orders yet.</td></tr>`}
               </tbody>
             </table>
           </div>
         `;
       }
       function renderProductions() {
-        document.getElementById("productions").innerHTML = productions.length ? productions.map((production) => `
+        const productionCard = (production) => `
           <div class="ops-card">
             <div class="ops-head">
               <div>
-                <strong>${production.productionNo}</strong> <span class="pill">${production.orderNo}</span> ${production.inventoryDeducted ? `<span class="pill">Inventory Deducted</span>` : ""}
+                <strong>${production.productionNo}</strong> <span class="pill">${production.orderNo}</span> ${production.inventoryDeducted ? `<span class="pill">Inventory Deducted</span>` : ""} ${isProductionOverdue(production) ? `<span class="pill" style="background:#fef2f2;color:#991b1b">Production Alert</span>` : ""}
                 <p style="color:var(--muted);margin-top:5px">${production.customer.name || "Unnamed Customer"} - ${production.customer.phone || "-"} - ${production.customer.address || "-"}</p>
+                <p style="color:var(--muted);margin-top:5px">Created: ${String(production.createdAt || "").slice(0, 10) || "-"} ${production.startedAt ? ` | Started: ${String(production.startedAt).slice(0, 10)}` : ""} ${production.completedAt ? ` | Completed: ${String(production.completedAt).slice(0, 10)}` : ""}</p>
+                ${productionAlertText(production) ? `<p style="color:#991b1b;font-weight:900;margin-top:5px">${productionAlertText(production)}</p>` : ""}
                 <div class="field" style="margin-top:10px;max-width:320px"><label>Area</label><input value="${production.customer.area || ""}" onchange="updateProductionArea('${production.id}',this.value)" /></div>
               </div>
               <select style="max-width:220px" onchange="updateProductionStatus('${production.id}',this.value)">
                 ${productionStatuses.map(([value, label]) => `<option value="${value}" ${production.status === value ? "selected" : ""}>${label}</option>`).join("")}
               </select>
             </div>
+            <div class="field" style="margin-bottom:12px"><label>Not Ready Reason / Delay Reason</label><textarea rows="2" placeholder="Example: waiting material, colour not confirmed, customer measurement pending" onchange="updateProductionField('${production.id}','delayReason',this.value)">${production.delayReason || ""}</textarea></div>
+            ${production.stockMovements && production.stockMovements.length ? `
+              <div class="order-items">
+                <strong>Stock Deduction Tracking</strong>
+                ${(production.stockMovements || []).slice(0, 8).map((move) => `<div class="payment-row"><span>${move.name} (${move.unit || "-"})</span><strong>-${Number(move.deductQty || 0).toFixed(2)}</strong></div>`).join("")}
+                <p style="color:var(--muted);font-size:13px">Deducted on ${String(production.stockMovements[0].date || "").slice(0, 10)}. Full record is saved inside this production sheet.</p>
+              </div>
+            ` : ""}
             ${(production.items || []).map((item) => `
               <div class="ops-line-grid">
                 <div class="field"><label>Product</label><input value="${product(item.productId).name}" readonly /></div>
                 <div class="field"><label>Location</label><input value="${item.label || ""}" onchange="updateProductionItem('${production.id}','${item.id}','label',this.value)" /></div>
                 <div class="field"><label>Width mm</label><input value="${item.widthMm || 0}" readonly /></div>
-                <div class="field"><label>Qty</label><input value="${item.quantity || 0}" readonly /></div>
-                <div class="field"><label>Color</label><input value="${item.color || ""}" onchange="updateProductionItem('${production.id}','${item.id}','color',this.value)" /></div>
-                <div class="field"><label>Opening</label><input value="${item.openingDirection || ""}" onchange="updateProductionItem('${production.id}','${item.id}','openingDirection',this.value)" /></div>
-                <div class="field"><label>Lock</label><input value="${item.lockSet || ""}" onchange="updateProductionItem('${production.id}','${item.id}','lockSet',this.value)" /></div>
-                <div class="field"><label>Track</label><input value="${item.trackType || ""}" onchange="updateProductionItem('${production.id}','${item.id}','trackType',this.value)" /></div>
-                <div class="field"><label>Remark</label><input value="${item.remark || ""}" onchange="updateProductionItem('${production.id}','${item.id}','remark',this.value)" /></div>
                 <div class="field"><label>Height mm</label><input value="${item.heightMm || 0}" readonly /></div>
+                <div class="field"><label>Qty</label><input value="${item.quantity || 0}" readonly /></div>
+                <div class="field"><label>Track Type</label><input value="${item.trackType || ""}" onchange="updateProductionItem('${production.id}','${item.id}','trackType',this.value)" /></div>
+                <div class="field"><label>Track Width mm</label><input value="${item.trackWidthMm || 0}" onchange="updateProductionItem('${production.id}','${item.id}','trackWidthMm',this.value)" /></div>
+                <div class="field"><label>Handle Height mm</label><input value="${item.handleHeightMm || item.trackHeightMm || 0}" onchange="updateProductionItem('${production.id}','${item.id}','handleHeightMm',this.value)" /></div>
+                <div class="field"><label>Installation Type</label><input value="${item.installationType || ""}" onchange="updateProductionItem('${production.id}','${item.id}','installationType',this.value)" /></div>
+                <div class="field"><label>Opening Direction</label><input value="${item.openingDirection || ""}" onchange="updateProductionItem('${production.id}','${item.id}','openingDirection',this.value)" /></div>
+                <div class="field"><label>Colour</label><input value="${item.color || ""}" onchange="updateProductionItem('${production.id}','${item.id}','color',this.value)" /></div>
+                <div class="field"><label>Remark</label><input value="${item.remark || ""}" onchange="updateProductionItem('${production.id}','${item.id}','remark',this.value)" /></div>
               </div>
             `).join("")}
           </div>
-        `).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No production sheets yet.</p>`;
+        `;
+        const groups = [
+          ["pending-production", "Not Yet Produced / 还没生产"],
+          ["in-production", "In Production / 生产中"],
+          ["completed", "Completed / 生产完毕"]
+        ];
+        document.getElementById("productions").innerHTML = productions.length ? groups.map(([status, label]) => {
+          const rows = productions.filter((production) => production.status === status);
+          return `
+            <div style="margin-bottom:16px">
+              <div class="panel-head" style="margin-bottom:8px">
+                <h2>${label}</h2>
+                <span class="pill">${rows.length}</span>
+              </div>
+              ${rows.length ? rows.map(productionCard).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No ${label} production sheets.</p>`}
+            </div>
+          `;
+        }).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No production sheets yet.</p>`;
       }
       function renderProductionStatus() {
-        document.getElementById("productionStatus").innerHTML = productions.length ? productions.map((production) => `
-          <div class="history-card">
-            <div>
-              <strong>${production.productionNo}</strong> <span class="pill">${production.orderNo}</span> ${production.inventoryDeducted ? `<span class="pill">Inventory Deducted</span>` : ""}
-              <p style="color:var(--muted);margin-top:5px">${production.customer.name || "Unnamed Customer"} - ${production.customer.area || "No area"}</p>
+        const groups = [
+          ["pending-production", "Not Yet Produced / 还没生产"],
+          ["in-production", "In Production / 生产中"],
+          ["completed", "Completed / 生产完毕"]
+        ];
+        document.getElementById("productionStatus").innerHTML = productions.length ? groups.map(([status, label]) => {
+          const rows = productions.filter((production) => production.status === status);
+          return `
+            <div style="margin-bottom:16px">
+              <div class="panel-head" style="margin-bottom:8px"><h2>${label}</h2><span class="pill">${rows.length}</span></div>
+              ${rows.length ? rows.map((production) => `
+                <div class="history-card">
+                  <div>
+                    <strong>${production.productionNo}</strong> <span class="pill">${production.orderNo}</span> ${production.inventoryDeducted ? `<span class="pill">Inventory Deducted</span>` : ""} ${isProductionOverdue(production) ? `<span class="pill" style="background:#fef2f2;color:#991b1b">Alert</span>` : ""}
+                    <p style="color:var(--muted);margin-top:5px">${production.customer.name || "Unnamed Customer"} - ${production.customer.area || "No area"}</p>
+                    ${productionAlertText(production) ? `<p style="color:#991b1b;font-weight:900;margin-top:5px">${productionAlertText(production)}</p>` : ""}
+                    ${production.delayReason ? `<p style="color:var(--muted);margin-top:5px"><strong>Reason:</strong> ${production.delayReason}</p>` : ""}
+                  </div>
+                  <select onchange="updateProductionStatus('${production.id}',this.value)">
+                    ${productionStatuses.map(([value, label]) => `<option value="${value}" ${production.status === value ? "selected" : ""}>${label}</option>`).join("")}
+                  </select>
+                </div>
+              `).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No ${label} production sheets.</p>`}
             </div>
-            <select onchange="updateProductionStatus('${production.id}',this.value)">
-              ${productionStatuses.map(([value, label]) => `<option value="${value}" ${production.status === value ? "selected" : ""}>${label}</option>`).join("")}
-            </select>
-          </div>
-        `).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No production status yet.</p>`;
+          `;
+        }).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No production status yet.</p>`;
       }
       function renderInstallations() {
         document.getElementById("installations").innerHTML = installations.length ? installations.map((installation) => `
@@ -3078,11 +4040,14 @@
               </div>
             </div>
             <div class="order-items">
-              ${(installation.items || []).map((item) => `<div>${item.label || "Item"} - ${product(item.productId).name} - ${item.widthMm || 0} x ${item.heightMm || 0} mm - Qty ${item.quantity || 0}</div>`).join("")}
+              ${(installation.items || []).map((item) => `<div>${item.label || "Item"} - ${product(item.productId).name} - ${item.widthMm || 0} x ${item.heightMm || 0} mm - Qty ${item.quantity || 0}${itemExtraDetails(item) ? `<p style="color:var(--muted);font-size:12px">${itemExtraDetails(item)}</p>` : ""}</div>`).join("")}
             </div>
             <div class="payment-grid" style="margin-top:12px">
               <div class="field"><label>Installer Name</label><input value="${installation.installerName || ""}" onchange="updateInstallationField('${installation.id}','installerName',this.value)" placeholder="Installer name" /></div>
               <div class="field"><label>Completed Date</label><input type="date" value="${installation.completedDate || ""}" onchange="updateInstallationField('${installation.id}','completedDate',this.value)" /></div>
+              <div class="field"><label>Arrival Time</label><input type="time" value="${installation.arrivalTime || ""}" onchange="updateInstallationField('${installation.id}','arrivalTime',this.value)" /></div>
+              <div class="field"><label>Finish Time</label><input type="time" value="${installation.finishTime || ""}" onchange="updateInstallationField('${installation.id}','finishTime',this.value)" /></div>
+              <div class="field"><label>Duration</label><input value="${installationDuration(installation.arrivalTime, installation.finishTime)}" readonly /></div>
               <div class="field"><label>Customer Rating</label><select onchange="updateInstallationField('${installation.id}','customerRating',this.value)">
                 ${[0,1,2,3,4,5].map((rating) => `<option value="${rating}" ${Number(installation.customerRating || 0) === rating ? "selected" : ""}>${rating ? `${rating} / 5` : "Not Rated"}</option>`).join("")}
               </select></div>
@@ -3094,12 +4059,47 @@
                 <input type="checkbox" ${installation.referredFriend ? "checked" : ""} onchange="updateInstallationField('${installation.id}','referredFriend',this.checked)" />
                 <span>Customer Referred Friend</span>
               </label>
-              <div class="field"><label>Referral Note</label><input value="${installation.referralNote || ""}" onchange="updateInstallationField('${installation.id}','referralNote',this.value)" placeholder="Friend name / phone / note" /></div>
+              <div class="field"><label>Referral Name</label><input value="${installation.referralName || ""}" onchange="updateInstallationField('${installation.id}','referralName',this.value)" placeholder="Referral customer name" /></div>
+              <div class="field"><label>Referral Phone</label><input value="${installation.referralPhone || ""}" onchange="updateInstallationField('${installation.id}','referralPhone',this.value)" placeholder="Referral phone number" /></div>
             </div>
+            <div class="payment-grid" style="margin-top:12px">
+              <div class="field"><label>Payment Method</label><select onchange="updateInstallationField('${installation.id}','paymentMethod',this.value)">
+                <option value="">Select</option>
+                ${installationPaymentMethods.map((method) => `<option value="${method}" ${installation.paymentMethod === method ? "selected" : ""}>${method}</option>`).join("")}
+              </select></div>
+              <div class="field"><label>Amount Collected RM</label><input type="number" min="0" value="${installation.amountCollected || ""}" onchange="updateInstallationField('${installation.id}','amountCollected',this.value)" placeholder="0.00" /></div>
+              <label class="check-tile" style="align-self:end">
+                <input type="checkbox" ${installation.receiptUploaded ? "checked" : ""} onchange="updateInstallationField('${installation.id}','receiptUploaded',this.checked)" />
+                <span>Receipt Uploaded</span>
+              </label>
+            </div>
+            <div class="payment-grid" style="margin-top:12px">
+              <div class="field" style="grid-column:1/-1"><label>Site Issue / Problem Record</label><textarea rows="3" onchange="updateInstallationField('${installation.id}','siteIssue',this.value)" placeholder="Wall uneven / Floor not level / Customer request / Other issue">${installation.siteIssue || ""}</textarea></div>
+              <div class="field" style="grid-column:1/-1"><label>Customer Remarks</label><textarea rows="3" onchange="updateInstallationField('${installation.id}','customerRemarks',this.value)" placeholder="Customer remarks">${installation.customerRemarks || ""}</textarea></div>
+            </div>
+            <p class="eyebrow" style="margin-top:14px">Pre-install Check</p>
+            <div class="install-checklist">
+              ${preInstallCheckLabels.map(([field, label]) => `
+                <label class="check-tile">
+                  <input type="checkbox" ${installation.checklist && installation.checklist[field] ? "checked" : ""} onchange="updateInstallationChecklist('${installation.id}','${field}',this.checked)" />
+                  <span>${label}</span>
+                </label>
+              `).join("")}
+            </div>
+            <p class="eyebrow" style="margin-top:14px">Installation Checklist</p>
             <div class="install-checklist">
               ${checklistLabels.map(([field, label]) => `
                 <label class="check-tile">
                   <input type="checkbox" ${installation.checklist && installation.checklist[field] ? "checked" : ""} onchange="updateInstallationChecklist('${installation.id}','${field}',this.checked)" />
+                  <span>${label}</span>
+                </label>
+              `).join("")}
+            </div>
+            <p class="eyebrow" style="margin-top:14px">Customer Confirmation</p>
+            <div class="install-checklist">
+              ${customerConfirmationLabels.map(([field, label]) => `
+                <label class="check-tile">
+                  <input type="checkbox" ${installation.customerConfirmation && installation.customerConfirmation[field] ? "checked" : ""} onchange="updateCustomerConfirmation('${installation.id}','${field}',this.checked)" />
                   <span>${label}</span>
                 </label>
               `).join("")}
@@ -3122,6 +4122,15 @@
           <div class="install-card">
             <strong>${installation.installationNo}</strong> <span class="pill">${installation.orderNo}</span>
             <p style="color:var(--muted);margin-top:5px">${installation.customer.name || "Unnamed Customer"} - ${installation.customer.phone || "-"}</p>
+            <p class="eyebrow" style="margin-top:12px">Customer Confirmation</p>
+            <div class="install-checklist">
+              ${customerConfirmationLabels.map(([field, label]) => `
+                <label class="check-tile">
+                  <input type="checkbox" ${installation.customerConfirmation && installation.customerConfirmation[field] ? "checked" : ""} onchange="updateCustomerConfirmation('${installation.id}','${field}',this.checked)" />
+                  <span>${label}</span>
+                </label>
+              `).join("")}
+            </div>
             <p class="eyebrow" style="margin-top:12px">Customer Signature</p>
             <canvas class="signature-pad" data-signature-id="${installation.id}"></canvas>
             <div class="actions" style="margin-top:8px">
@@ -3143,7 +4152,11 @@
                 <p><strong>Installer:</strong> ${record.installerName || "-"}</p>
                 <p><strong>Rating:</strong> ${record.customerRating ? `${record.customerRating} / 5` : "-"}</p>
                 <p><strong>Photo Uploaded:</strong> ${record.photoUploaded ? "Yes" : "No"}</p>
-                <p><strong>Referred Friend:</strong> ${record.referredFriend ? "Yes" : "No"} ${record.referralNote ? `- ${record.referralNote}` : ""}</p>
+                <p><strong>Arrival / Finish:</strong> ${record.arrivalTime || "-"} / ${record.finishTime || "-"} (${record.duration || "-"})</p>
+                <p><strong>Payment Collection:</strong> ${record.paymentMethod || "-"} ${record.amountCollected ? money(record.amountCollected) : ""} ${record.receiptUploaded ? "- Receipt Uploaded" : ""}</p>
+                <p><strong>Site Issue:</strong> ${record.siteIssue || "-"}</p>
+                <p><strong>Customer Remarks:</strong> ${record.customerRemarks || "-"}</p>
+                <p><strong>Referred Friend:</strong> ${record.referredFriend ? "Yes" : "No"} ${record.referralName || record.referralPhone ? `- ${record.referralName || ""} ${record.referralPhone || ""}` : ""}</p>
               </div>
               ${record.signature ? `<img alt="Customer signature" src="${record.signature}" style="max-width:220px;border:1px solid var(--line);border-radius:10px;background:white" />` : `<span style="color:var(--muted)">No signature</span>`}
             </div>
@@ -3172,7 +4185,8 @@
                 <input type="checkbox" ${installation.referredFriend ? "checked" : ""} onchange="updateInstallationField('${installation.id}','referredFriend',this.checked)" />
                 <span>Customer Referred Friend</span>
               </label>
-              <div class="field"><label>Referral Note</label><input value="${installation.referralNote || ""}" onchange="updateInstallationField('${installation.id}','referralNote',this.value)" placeholder="Friend name / phone / note" /></div>
+              <div class="field"><label>Referral Name</label><input value="${installation.referralName || ""}" onchange="updateInstallationField('${installation.id}','referralName',this.value)" placeholder="Referral customer name" /></div>
+              <div class="field"><label>Referral Phone</label><input value="${installation.referralPhone || ""}" onchange="updateInstallationField('${installation.id}','referralPhone',this.value)" placeholder="Referral phone number" /></div>
               <div class="field"><label>Google Review Link</label><input value="${googleReviewLink}" readonly /></div>
             </div>
           </div>
@@ -3288,6 +4302,7 @@
         }
         document.getElementById("formTitle").textContent = editingId ? `Editing ${quoteNo}` : `New Quote ${quoteNo}`;
         document.querySelectorAll(".primary").forEach((button) => { if (button.textContent.includes("Save")) button.textContent = editingId ? "Update Quote" : "Save Quote"; });
+        document.getElementById("summarySubtotal").textContent = money(subtotal());
         document.getElementById("summaryTotal").textContent = money(total());
         document.getElementById("summaryBalance").textContent = money(balance());
         document.getElementById("orderConvertPanel").style.display = document.getElementById("status").value === "won" ? "block" : "none";
@@ -3311,6 +4326,7 @@
         renderCustomerReviews();
         renderWarranties();
         applyRoleAccess();
+        applyLanguageToDom();
         setupSignaturePads();
       }
       function setupSignaturePads() {
@@ -3371,7 +4387,6 @@
           render();
           scheduleCloudSave();
         } catch (error) {
-          console.error(error);
           toast("Cloud connection failed. Local mode active.");
         }
       }

@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "node scripts/serve.mjs standalone-preview.html",
     "build": "node scripts/build.mjs",
+    "lint": "node scripts/lint.mjs",
     "preview": "node scripts/serve.mjs dist"
   },
   "dependencies": {},

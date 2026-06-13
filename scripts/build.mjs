@@ -6,7 +6,10 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const dist = join(root, "dist");
 const source = join(root, "standalone-preview.html");
 const sqlSource = join(root, "outputs", "supabase-setup.sql");
+const businessSqlSource = join(root, "outputs", "supabase-business-migration.sql");
+const envGuideSource = join(root, "outputs", "supabase-env-guide.md");
 const envLocal = join(root, ".env.local");
+const googleSiteVerification = "puBEvWdWzBbxZBnQF7Fdhih0mY9dkqa5bHY-0EgGaUs";
 
 if (existsSync(envLocal)) {
   for (const line of readFileSync(envLocal, "utf8").split(/\r?\n/)) {
@@ -31,10 +34,15 @@ const envScript = `
 })();
 </script>`;
 
-const html = readFileSync(source, "utf8").replace("<body>", `<body>${envScript}`);
+const verificationMeta = `<meta name="google-site-verification" content="${googleSiteVerification}" />`;
+const html = readFileSync(source, "utf8")
+  .replace("</head>", `    ${verificationMeta}\n  </head>`)
+  .replace("<body>", `<body>${envScript}`);
 
 writeFileSync(join(dist, "index.html"), html, "utf8");
 writeFileSync(join(dist, "Eco-Screen-Quotation-System.html"), html, "utf8");
 copyFileSync(sqlSource, join(dist, "supabase-setup.sql"));
+copyFileSync(businessSqlSource, join(dist, "supabase-business-migration.sql"));
+copyFileSync(envGuideSource, join(dist, "supabase-env-guide.md"));
 
-console.log("Build complete: dist/index.html");
+process.stdout.write("Build complete: dist/index.html\n");

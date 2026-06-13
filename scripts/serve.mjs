@@ -34,5 +34,5 @@ createServer((request, response) => {
     response.end(String(error));
   }
 }).listen(port, () => {
-  console.log(`Eco Screen preview running at http://localhost:${port}`);
+  process.stdout.write(`Eco Screen preview running at http://localhost:${port}\n`);
 });
