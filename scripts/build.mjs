@@ -10,6 +10,7 @@ const businessSqlSource = join(root, "outputs", "supabase-business-migration.sql
 const incrementalSqlSource = join(root, "outputs", "secretary-payment-remarks-migration.sql");
 const calendarSqlSource = join(root, "outputs", "google-calendar-appointments-migration.sql");
 const primarySqlSource = join(root, "outputs", "supabase-primary-database-migration.sql");
+const staffSqlSource = join(root, "outputs", "supabase-staff-management-migration.sql");
 const envGuideSource = join(root, "outputs", "supabase-env-guide.md");
 const calendarGuideSource = join(root, "outputs", "google-calendar-webhook-guide.md");
 const envLocal = join(root, ".env.local");
@@ -31,16 +32,16 @@ const envScript = `
   var anonKey = ${JSON.stringify(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "")};
   var googleCalendarWebhook = ${JSON.stringify(process.env.NEXT_PUBLIC_GOOGLE_CALENDAR_WEBHOOK_URL || "")};
   var siteUrl = ${JSON.stringify(process.env.NEXT_PUBLIC_SITE_URL || process.env.VERCEL_PROJECT_PRODUCTION_URL && `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` || "")};
-  if (url && !localStorage.getItem("eco-screen-supabase-url")) {
+  if (url) {
     localStorage.setItem("eco-screen-supabase-url", url);
   }
-  if (anonKey && !localStorage.getItem("eco-screen-supabase-anon-key")) {
+  if (anonKey) {
     localStorage.setItem("eco-screen-supabase-anon-key", anonKey);
   }
-  if (googleCalendarWebhook && !localStorage.getItem("eco-screen-google-calendar-webhook")) {
+  if (googleCalendarWebhook) {
     localStorage.setItem("eco-screen-google-calendar-webhook", googleCalendarWebhook);
   }
-  if (siteUrl && !localStorage.getItem("eco-screen-site-url")) {
+  if (siteUrl) {
     localStorage.setItem("eco-screen-site-url", siteUrl.replace(/\\/$/, ""));
   }
 })();
@@ -58,6 +59,7 @@ copyFileSync(businessSqlSource, join(dist, "supabase-business-migration.sql"));
 copyFileSync(incrementalSqlSource, join(dist, "secretary-payment-remarks-migration.sql"));
 copyFileSync(calendarSqlSource, join(dist, "google-calendar-appointments-migration.sql"));
 copyFileSync(primarySqlSource, join(dist, "supabase-primary-database-migration.sql"));
+copyFileSync(staffSqlSource, join(dist, "supabase-staff-management-migration.sql"));
 copyFileSync(envGuideSource, join(dist, "supabase-env-guide.md"));
 copyFileSync(calendarGuideSource, join(dist, "google-calendar-webhook-guide.md"));
 
