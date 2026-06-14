@@ -486,10 +486,13 @@
       <div class="copy-card">
         <div class="panel-head"><h2>Supabase Cloud Login</h2><button class="btn" onclick="hideCloudModal()">Close</button></div>
         <div class="form-grid">
+          <div class="field"><label>Supabase URL</label><input id="supabaseUrlInput" placeholder="https://xxxx.supabase.co" /></div>
+          <div class="field"><label>Supabase Anon Key</label><input id="supabaseAnonKeyInput" placeholder="Paste anon public key" /></div>
           <div class="field"><label>Email</label><input id="cloudEmailInput" type="email" placeholder="user@email.com" /></div>
           <div class="field"><label>Password</label><input id="cloudPasswordInput" type="password" placeholder="Password" /></div>
         </div>
         <div class="actions" style="margin-top:12px">
+          <button class="btn" onclick="saveCloudConfig()">Save Config</button>
           <button class="btn primary" onclick="cloudLogin()">Login</button>
           <button class="btn" onclick="cloudSignUp()">Create User</button>
           <button class="btn danger" onclick="cloudLogout()">Logout</button>
@@ -2855,17 +2858,16 @@
       function supabaseAnonKey() { return localStorage.getItem(supabaseAnonKeyKey) || ""; }
       function supabaseReady() { return Boolean(supabaseUrl() && supabaseAnonKey()); }
       function showCloudModal() {
+        document.getElementById("supabaseUrlInput").value = supabaseUrl();
+        document.getElementById("supabaseAnonKeyInput").value = supabaseAnonKey();
         renderCloudStatus();
         document.getElementById("cloudModal").classList.add("show");
       }
       function hideCloudModal() { document.getElementById("cloudModal").classList.remove("show"); }
       function saveCloudConfig() {
-        if (!supabaseReady()) {
-          cloudState.error = "Supabase URL or Anon Key is missing. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in Vercel.";
-          toast(cloudState.error);
-        } else {
-          cloudState.error = "";
-        }
+        nativeSetItem(supabaseUrlKey, document.getElementById("supabaseUrlInput").value.trim());
+        nativeSetItem(supabaseAnonKeyKey, document.getElementById("supabaseAnonKeyInput").value.trim());
+        toast("Supabase config saved.");
         renderCloudStatus();
       }
       function renderCloudStatus() {
@@ -2876,7 +2878,7 @@
         if (text) {
           if (cloudState.loading) text.textContent = "Loading data from Supabase...";
           else if (cloudState.error) text.textContent = cloudState.error;
-          else text.textContent = cloudState.session ? `Logged in as ${cloudState.session.user && cloudState.session.user.email || "user"}. Role: ${cloudState.role || currentRole}. Data source: ${cloudState.source}.` : (supabaseReady() ? "Supabase is configured. Login with email and password." : "Supabase environment variables are missing.");
+          else text.textContent = cloudState.session ? `Logged in. Role: ${cloudState.role || currentRole}. Data source: ${cloudState.source}.` : "Local fallback mode. Login to use Supabase as the main database.";
         }
       }
       async function supabaseFetch(path, options = {}) {
@@ -2892,46 +2894,9 @@
         const text = await response.text();
         return text ? JSON.parse(text) : null;
       }
-      async function restoreSessionFromUrlHash() {
-        if (!location.hash || !location.hash.includes("access_token")) return;
-        const params = new URLSearchParams(location.hash.slice(1));
-        const accessToken = params.get("access_token");
-        if (!accessToken) return;
-        cloudState.session = {
-          access_token: accessToken,
-          refresh_token: params.get("refresh_token") || "",
-          token_type: params.get("token_type") || "bearer",
-          expires_in: Number(params.get("expires_in") || 3600),
-          expires_at: Math.floor(Date.now() / 1000) + Number(params.get("expires_in") || 3600),
-          user: null
-        };
-        try {
-          cloudState.session.user = await supabaseFetch("/auth/v1/user");
-        } catch (error) {
-          cloudState.session.user = { email: "verified user" };
-        }
-        nativeSetItem(supabaseSessionKey, JSON.stringify(cloudState.session));
-        history.replaceState(null, document.title, location.pathname + location.search);
-      }
-      async function refreshCloudSessionIfNeeded() {
-        if (!cloudState.session || !cloudState.session.refresh_token) return;
-        const expiresAt = Number(cloudState.session.expires_at || 0);
-        if (expiresAt && expiresAt - Math.floor(Date.now() / 1000) > 120) return;
-        try {
-          cloudState.session = await supabaseFetch("/auth/v1/token?grant_type=refresh_token", {
-            method: "POST",
-            body: JSON.stringify({ refresh_token: cloudState.session.refresh_token })
-          });
-          nativeSetItem(supabaseSessionKey, JSON.stringify(cloudState.session));
-        } catch (error) {
-          cloudState.session = null;
-          nativeSetItem(supabaseSessionKey, "null");
-        }
-      }
       async function cloudSignUp() {
         try {
           saveCloudConfig();
-          if (!supabaseReady()) return;
           cloudState.error = "";
           const email = document.getElementById("cloudEmailInput").value.trim();
           const password = document.getElementById("cloudPasswordInput").value;
@@ -2950,7 +2915,6 @@
       async function cloudLogin() {
         try {
           saveCloudConfig();
-          if (!supabaseReady()) return;
           cloudState.error = "";
           const email = document.getElementById("cloudEmailInput").value.trim();
           const password = document.getElementById("cloudPasswordInput").value;
@@ -5522,14 +5486,8 @@
       }
       async function initializeCloud() {
         renderCloudStatus();
-        await restoreSessionFromUrlHash();
         if (!cloudState.session || !supabaseReady()) return;
         try {
-          await refreshCloudSessionIfNeeded();
-          if (!cloudState.session) {
-            renderCloudStatus();
-            return;
-          }
           await loadCloudRole();
           const loadedFlag = `eco-screen-cloud-loaded-${cloudState.session.user && cloudState.session.user.id}`;
           if (!sessionStorage.getItem(loadedFlag)) {

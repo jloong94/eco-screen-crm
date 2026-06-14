@@ -31,16 +31,16 @@ const envScript = `
   var anonKey = ${JSON.stringify(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "")};
   var googleCalendarWebhook = ${JSON.stringify(process.env.NEXT_PUBLIC_GOOGLE_CALENDAR_WEBHOOK_URL || "")};
   var siteUrl = ${JSON.stringify(process.env.NEXT_PUBLIC_SITE_URL || process.env.VERCEL_PROJECT_PRODUCTION_URL && `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` || "")};
-  if (url) {
+  if (url && !localStorage.getItem("eco-screen-supabase-url")) {
     localStorage.setItem("eco-screen-supabase-url", url);
   }
-  if (anonKey) {
+  if (anonKey && !localStorage.getItem("eco-screen-supabase-anon-key")) {
     localStorage.setItem("eco-screen-supabase-anon-key", anonKey);
   }
-  if (googleCalendarWebhook) {
+  if (googleCalendarWebhook && !localStorage.getItem("eco-screen-google-calendar-webhook")) {
     localStorage.setItem("eco-screen-google-calendar-webhook", googleCalendarWebhook);
   }
-  if (siteUrl) {
+  if (siteUrl && !localStorage.getItem("eco-screen-site-url")) {
     localStorage.setItem("eco-screen-site-url", siteUrl.replace(/\\/$/, ""));
   }
 })();
