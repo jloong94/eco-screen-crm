@@ -25,7 +25,6 @@ Supabase SQL files:
 3. Run `secretary-payment-remarks-migration.sql`
 4. Run `google-calendar-appointments-migration.sql`
 5. Run `supabase-primary-database-migration.sql`
-6. Run `supabase-staff-management-migration.sql`
 
 Authentication roles:
 

@@ -18,13 +18,9 @@ create table if not exists public.eco_screen_profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   email text,
   role text not null default 'sales' check (role in ('admin','secretary','sales','production','installer')),
-  active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
-
-alter table public.eco_screen_profiles
-add column if not exists active boolean not null default true;
 
 alter table public.eco_screen_profiles
 drop constraint if exists eco_screen_profiles_role_check;
@@ -86,30 +82,6 @@ on public.eco_screen_profiles for update
 to authenticated
 using (auth.uid() = id)
 with check (auth.uid() = id);
-
-create or replace function public.is_eco_screen_admin()
-returns boolean
-language sql
-security definer
-set search_path = public
-as $$
-  select exists (
-    select 1
-    from public.eco_screen_profiles
-    where id = auth.uid()
-      and role = 'admin'
-      and coalesce(active, true) = true
-  );
-$$;
-
-drop policy if exists "profiles admin manage" on public.eco_screen_profiles;
-create policy "profiles admin manage"
-on public.eco_screen_profiles for all
-to authenticated
-using (public.is_eco_screen_admin())
-with check (public.is_eco_screen_admin());
-
-drop policy if exists "profiles self update" on public.eco_screen_profiles;
 
 create or replace function public.handle_new_eco_screen_user()
 returns trigger

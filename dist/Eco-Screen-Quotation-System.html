@@ -512,6 +512,7 @@
         </div>
         <div class="actions" style="margin-top:12px">
           <button class="btn primary" onclick="cloudLogin()">Login</button>
+          <button class="btn" onclick="cloudSignUp()">Create User</button>
           <button class="btn danger" onclick="cloudLogout()">Logout</button>
         </div>
         <p id="cloudStatusText" style="margin-top:12px;color:var(--muted)">Local mode. Add Supabase config to enable cloud sync.</p>
@@ -553,10 +554,6 @@
         <section class="panel" data-page="settings" data-roles="admin">
           <div class="panel-head"><h2>Price Settings</h2></div>
           <div id="settings"></div>
-        </section>
-        <section class="panel" data-page="staff" data-roles="admin">
-          <div class="panel-head"><h2>Staff Accounts</h2></div>
-          <div id="staffManagement"></div>
         </section>
       </aside>
 
@@ -686,7 +683,7 @@
           <div id="financialDashboard"></div>
         </section>
 
-        <section class="panel history no-print" data-page="profit" data-roles="admin">
+        <section class="panel history no-print" data-page="profit" data-roles="admin secretary">
           <div class="panel-head"><h2>Profit Analysis</h2></div>
           <div id="profitAnalysis"></div>
         </section>
@@ -748,8 +745,6 @@
         saveTimer: null,
         session: safeJsonParse(localStorage.getItem(supabaseSessionKey), null),
         role: null,
-        email: "",
-        active: true,
         loading: false,
         error: "",
         source: "Local fallback"
@@ -804,7 +799,6 @@
           ["financial", "Financial Dashboard"],
           ["profit", "Profit Analysis"],
           ["inventory", "Inventory"],
-          ["staff", "Staff Accounts"],
           ["settings", "Settings"]
         ],
         sales: [
@@ -825,6 +819,7 @@
           ["installation", "Installation"],
           ["pending-balance", "Pending Balance"],
           ["financial", "Financial Dashboard"],
+          ["profit", "Profit Analysis"],
           ["facebook-ads", "Facebook Ads"],
           ["warranty", "Warranty"]
         ],
@@ -894,7 +889,6 @@
       let facebookAds = safeArray(safeJsonParse(localStorage.getItem(facebookAdsKey), []));
       let appointments = normalizeAppointments(safeJsonParse(localStorage.getItem(appointmentsKey), []));
       let customerCrm = safeObject(safeJsonParse(localStorage.getItem(customerCrmKey), {}));
-      let staffProfiles = [];
       let currentRole = localStorage.getItem(roleKey) || "admin";
       let currentLanguage = localStorage.getItem(languageKey) || "en";
       if (!roleMenus[currentRole]) currentRole = "admin";
@@ -2831,10 +2825,9 @@
         ].map(([value, label]) =>
           `<button class="role-btn ${currentLanguage === value ? "active" : ""}" onclick="setLanguage('${value}')">${label}</button>`
         ).join("");
-        const canSwitchRoles = !cloudState.session || cloudState.role === "admin";
-        document.getElementById("roleButtons").innerHTML = canSwitchRoles ? roles.map(([value, label]) =>
+        document.getElementById("roleButtons").innerHTML = roles.map(([value, label]) =>
           `<button class="role-btn ${currentRole === value ? "active" : ""}" onclick="setRole('${value}')">${labelText(label)}</button>`
-        ).join("") : `<span class="pill">${labelText((roles.find((role) => role[0] === currentRole) || ["", currentRole])[1])}</span>`;
+        ).join("");
         document.getElementById("menuButtons").innerHTML = roleMenus[currentRole].map(([value, label]) =>
           `<button class="menu-btn ${currentPage === value ? "active" : ""}" onclick="setPage('${value}')">${labelText(label)}</button>`
         ).join("");
@@ -2904,7 +2897,7 @@
         if (text) {
           if (cloudState.loading) text.textContent = "Loading data from Supabase...";
           else if (cloudState.error) text.textContent = cloudState.error;
-          else text.textContent = cloudState.session ? `Logged in as ${cloudState.email || cloudState.session.user && cloudState.session.user.email || "user"}. Role: ${cloudState.role || currentRole}. Data source: ${cloudState.source}.` : (supabaseReady() ? "Supabase is configured. Login with email and password." : "Supabase environment variables are missing.");
+          else text.textContent = cloudState.session ? `Logged in as ${cloudState.session.user && cloudState.session.user.email || "user"}. Role: ${cloudState.role || currentRole}. Data source: ${cloudState.source}.` : (supabaseReady() ? "Supabase is configured. Login with email and password." : "Supabase environment variables are missing.");
         }
       }
       async function supabaseFetch(path, options = {}) {
@@ -2975,64 +2968,6 @@
           toast(cloudState.error);
         }
       }
-      function staffRoleOptions(selectedRole) {
-        return roles.map(([value, label]) => `<option value="${value}" ${selectedRole === value ? "selected" : ""}>${label}</option>`).join("");
-      }
-      async function loadStaffProfiles() {
-        if (!cloudState.session || cloudState.role !== "admin" || !supabaseReady()) return;
-        try {
-          staffProfiles = await supabaseFetch("/rest/v1/eco_screen_profiles?select=id,email,role,active,created_at,updated_at&order=email.asc") || [];
-        } catch (error) {
-          staffProfiles = [];
-          toast("Unable to load staff profiles.");
-        }
-      }
-      async function createStaffAccount() {
-        if (currentRole !== "admin" || cloudState.role !== "admin") return toast("Admin only.");
-        const email = document.getElementById("staffEmail").value.trim();
-        const password = document.getElementById("staffPassword").value;
-        const role = document.getElementById("staffRole").value;
-        if (!email || !password || password.length < 6) return toast("Enter staff email and password, minimum 6 characters.");
-        try {
-          const redirect = authRedirectUrl();
-          const redirectQuery = redirect ? `?redirect_to=${encodeURIComponent(redirect)}` : "";
-          const result = await supabaseFetch(`/auth/v1/signup${redirectQuery}`, {
-            method: "POST",
-            body: JSON.stringify({ email, password })
-          });
-          const userId = result && result.user && result.user.id;
-          if (userId) {
-            await supabaseFetch("/rest/v1/eco_screen_profiles", {
-              method: "POST",
-              headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-              body: JSON.stringify({ id: userId, email, role, active: true, updated_at: new Date().toISOString() })
-            });
-          }
-          document.getElementById("staffEmail").value = "";
-          document.getElementById("staffPassword").value = "";
-          await loadStaffProfiles();
-          renderStaffManagement();
-          toast("Staff account created.");
-        } catch (error) {
-          toast("Create staff failed. Check Supabase Auth settings.");
-        }
-      }
-      async function updateStaffProfile(id, field, value) {
-        if (currentRole !== "admin" || cloudState.role !== "admin") return toast("Admin only.");
-        const body = { [field]: field === "active" ? value === true || value === "true" : value, updated_at: new Date().toISOString() };
-        try {
-          await supabaseFetch(`/rest/v1/eco_screen_profiles?id=eq.${id}`, {
-            method: "PATCH",
-            headers: { Prefer: "return=minimal" },
-            body: JSON.stringify(body)
-          });
-          await loadStaffProfiles();
-          renderStaffManagement();
-          toast("Staff updated.");
-        } catch (error) {
-          toast("Unable to update staff.");
-        }
-      }
       async function cloudLogin() {
         try {
           saveCloudConfig();
@@ -3052,16 +2987,14 @@
           toast("Cloud login failed. Check Supabase config.");
         }
       }
-      function cloudLogout(showMessage = true) {
+      function cloudLogout() {
         cloudState.session = null;
         cloudState.role = null;
-        cloudState.email = "";
-        cloudState.active = true;
         cloudState.error = "";
         cloudState.source = "Local fallback";
         nativeSetItem(supabaseSessionKey, "null");
         renderCloudStatus();
-        if (showMessage) toast("Logged out. Local mode active.");
+        toast("Logged out. Local mode active.");
       }
       function cloudSnapshot() {
         const data = {};
@@ -3085,33 +3018,15 @@
       async function loadCloudRole() {
         if (!cloudState.session || !cloudState.session.user) return;
         try {
-          const rows = await supabaseFetch(`/rest/v1/eco_screen_profiles?id=eq.${cloudState.session.user.id}&select=id,email,role,active`);
-          const profile = rows && rows[0] || {};
-          cloudState.role = profile.role || "sales";
-          cloudState.email = profile.email || cloudState.session.user.email || "";
-          cloudState.active = profile.active !== false;
-          if (!cloudState.active) {
-            cloudLogout(false);
-            toast("This staff account is inactive. Please contact Admin.");
-            return;
-          }
+          const rows = await supabaseFetch(`/rest/v1/eco_screen_profiles?id=eq.${cloudState.session.user.id}&select=role`);
+          cloudState.role = rows && rows[0] && rows[0].role || "sales";
           if (cloudState.role !== "admin") {
             currentRole = cloudState.role;
             nativeSetItem(roleKey, currentRole);
             currentPage = roleMenus[currentRole][0][0];
-          } else {
-            await loadStaffProfiles();
           }
         } catch (error) {
-          try {
-            const rows = await supabaseFetch(`/rest/v1/eco_screen_profiles?id=eq.${cloudState.session.user.id}&select=id,email,role`);
-            const profile = rows && rows[0] || {};
-            cloudState.role = profile.role || "sales";
-            cloudState.email = profile.email || cloudState.session.user.email || "";
-            cloudState.active = true;
-          } catch (fallbackError) {
-            cloudState.role = "sales";
-          }
+          cloudState.role = "sales";
         }
       }
       async function loadCloudSnapshot(reloadAfter) {
@@ -4546,34 +4461,6 @@
           </div>
         `).join("");
       }
-      function renderStaffManagement() {
-        const el = document.getElementById("staffManagement");
-        if (!el) return;
-        if (currentRole !== "admin") {
-          el.innerHTML = `<p style="color:var(--muted)">Admin only.</p>`;
-          return;
-        }
-        el.innerHTML = `
-          <div class="item-card">
-            <div class="field"><label>Staff Email</label><input id="staffEmail" type="email" placeholder="staff@email.com" /></div>
-            <div class="field" style="margin-top:10px"><label>Password</label><input id="staffPassword" type="password" placeholder="Minimum 6 characters" /></div>
-            <div class="field" style="margin-top:10px"><label>Role</label><select id="staffRole">${staffRoleOptions("sales")}</select></div>
-            <button class="btn primary" style="width:100%;margin-top:12px" onclick="createStaffAccount()">Create Staff</button>
-          </div>
-          <div class="item-card">
-            <div class="item-head"><h3>Staff List</h3><button class="btn" onclick="loadStaffProfiles().then(renderStaffManagement)">Refresh</button></div>
-            ${staffProfiles.length ? staffProfiles.map((profile) => `
-              <div class="payment-row" style="align-items:center">
-                <span><strong>${profile.email || "-"}</strong><br><small>${profile.active === false ? "Inactive" : "Active"}</small></span>
-                <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
-                  <select onchange="updateStaffProfile('${profile.id}','role',this.value)">${staffRoleOptions(profile.role || "sales")}</select>
-                  <button class="btn ${profile.active === false ? "primary" : "danger"}" onclick="updateStaffProfile('${profile.id}','active','${profile.active === false ? "true" : "false"}')">${profile.active === false ? "Activate" : "Deactivate"}</button>
-                </span>
-              </div>
-            `).join("") : `<p style="color:var(--muted);margin-top:8px">No staff profiles loaded. Login as Admin and click Refresh.</p>`}
-          </div>
-        `;
-      }
       function renderInventory() {
         const lowStock = inventory.filter((item) => Number(item.quantity || 0) <= Number(item.safetyQuantity || 0));
         const alertEl = document.getElementById("inventoryAlerts");
@@ -5588,7 +5475,6 @@
         document.getElementById("orderConvertPanel").style.display = document.getElementById("status").value === "won" ? "block" : "none";
         renderDashboard();
         renderSettings();
-        renderStaffManagement();
         renderItems();
         renderQuote();
         renderHistory();
