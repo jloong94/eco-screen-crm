@@ -18,11 +18,19 @@ create table if not exists public.quotations (
   customer_id text references public.customers(id) on delete set null,
   status text not null default 'quoted',
   total numeric(12,2) not null default 0,
+  subtotal numeric(12,2) not null default 0,
+  discount numeric(12,2) not null default 0,
   deposit numeric(12,2) not null default 0,
   balance numeric(12,2) not null default 0,
+  remarks text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.quotations
+add column if not exists remarks text,
+add column if not exists subtotal numeric(12,2) not null default 0,
+add column if not exists discount numeric(12,2) not null default 0;
 
 create table if not exists public.quotation_items (
   id text primary key,
@@ -101,12 +109,31 @@ create table if not exists public.collections (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.appointments (
+  id text primary key,
+  customer_name text,
+  phone text,
+  address text,
+  product text,
+  appointment_date date,
+  appointment_time time,
+  assigned_staff text,
+  remarks text,
+  google_event_id text,
+  google_event_link text,
+  google_status text,
+  reminder_sent_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create index if not exists customers_phone_idx on public.customers(phone);
 create index if not exists quotations_customer_id_idx on public.quotations(customer_id);
 create index if not exists quotation_items_quotation_id_idx on public.quotation_items(quotation_id);
 create index if not exists production_orders_customer_id_idx on public.production_orders(customer_id);
 create index if not exists installations_customer_id_idx on public.installations(customer_id);
 create index if not exists collections_customer_id_idx on public.collections(customer_id);
+create index if not exists appointments_date_staff_idx on public.appointments(appointment_date, assigned_staff);
 
 alter table public.customers enable row level security;
 alter table public.quotations enable row level security;
@@ -114,6 +141,7 @@ alter table public.quotation_items enable row level security;
 alter table public.production_orders enable row level security;
 alter table public.installations enable row level security;
 alter table public.collections enable row level security;
+alter table public.appointments enable row level security;
 
 drop policy if exists "customers authenticated read" on public.customers;
 create policy "customers authenticated read" on public.customers
@@ -163,11 +191,20 @@ drop policy if exists "collections authenticated write" on public.collections;
 create policy "collections authenticated write" on public.collections
 for all to authenticated using (true) with check (true);
 
+drop policy if exists "appointments authenticated read" on public.appointments;
+create policy "appointments authenticated read" on public.appointments
+for select to authenticated using (true);
+
+drop policy if exists "appointments authenticated write" on public.appointments;
+create policy "appointments authenticated write" on public.appointments
+for all to authenticated using (true) with check (true);
+
 -- Role setup:
 -- Users are created through Supabase Auth.
 -- Their app role is stored in public.eco_screen_profiles.role.
--- Supported roles in the current app: admin, sales, production, installer.
+-- Supported roles in the current app: admin, secretary, sales, production, installer.
 -- Example:
 -- update public.eco_screen_profiles set role = 'admin' where email = 'boss@email.com';
+-- update public.eco_screen_profiles set role = 'secretary' where email = 'secretary@email.com';
 -- update public.eco_screen_profiles set role = 'sales' where email = 'sales@email.com';
 -- update public.eco_screen_profiles set role = 'installer' where email = 'installer@email.com';

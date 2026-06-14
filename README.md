@@ -50,10 +50,16 @@ npm install
 npm run dev
 ```
 
-5. Open:
+5. Open locally:
 
 ```text
 http://localhost:3000
+```
+
+For Supabase email verification in production, use your Vercel URL, for example:
+
+```text
+https://your-crm.vercel.app
 ```
 
 ## Save PDF

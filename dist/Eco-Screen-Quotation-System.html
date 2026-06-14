@@ -133,6 +133,8 @@
         background: var(--soft);
         padding: 12px;
       }
+      .metric.clickable { cursor: pointer; transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease; }
+      .metric.clickable:hover { transform: translateY(-1px); border-color: var(--brand); box-shadow: 0 10px 24px rgba(15,23,42,.08); }
       .metric strong { display: block; margin-top: 4px; font-size: 19px; }
       .status-row { display: flex; justify-content: space-between; gap: 8px; margin-top: 9px; color: var(--muted); }
       .status-row strong { color: var(--ink); background: white; border-radius: 8px; padding: 2px 8px; }
@@ -293,6 +295,35 @@
         gap: 8px;
         margin-top: 12px;
       }
+      .calendar-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+      }
+      .calendar-grid {
+        display: grid;
+        grid-template-columns: repeat(7, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .calendar-day {
+        min-height: 104px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--soft);
+        padding: 10px;
+      }
+      .calendar-day strong { display: block; margin-bottom: 6px; }
+      .calendar-event {
+        border-radius: 10px;
+        background: white;
+        border: 1px solid var(--line);
+        padding: 8px;
+        margin-top: 6px;
+        font-size: 12px;
+      }
       .check-tile {
         display: flex;
         align-items: center;
@@ -421,6 +452,7 @@
         .ops-head { flex-direction: column; }
         .ops-line-grid { grid-template-columns: 1fr; }
         .install-checklist { grid-template-columns: 1fr; }
+        .calendar-grid { grid-template-columns: 1fr; }
         .history-actions { display: grid; grid-template-columns: 1fr 1fr; }
         table { min-width: 760px; }
         .table-wrap { overflow-x: auto; }
@@ -443,11 +475,19 @@
 (function () {
   var url = "https://aipybobjyctpzmpfxvrk.supabase.co";
   var anonKey = "sb_publishable_W15IbmPambSaNP8eEFNcUw_3x16p5xH";
-  if (url && !localStorage.getItem("eco-screen-supabase-url")) {
+  var googleCalendarWebhook = "";
+  var siteUrl = "";
+  if (url) {
     localStorage.setItem("eco-screen-supabase-url", url);
   }
-  if (anonKey && !localStorage.getItem("eco-screen-supabase-anon-key")) {
+  if (anonKey) {
     localStorage.setItem("eco-screen-supabase-anon-key", anonKey);
+  }
+  if (googleCalendarWebhook) {
+    localStorage.setItem("eco-screen-google-calendar-webhook", googleCalendarWebhook);
+  }
+  if (siteUrl) {
+    localStorage.setItem("eco-screen-site-url", siteUrl.replace(/\/$/, ""));
   }
 })();
 </script>
@@ -467,15 +507,11 @@
       <div class="copy-card">
         <div class="panel-head"><h2>Supabase Cloud Login</h2><button class="btn" onclick="hideCloudModal()">Close</button></div>
         <div class="form-grid">
-          <div class="field"><label>Supabase URL</label><input id="supabaseUrlInput" placeholder="https://xxxx.supabase.co" /></div>
-          <div class="field"><label>Supabase Anon Key</label><input id="supabaseAnonKeyInput" placeholder="Paste anon public key" /></div>
           <div class="field"><label>Email</label><input id="cloudEmailInput" type="email" placeholder="user@email.com" /></div>
           <div class="field"><label>Password</label><input id="cloudPasswordInput" type="password" placeholder="Password" /></div>
         </div>
         <div class="actions" style="margin-top:12px">
-          <button class="btn" onclick="saveCloudConfig()">Save Config</button>
           <button class="btn primary" onclick="cloudLogin()">Login</button>
-          <button class="btn" onclick="cloudSignUp()">Create User</button>
           <button class="btn danger" onclick="cloudLogout()">Logout</button>
         </div>
         <p id="cloudStatusText" style="margin-top:12px;color:var(--muted)">Local mode. Add Supabase config to enable cloud sync.</p>
@@ -518,10 +554,14 @@
           <div class="panel-head"><h2>Price Settings</h2></div>
           <div id="settings"></div>
         </section>
+        <section class="panel" data-page="staff" data-roles="admin">
+          <div class="panel-head"><h2>Staff Accounts</h2></div>
+          <div id="staffManagement"></div>
+        </section>
       </aside>
 
       <main class="main">
-        <div class="grid-main no-print" data-page="quotation" data-roles="admin sales">
+        <div class="grid-main no-print" data-page="quotation" data-roles="admin sales secretary">
           <div>
             <section class="panel">
               <div class="panel-head">
@@ -534,6 +574,7 @@
                 <div class="field"><label>Area</label><input id="area" oninput="render()" /></div>
                 <div class="field"><label>Appointment Date</label><input id="appointmentDate" type="date" onchange="render()" /></div>
                 <div class="field wide"><label>Address</label><textarea id="address" rows="3" oninput="render()"></textarea></div>
+                <div class="field wide"><label>Remarks</label><textarea id="quoteRemarks" rows="3" oninput="render()" placeholder="Customer request, site note, special condition"></textarea></div>
               </div>
             </section>
 
@@ -564,9 +605,9 @@
           </section>
         </div>
 
-        <section class="quote" id="quotePreview" data-page="quotation" data-roles="admin sales"></section>
+        <section class="quote" id="quotePreview" data-page="quotation" data-roles="admin sales secretary"></section>
 
-        <section class="panel history no-print" data-page="follow-up" data-roles="admin sales">
+        <section class="panel history no-print" data-page="follow-up" data-roles="admin sales secretary">
           <div class="panel-head"><h2>Follow Up Page</h2></div>
           <div id="followUps"></div>
           <div style="height:14px"></div>
@@ -574,12 +615,12 @@
           <div id="history"></div>
         </section>
 
-        <section class="panel history no-print" data-page="order" data-roles="admin sales">
+        <section class="panel history no-print" data-page="order" data-roles="admin sales secretary">
           <div class="panel-head"><h2>Orders Page</h2></div>
           <div id="orders"></div>
         </section>
 
-        <section class="panel history no-print" data-page="pending-balance" data-roles="admin">
+        <section class="panel history no-print" data-page="pending-balance" data-roles="admin secretary">
           <div class="panel-head"><h2>Pending Balance Page</h2></div>
           <div id="pendingBalances"></div>
         </section>
@@ -594,7 +635,7 @@
           <div id="productionStatus"></div>
         </section>
 
-        <section class="panel history no-print" data-page="installation" data-roles="admin installer">
+        <section class="panel history no-print" data-page="installation" data-roles="admin installer secretary">
           <div class="panel-head"><h2>Installation Team Page</h2></div>
           <div id="installations"></div>
         </section>
@@ -614,7 +655,7 @@
           <div id="customerReviews"></div>
         </section>
 
-        <section class="panel history no-print" data-page="warranty" data-roles="admin sales installer">
+        <section class="panel history no-print" data-page="warranty" data-roles="admin sales installer secretary">
           <div class="panel-head"><h2>Warranty Cards</h2></div>
           <div class="form-grid" style="margin-bottom:12px">
             <div class="field"><label>Search by Phone</label><input id="warrantyPhoneSearch" placeholder="Customer phone number" oninput="renderWarranties()" /></div>
@@ -622,12 +663,25 @@
           <div id="warranties"></div>
         </section>
 
-        <section class="panel history no-print" data-page="customer" data-roles="admin sales">
+        <section class="panel history no-print" data-page="customer" data-roles="admin sales secretary">
           <div class="panel-head"><h2>Customer Page</h2></div>
           <div id="customers"></div>
         </section>
 
-        <section class="panel history no-print" data-page="financial" data-roles="admin">
+        <section class="panel history no-print" data-page="appointment" data-roles="admin sales secretary">
+          <div class="panel-head">
+            <h2>Appointment Calendar</h2>
+            <button class="btn" onclick="syncAppointmentsFromGoogle()">Sync Google Calendar</button>
+          </div>
+          <div id="appointments"></div>
+        </section>
+
+        <section class="panel history no-print" data-page="facebook-ads" data-roles="admin sales secretary">
+          <div class="panel-head"><h2>Facebook Ads Dashboard</h2></div>
+          <div id="facebookAds"></div>
+        </section>
+
+        <section class="panel history no-print" data-page="financial" data-roles="admin secretary">
           <div class="panel-head"><h2>Financial Dashboard</h2></div>
           <div id="financialDashboard"></div>
         </section>
@@ -664,8 +718,13 @@
       const completionRecordsKey = "eco-screen-completion-records";
       const warrantiesKey = "eco-screen-warranties";
       const inventoryKey = "eco-screen-inventory";
+      const facebookAdsKey = "eco-screen-facebook-ads";
+      const appointmentsKey = "eco-screen-appointments";
       const exchangeRateKey = "eco-screen-rmb-myr-rate";
       const googleReviewLinkKey = "eco-screen-google-review-link";
+      const googleCalendarWebhookKey = "eco-screen-google-calendar-webhook";
+      const siteUrlKey = "eco-screen-site-url";
+      const calendarViewKey = "eco-screen-calendar-view";
       const supabaseUrlKey = "eco-screen-supabase-url";
       const supabaseAnonKeyKey = "eco-screen-supabase-anon-key";
       const supabaseSessionKey = "eco-screen-supabase-session";
@@ -673,6 +732,28 @@
       const languageKey = "eco-screen-language";
       const customerCrmKey = "eco-screen-customer-crm";
       const mm2PerSqft = 92903.04;
+      function safeJsonParse(value, fallback) {
+        if (value === null || value === undefined || value === "") return fallback;
+        try {
+          const parsed = JSON.parse(value);
+          return parsed === null || parsed === undefined ? fallback : parsed;
+        } catch (error) {
+          return fallback;
+        }
+      }
+      function safeArray(value) { return Array.isArray(value) ? value : []; }
+      function safeObject(value) { return value && typeof value === "object" && !Array.isArray(value) ? value : {}; }
+      var cloudState = {
+        applying: false,
+        saveTimer: null,
+        session: safeJsonParse(localStorage.getItem(supabaseSessionKey), null),
+        role: null,
+        email: "",
+        active: true,
+        loading: false,
+        error: "",
+        source: "Local fallback"
+      };
       const statuses = [
         ["quoted", "Quoted"],
         ["follow-up", "Follow Up"],
@@ -699,6 +780,7 @@
       };
       const roles = [
         ["admin", "Admin"],
+        ["secretary", "Secretary"],
         ["sales", "Sales"],
         ["production", "Production"],
         ["installer", "Installer"]
@@ -707,8 +789,10 @@
         admin: [
           ["quotation", "Quotation"],
           ["customer", "Customer"],
+          ["appointment", "Appointment"],
           ["follow-up", "Follow Up"],
           ["order", "Order"],
+          ["facebook-ads", "Facebook Ads"],
           ["production", "Production"],
           ["production-status", "Production Status"],
           ["installation", "Installation"],
@@ -720,13 +804,28 @@
           ["financial", "Financial Dashboard"],
           ["profit", "Profit Analysis"],
           ["inventory", "Inventory"],
+          ["staff", "Staff Accounts"],
           ["settings", "Settings"]
         ],
         sales: [
           ["quotation", "Quotation"],
           ["customer", "Customer"],
+          ["appointment", "Appointment"],
           ["follow-up", "Follow Up"],
           ["order", "Order"],
+          ["facebook-ads", "Facebook Ads"],
+          ["warranty", "Warranty"]
+        ],
+        secretary: [
+          ["quotation", "Quotation"],
+          ["customer", "Customer"],
+          ["appointment", "Appointment"],
+          ["follow-up", "Follow Up"],
+          ["order", "Order"],
+          ["installation", "Installation"],
+          ["pending-balance", "Pending Balance"],
+          ["financial", "Financial Dashboard"],
+          ["facebook-ads", "Facebook Ads"],
           ["warranty", "Warranty"]
         ],
         production: [
@@ -760,7 +859,7 @@
         ["warrantyInformationReceived", "Customer Received Warranty Information"]
       ];
       const installationPaymentMethods = ["Cash", "Bank Transfer", "DuitNow QR"];
-      let products = JSON.parse(localStorage.getItem(productsKey) || "null") || [
+      const defaultProducts = [
         { id: "roller", name: "Roller", price: 33, minimumSqft: 11 },
         { id: "removeable-screen", name: "Removeable Screen", price: 36, minimumSqft: 11 },
         { id: "three-section-screen", name: "3 Section Screen", price: 0, minimumSqft: 11 },
@@ -777,21 +876,30 @@
         { id: "opening", name: "Opening", price: 35, minimumSqft: 11 },
         { id: "digital-lock", name: "Digital Lock", price: 0, minimumSqft: 21 }
       ];
+      let products = safeArray(safeJsonParse(localStorage.getItem(productsKey), defaultProducts));
+      if (!products.length) products = defaultProducts;
       products = ensureProductList(products);
-      let quotes = normalizeQuotes(JSON.parse(localStorage.getItem(quotesKey) || "[]"));
-      let orders = normalizeOrders(JSON.parse(localStorage.getItem(ordersKey) || "[]"));
-      let productions = normalizeProductions(JSON.parse(localStorage.getItem(productionsKey) || "[]"));
-      let installations = normalizeInstallations(JSON.parse(localStorage.getItem(installationsKey) || "[]"));
-      let completionRecords = JSON.parse(localStorage.getItem(completionRecordsKey) || "[]");
-      let warranties = normalizeWarranties(JSON.parse(localStorage.getItem(warrantiesKey) || "[]"));
+      let quotes = normalizeQuotes(safeJsonParse(localStorage.getItem(quotesKey), []));
+      let orders = normalizeOrders(safeJsonParse(localStorage.getItem(ordersKey), []));
+      let productions = normalizeProductions(safeJsonParse(localStorage.getItem(productionsKey), []));
+      let installations = normalizeInstallations(safeJsonParse(localStorage.getItem(installationsKey), []));
+      let completionRecords = safeArray(safeJsonParse(localStorage.getItem(completionRecordsKey), []));
+      let warranties = normalizeWarranties(safeJsonParse(localStorage.getItem(warrantiesKey), []));
       let rmbToMyrRate = Number(localStorage.getItem(exchangeRateKey) || 0.57);
       let googleReviewLink = localStorage.getItem(googleReviewLinkKey) || "https://g.page/r/YOUR_GOOGLE_REVIEW_LINK/review";
-      let inventory = normalizeInventory(JSON.parse(localStorage.getItem(inventoryKey) || "[]"));
-      let customerCrm = JSON.parse(localStorage.getItem(customerCrmKey) || "{}");
+      let googleCalendarWebhook = localStorage.getItem(googleCalendarWebhookKey) || "";
+      let siteUrl = localStorage.getItem(siteUrlKey) || "";
+      let calendarView = localStorage.getItem(calendarViewKey) || "week";
+      let inventory = normalizeInventory(safeJsonParse(localStorage.getItem(inventoryKey), []));
+      let facebookAds = safeArray(safeJsonParse(localStorage.getItem(facebookAdsKey), []));
+      let appointments = normalizeAppointments(safeJsonParse(localStorage.getItem(appointmentsKey), []));
+      let customerCrm = safeObject(safeJsonParse(localStorage.getItem(customerCrmKey), {}));
+      let staffProfiles = [];
       let currentRole = localStorage.getItem(roleKey) || "admin";
       let currentLanguage = localStorage.getItem(languageKey) || "en";
       if (!roleMenus[currentRole]) currentRole = "admin";
       let currentPage = roleMenus[currentRole][0][0];
+      let dashboardFilter = null;
       let editingId = null;
       let quoteNo = makeQuoteNo();
       let items = [makeItem()];
@@ -804,16 +912,14 @@
         completionRecordsKey,
         warrantiesKey,
         inventoryKey,
+        facebookAdsKey,
+        appointmentsKey,
         customerCrmKey,
         exchangeRateKey,
-        googleReviewLinkKey
+        googleReviewLinkKey,
+        googleCalendarWebhookKey,
+        siteUrlKey
       ];
-      const cloudState = {
-        applying: false,
-        saveTimer: null,
-        session: JSON.parse(localStorage.getItem(supabaseSessionKey) || "null"),
-        role: null
-      };
       const nativeSetItem = localStorage.setItem.bind(localStorage);
       localStorage.setItem = function patchedSetItem(key, value) {
         nativeSetItem(key, value);
@@ -822,11 +928,13 @@
       const labelTranslations = {
         zh: {
           "Admin": "老板",
+          "Secretary": "秘书",
           "Sales": "销售",
           "Production": "生产",
           "Installer": "安装",
           "Quotation": "报价",
           "Customer": "客户",
+          "Appointment": "预约",
           "Follow Up": "跟进",
           "Order": "订单",
           "Production Order": "生产单",
@@ -840,10 +948,13 @@
           "Collection Record": "收款记录",
           "Customer Review": "客户评价",
           "Warranty": "保固",
-          "Pending Balance": "未收尾款",
-          "Financial Dashboard": "财务 Dashboard",
+        "Pending Balance": "未收尾款",
+        "Outstanding Balance": "未收尾款",
+        "Outstanding Balances": "未收尾款",
+        "Financial Dashboard": "财务 Dashboard",
           "Profit Analysis": "利润分析",
           "Inventory": "库存",
+          "Facebook Ads": "Facebook 广告",
           "Settings": "设置",
           "Dashboard": "Dashboard"
         }
@@ -864,6 +975,8 @@
         "Phone Number": "电话号码",
         "Area": "地区",
         "Appointment Date": "预约日期",
+        "Appointment Time": "预约时间",
+        "Assigned Staff": "负责员工",
         "Address": "地址",
         "Products": "产品",
         "Add Item": "新增项目",
@@ -914,6 +1027,7 @@
         "Date": "日期",
         "Add Payment": "新增付款",
         "Remark": "备注",
+        "Remarks": "备注",
         "Production Status": "生产状态",
         "Installation Status": "安装状态",
         "Material Cost": "材料成本",
@@ -926,6 +1040,11 @@
         "Material Cost Override": "材料成本手动覆盖",
         "Hardware Cost Override": "五金成本手动覆盖",
         "Cost Debug Panel": "成本检查面板",
+        "Payment Debug": "付款检查",
+        "Deposit From Quotation": "报价订金",
+        "Payment Records Total": "付款记录总额",
+        "Total Paid": "已收总额",
+        "Outstanding Balance": "未收余额",
         "Sales Formula": "销售公式",
         "Mapped Inventory Category": "对应库存分类",
         "Mapped Materials": "对应材料数量",
@@ -1005,18 +1124,46 @@
         "Copy Warranty Card": "复制保固卡",
         "Print / PDF": "打印 / PDF",
         "Warranty Card": "保固卡",
+        "Appointment Calendar": "预约日历",
+        "Create Appointment": "新增预约",
+        "Update Appointment": "更新预约",
+        "Google Calendar": "Google 日历",
+        "Google Calendar Webhook URL": "Google 日历 Webhook URL",
+        "Google Calendar Auto Sync On": "Google 日历自动同步已开启",
+        "Google Calendar Link Mode": "Google 日历链接模式",
+        "Sync Google Calendar": "同步 Google 日历",
+        "Open Calendar": "打开日历",
+        "Add Calendar": "加入日历",
+        "Today Appointments": "今日预约",
+        "Reminder Due": "需要提醒",
+        "WhatsApp reminders due within 24 hours": "24 小时内需要 WhatsApp 提醒",
+        "Appointment Records": "预约记录",
+        "No appointment": "没有预约",
+        "No appointments yet.": "还没有预约。",
+        "Google Event ID": "Google 事件 ID",
         "Warranty Period": "保固期",
         "Coverage": "保固年限",
         "Installation No": "安装单编号",
         "Top Product": "热门产品",
         "Top Area": "热门地区",
         "Today's Sales": "今日销售",
+        "Today Sales": "今日销售",
         "Monthly Sales": "本月销售",
+        "Month Sales": "本月销售",
+        "Deposit Collected": "已收订金",
+        "Monthly Profit": "本月利润",
         "Today's Collection": "今日收款",
         "Monthly Collection": "本月收款",
         "Pending Production": "待生产",
         "Pending Installation": "待安装",
+        "Pending Installations": "待安装",
+        "Today's Installations": "今日安装",
+        "New Quotations": "新报价",
+        "Customers Waiting for Measurement": "等待量尺客户",
+        "Pending Services": "待处理服务",
+        "Open Service Cases": "服务案件",
         "Need Rework": "需返工",
+        "Top Salesperson": "最佳销售员",
         "Low Stock Items": "低库存项目",
         "Today Follow Up": "今日跟进",
         "Won Orders": "成交订单",
@@ -1031,8 +1178,42 @@
         "Installer": "安装",
         "Settings": "设置",
         "Inventory": "库存",
-        "Warranty": "保固"
-        ,"Quoted": "已报价",
+        "Warranty": "保固",
+        "Facebook Ads Dashboard": "Facebook 广告 Dashboard",
+        "Campaign Name": "Campaign 名字",
+        "Ad Set Name": "Ad Set 名字",
+        "Ad Name": "Ad 名字",
+        "Spend": "广告花费",
+        "WhatsApp Conversations": "WhatsApp 对话",
+        "Cost Per Conversation": "每个对话成本",
+        "Leads Quality": "客户质量",
+        "Appointment Count": "预约数量",
+        "Closed Orders": "成交单数",
+        "Revenue": "成交金额",
+        "Daily Report": "每日报告",
+        "Campaign Summary": "Campaign 汇总",
+        "Campaign Filter": "Campaign 筛选",
+        "From": "开始日期",
+        "To": "结束日期",
+        "Cost Per WhatsApp": "每个 WhatsApp 成本",
+        "Appointment Rate": "预约率",
+        "Closing Rate": "成交率",
+        "Profit Estimate": "预估利润",
+        "Quality": "质量",
+        "Closed": "成交",
+        "CPA": "每个对话成本",
+        "Delete": "删除",
+        "Ad Decision": "广告判断",
+        "Increase Budget 20%": "加预算 20%",
+        "Pause": "暂停",
+        "Follow-up Problem": "跟进问题",
+        "Continue Running": "继续跑",
+        "Observe": "继续观察",
+        "Check Creative And Sales Script": "检查素材和销售话术",
+        "Cold": "冷",
+        "Normal": "普通",
+        "Hot": "热",
+        "Quoted": "已报价",
         "Won": "已成交",
         "Cancelled": "已取消",
         "Pending Production": "待生产",
@@ -1073,8 +1254,8 @@
         "Production Alerts": "生产提醒",
         "Sliding Items": "推拉项目",
         "Installer Performance Ranking": "安装员表现排名",
-        "Sliding Track Details": "推拉轨道资料"
-        ,"Roller": "卷帘纱窗",
+        "Sliding Track Details": "推拉轨道资料",
+        "Roller": "卷帘纱窗",
         "Removeable Screen": "可拆洗纱窗",
         "3 Section Screen": "三节纱窗",
         "Pocket Lock Screen": "口袋锁纱窗",
@@ -1095,7 +1276,7 @@
       function uid() { return crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()); }
       function makeItem() { return { id: uid(), createdAt: Date.now(), label: "", productId: "roller", widthMm: 0, heightMm: 0, quantity: 1, color: "", ...makeSlidingFields() }; }
       function orderedItems(list = items) {
-        return (list || [])
+        return safeArray(list)
           .map((item, index) => ({ item, index }))
           .sort((a, b) => Number(b.item.createdAt || 0) - Number(a.item.createdAt || 0) || a.index - b.index)
           .map((row) => row.item);
@@ -1227,17 +1408,18 @@
         return `ESQ-${year}-${String(next).padStart(4, "0")}`;
       }
       function normalizeQuotes(rawQuotes) {
-        return rawQuotes.map((quote, index) => ({
+        return safeArray(rawQuotes).map((quote, index) => ({
           ...quote,
           quoteNo: quote.quoteNo || `ESQ-${new Date(quote.createdAt || Date.now()).getFullYear()}-${String(index + 1).padStart(4, "0")}`,
           updatedAt: quote.updatedAt || quote.createdAt || new Date().toISOString(),
           status: quote.status || "quoted",
           subtotal: Number(quote.subtotal || quote.total || 0),
-          discount: Number(quote.discount || 0)
+          discount: Number(quote.discount || 0),
+          remarks: quote.remarks || ""
         }));
       }
       function normalizeOrders(rawOrders) {
-        return rawOrders.map((order, index) => ({
+        return safeArray(rawOrders).map((order, index) => ({
           ...order,
           orderNo: order.orderNo || `ESO-${new Date(order.createdAt || Date.now()).getFullYear()}-${String(index + 1).padStart(4, "0")}`,
           installationDate: order.installationDate || "",
@@ -1250,18 +1432,31 @@
             ads: Number(order.costs && order.costs.ads || 0),
             other: Number(order.costs && order.costs.other || 0)
           },
-          payments: order.payments || (Number(order.deposit || 0) > 0 ? [{
-            id: uid(),
-            label: "Deposit",
-            amount: Number(order.deposit || 0),
-            method: "Cash",
-            date: (order.createdAt || today()).slice(0, 10),
-            remark: "Deposit from quotation"
-          }] : [])
+          payments: order.payments || []
+        }));
+      }
+      function normalizeAppointments(rawAppointments) {
+        return safeArray(rawAppointments).map((appointment) => ({
+          ...appointment,
+          id: appointment.id || uid(),
+          customerName: appointment.customerName || appointment.name || "",
+          phone: appointment.phone || "",
+          address: appointment.address || "",
+          product: appointment.product || "",
+          appointmentDate: appointment.appointmentDate || appointment.date || today(),
+          appointmentTime: appointment.appointmentTime || appointment.time || "09:00",
+          assignedStaff: appointment.assignedStaff || appointment.staff || "",
+          remarks: appointment.remarks || "",
+          googleEventId: appointment.googleEventId || "",
+          googleEventLink: appointment.googleEventLink || "",
+          googleStatus: appointment.googleStatus || "Not Synced",
+          reminderSentAt: appointment.reminderSentAt || "",
+          updatedAt: appointment.updatedAt || appointment.createdAt || new Date().toISOString(),
+          createdAt: appointment.createdAt || new Date().toISOString()
         }));
       }
       function normalizeProductions(rawProductions) {
-        return rawProductions.map((production, index) => ({
+        return safeArray(rawProductions).map((production, index) => ({
           ...production,
           productionNo: production.productionNo || `ESP-${new Date(production.createdAt || Date.now()).getFullYear()}-${String(index + 1).padStart(4, "0")}`,
           createdAt: production.createdAt || new Date().toISOString(),
@@ -1271,7 +1466,7 @@
           startedAt: production.startedAt || "",
           completedAt: production.completedAt || "",
           delayReason: production.delayReason || production.reason || "",
-          items: (production.items || []).map((item) => ({
+          items: safeArray(production.items).map((item) => ({
             color: item.color || "",
             openingDirection: "",
             lockSet: "",
@@ -1285,7 +1480,7 @@
         }));
       }
       function normalizeInstallations(rawInstallations) {
-        return rawInstallations.map((installation, index) => ({
+        return safeArray(rawInstallations).map((installation, index) => ({
           ...installation,
           installationNo: installation.installationNo || `ESI-${new Date(installation.createdAt || Date.now()).getFullYear()}-${String(index + 1).padStart(4, "0")}`,
           status: installation.status || "pending-installation",
@@ -1326,7 +1521,7 @@
         }));
       }
       function normalizeWarranties(rawWarranties) {
-        return rawWarranties.map((warranty, index) => ({
+        return safeArray(rawWarranties).map((warranty, index) => ({
           ...warranty,
           warrantyNo: warranty.warrantyNo || `ESW-${new Date(warranty.createdAt || Date.now()).getFullYear()}-${String(index + 1).padStart(4, "0")}`
         }));
@@ -2270,9 +2465,66 @@
         const entries = Object.entries(map).sort((a, b) => b[1] - a[1]);
         return entries[0] ? entries[0][0] : "-";
       }
-      function paidTotal(order) {
-        return (order.payments || []).reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+      function topSalespersonFromOrders() {
+        const map = {};
+        orders.forEach((order) => {
+          const name = order.salesperson || order.createdBy || "Unassigned";
+          map[name] = (map[name] || 0) + Number(order.total || 0);
+        });
+        return topEntry(map);
       }
+      function customersWaitingForMeasurement() {
+        const activeStatuses = ["quoted", "follow-up"];
+        return collectCustomers().filter((customer) => quotes.some((quote) => customerKey(quote.customer || {}) === customer.key && activeStatuses.includes(quote.status))).length;
+      }
+      function dashboardTarget(label) {
+        const targets = {
+          "Today's Sales": ["order", "today-sales"],
+          "Today Sales": ["order", "today-sales"],
+          "Monthly Sales": ["order", "month-sales"],
+          "Month Sales": ["order", "month-sales"],
+          "Deposit Collected": ["order", "deposit-collected"],
+          "Today's Collection": ["order", "today-collection"],
+          "Monthly Collection": ["order", "month-collection"],
+          "Pending Balance": ["pending-balance", "pending-balance"],
+          "Outstanding Balance": ["pending-balance", "pending-balance"],
+          "Outstanding Balances": ["pending-balance", "pending-balance"],
+          "Pending Production": ["production", "pending-production"],
+          "Production Alerts": ["production", "production-alerts"],
+          "Pending Installation": ["installation", "pending-installation"],
+          "Pending Installations": ["installation", "pending-installation"],
+          "Pending Install": ["installation", "pending-installation"],
+          "Today's Install": ["installation", "today-install"],
+          "Today's Installations": ["installation", "today-install"],
+          "Need Rework": ["installation", "rework"],
+          "Pending Services": ["installation", "rework"],
+          "Open Service Cases": ["installation", "rework"],
+          "New Quotations": ["follow-up", "new-quotations"],
+          "Today's Quotes": ["follow-up", "new-quotations"],
+          "Customers Waiting for Measurement": ["customer", "waiting-measurement"],
+          "Today Appointments": ["appointment", "today-appointments"],
+          "Reminder Due": ["appointment", "reminder-due"],
+          "Unpaid Orders": ["order", "unpaid-orders"],
+          "Overdue": ["order", "overdue-orders"],
+          "Overdue Orders": ["order", "overdue-orders"],
+          "Won Orders": ["order", "won-orders"],
+          "Top Product": ["order", "all"],
+          "Top Area": ["order", "all"],
+          "Top Salesperson": ["order", "all"],
+          "Monthly Profit": ["profit", "month-profit"]
+        };
+        return targets[label] || ["order", "all"];
+      }
+      function metricCard(label, value) {
+        const [page, filter] = dashboardTarget(label);
+        return `<div class="metric clickable" role="button" tabindex="0" onclick="openDashboardMetric('${page}','${filter}')"><span class="eyebrow">${label}</span><strong>${value}</strong></div>`;
+      }
+      function paidTotal(order) {
+        return (order.payments || [])
+          .filter((payment) => String(payment.remark || "").toLowerCase() !== "deposit from quotation")
+          .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+      }
+      function paymentRecordsTotal(order) { return paidTotal(order); }
       function unpaidTotal(order) {
         return Math.max(Number(order.total || 0) - paidTotal(order), 0);
       }
@@ -2296,7 +2548,7 @@
         return "Partially Paid";
       }
       function orderQtyTotal(order) {
-        return (order.items || []).reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+        return safeArray(order.items).reduce((sum, item) => sum + Number(item.quantity || 0), 0);
       }
       function productInventoryCategories(item) {
         const name = product(item.productId).name.toLowerCase();
@@ -2349,7 +2601,7 @@
         return { material, hardware, installation, transport, total, profit, margin };
       }
       function costDebugRows(order) {
-        return (order.items || []).map((item) => {
+        return safeArray(order.items).map((item) => {
           const categories = productInventoryCategories(item);
           const stockItems = inventoryForOrderItem(item);
           const stockCost = stockItems.reduce((sum, stock) => sum + Number(stock.usagePerItem || 0) * Number(stock.unitCost || 0), 0);
@@ -2540,11 +2792,31 @@
         currentRole = role;
         localStorage.setItem(roleKey, role);
         currentPage = roleMenus[role][0][0];
+        dashboardFilter = null;
         render();
       }
       function setPage(page) {
         currentPage = page;
+        dashboardFilter = null;
         render();
+      }
+      function openDashboardMetric(page, filter = "") {
+        dashboardFilter = { page, filter };
+        currentPage = page;
+        render();
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+      function clearDashboardFilter() {
+        dashboardFilter = null;
+        render();
+      }
+      function activeDashboardFilter(page) {
+        return dashboardFilter && dashboardFilter.page === page ? dashboardFilter.filter : "";
+      }
+      function filterBanner(page, labels = {}) {
+        const filter = activeDashboardFilter(page);
+        if (!filter) return "";
+        return `<div class="alert" style="display:flex;justify-content:space-between;gap:10px;align-items:center"><span>Filtered: ${labels[filter] || filter}</span><button class="btn" onclick="clearDashboardFilter()">Clear</button></div>`;
       }
       function setLanguage(language) {
         currentLanguage = language;
@@ -2559,9 +2831,10 @@
         ].map(([value, label]) =>
           `<button class="role-btn ${currentLanguage === value ? "active" : ""}" onclick="setLanguage('${value}')">${label}</button>`
         ).join("");
-        document.getElementById("roleButtons").innerHTML = roles.map(([value, label]) =>
+        const canSwitchRoles = !cloudState.session || cloudState.role === "admin";
+        document.getElementById("roleButtons").innerHTML = canSwitchRoles ? roles.map(([value, label]) =>
           `<button class="role-btn ${currentRole === value ? "active" : ""}" onclick="setRole('${value}')">${labelText(label)}</button>`
-        ).join("");
+        ).join("") : `<span class="pill">${labelText((roles.find((role) => role[0] === currentRole) || ["", currentRole])[1])}</span>`;
         document.getElementById("menuButtons").innerHTML = roleMenus[currentRole].map(([value, label]) =>
           `<button class="menu-btn ${currentPage === value ? "active" : ""}" onclick="setPage('${value}')">${labelText(label)}</button>`
         ).join("");
@@ -2575,7 +2848,7 @@
           const visible = rolesAllowed.includes(currentRole) && page === currentPage;
           section.classList.toggle("page-hidden", !visible);
         });
-        const actionVisible = (currentRole === "admin" || currentRole === "sales") && currentPage === "quotation";
+        const actionVisible = (currentRole === "admin" || currentRole === "sales" || currentRole === "secretary") && currentPage === "quotation";
         document.querySelector(".bottom-actions").classList.toggle("page-hidden", !actionVisible);
         document.querySelector(".topbar .actions").classList.toggle("page-hidden", !actionVisible);
       }
@@ -2610,24 +2883,29 @@
       function supabaseAnonKey() { return localStorage.getItem(supabaseAnonKeyKey) || ""; }
       function supabaseReady() { return Boolean(supabaseUrl() && supabaseAnonKey()); }
       function showCloudModal() {
-        document.getElementById("supabaseUrlInput").value = supabaseUrl();
-        document.getElementById("supabaseAnonKeyInput").value = supabaseAnonKey();
         renderCloudStatus();
         document.getElementById("cloudModal").classList.add("show");
       }
       function hideCloudModal() { document.getElementById("cloudModal").classList.remove("show"); }
       function saveCloudConfig() {
-        nativeSetItem(supabaseUrlKey, document.getElementById("supabaseUrlInput").value.trim());
-        nativeSetItem(supabaseAnonKeyKey, document.getElementById("supabaseAnonKeyInput").value.trim());
-        toast("Supabase config saved.");
+        if (!supabaseReady()) {
+          cloudState.error = "Supabase URL or Anon Key is missing. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in Vercel.";
+          toast(cloudState.error);
+        } else {
+          cloudState.error = "";
+        }
         renderCloudStatus();
       }
       function renderCloudStatus() {
         const button = document.getElementById("cloudStatusButton");
         const text = document.getElementById("cloudStatusText");
-        const label = cloudState.session ? `Cloud: ${cloudState.session.user && cloudState.session.user.email || "Logged in"}` : "Cloud Login";
+        const label = cloudState.loading ? "Cloud: Loading..." : (cloudState.session ? `Cloud: ${cloudState.session.user && cloudState.session.user.email || "Logged in"}` : "Cloud Login");
         if (button) button.textContent = label;
-        if (text) text.textContent = cloudState.session ? `Logged in. Role: ${cloudState.role || currentRole}. Cloud sync is active.` : "Local mode. Login to enable cloud sync.";
+        if (text) {
+          if (cloudState.loading) text.textContent = "Loading data from Supabase...";
+          else if (cloudState.error) text.textContent = cloudState.error;
+          else text.textContent = cloudState.session ? `Logged in as ${cloudState.email || cloudState.session.user && cloudState.session.user.email || "user"}. Role: ${cloudState.role || currentRole}. Data source: ${cloudState.source}.` : (supabaseReady() ? "Supabase is configured. Login with email and password." : "Supabase environment variables are missing.");
+        }
       }
       async function supabaseFetch(path, options = {}) {
         if (!supabaseReady()) throw new Error("Supabase URL/key missing.");
@@ -2642,17 +2920,124 @@
         const text = await response.text();
         return text ? JSON.parse(text) : null;
       }
+      async function restoreSessionFromUrlHash() {
+        if (!location.hash || !location.hash.includes("access_token")) return;
+        const params = new URLSearchParams(location.hash.slice(1));
+        const accessToken = params.get("access_token");
+        if (!accessToken) return;
+        cloudState.session = {
+          access_token: accessToken,
+          refresh_token: params.get("refresh_token") || "",
+          token_type: params.get("token_type") || "bearer",
+          expires_in: Number(params.get("expires_in") || 3600),
+          expires_at: Math.floor(Date.now() / 1000) + Number(params.get("expires_in") || 3600),
+          user: null
+        };
+        try {
+          cloudState.session.user = await supabaseFetch("/auth/v1/user");
+        } catch (error) {
+          cloudState.session.user = { email: "verified user" };
+        }
+        nativeSetItem(supabaseSessionKey, JSON.stringify(cloudState.session));
+        history.replaceState(null, document.title, location.pathname + location.search);
+      }
+      async function refreshCloudSessionIfNeeded() {
+        if (!cloudState.session || !cloudState.session.refresh_token) return;
+        const expiresAt = Number(cloudState.session.expires_at || 0);
+        if (expiresAt && expiresAt - Math.floor(Date.now() / 1000) > 120) return;
+        try {
+          cloudState.session = await supabaseFetch("/auth/v1/token?grant_type=refresh_token", {
+            method: "POST",
+            body: JSON.stringify({ refresh_token: cloudState.session.refresh_token })
+          });
+          nativeSetItem(supabaseSessionKey, JSON.stringify(cloudState.session));
+        } catch (error) {
+          cloudState.session = null;
+          nativeSetItem(supabaseSessionKey, "null");
+        }
+      }
       async function cloudSignUp() {
-        saveCloudConfig();
-        const email = document.getElementById("cloudEmailInput").value.trim();
-        const password = document.getElementById("cloudPasswordInput").value;
-        if (!email || !password) return toast("Enter email and password.");
-        await supabaseFetch("/auth/v1/signup", { method: "POST", body: JSON.stringify({ email, password }) });
-        toast("User created. Check email if confirmation is enabled, then login.");
+        try {
+          saveCloudConfig();
+          if (!supabaseReady()) return;
+          cloudState.error = "";
+          const email = document.getElementById("cloudEmailInput").value.trim();
+          const password = document.getElementById("cloudPasswordInput").value;
+          if (!email || !password) return toast("Enter email and password.");
+          const redirect = authRedirectUrl();
+          const redirectQuery = redirect ? `?redirect_to=${encodeURIComponent(redirect)}` : "";
+          await supabaseFetch(`/auth/v1/signup${redirectQuery}`, { method: "POST", body: JSON.stringify({ email, password }) });
+          toast("User created. Check email if confirmation is enabled, then login.");
+          renderCloudStatus();
+        } catch (error) {
+          cloudState.error = "Create user failed. Check Supabase URL, anon key, or email settings.";
+          renderCloudStatus();
+          toast(cloudState.error);
+        }
+      }
+      function staffRoleOptions(selectedRole) {
+        return roles.map(([value, label]) => `<option value="${value}" ${selectedRole === value ? "selected" : ""}>${label}</option>`).join("");
+      }
+      async function loadStaffProfiles() {
+        if (!cloudState.session || cloudState.role !== "admin" || !supabaseReady()) return;
+        try {
+          staffProfiles = await supabaseFetch("/rest/v1/eco_screen_profiles?select=id,email,role,active,created_at,updated_at&order=email.asc") || [];
+        } catch (error) {
+          staffProfiles = [];
+          toast("Unable to load staff profiles.");
+        }
+      }
+      async function createStaffAccount() {
+        if (currentRole !== "admin" || cloudState.role !== "admin") return toast("Admin only.");
+        const email = document.getElementById("staffEmail").value.trim();
+        const password = document.getElementById("staffPassword").value;
+        const role = document.getElementById("staffRole").value;
+        if (!email || !password || password.length < 6) return toast("Enter staff email and password, minimum 6 characters.");
+        try {
+          const redirect = authRedirectUrl();
+          const redirectQuery = redirect ? `?redirect_to=${encodeURIComponent(redirect)}` : "";
+          const result = await supabaseFetch(`/auth/v1/signup${redirectQuery}`, {
+            method: "POST",
+            body: JSON.stringify({ email, password })
+          });
+          const userId = result && result.user && result.user.id;
+          if (userId) {
+            await supabaseFetch("/rest/v1/eco_screen_profiles", {
+              method: "POST",
+              headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+              body: JSON.stringify({ id: userId, email, role, active: true, updated_at: new Date().toISOString() })
+            });
+          }
+          document.getElementById("staffEmail").value = "";
+          document.getElementById("staffPassword").value = "";
+          await loadStaffProfiles();
+          renderStaffManagement();
+          toast("Staff account created.");
+        } catch (error) {
+          toast("Create staff failed. Check Supabase Auth settings.");
+        }
+      }
+      async function updateStaffProfile(id, field, value) {
+        if (currentRole !== "admin" || cloudState.role !== "admin") return toast("Admin only.");
+        const body = { [field]: field === "active" ? value === true || value === "true" : value, updated_at: new Date().toISOString() };
+        try {
+          await supabaseFetch(`/rest/v1/eco_screen_profiles?id=eq.${id}`, {
+            method: "PATCH",
+            headers: { Prefer: "return=minimal" },
+            body: JSON.stringify(body)
+          });
+          await loadStaffProfiles();
+          renderStaffManagement();
+          toast("Staff updated.");
+        } catch (error) {
+          toast("Unable to update staff.");
+        }
       }
       async function cloudLogin() {
         try {
           saveCloudConfig();
+          if (!supabaseReady()) return;
+          cloudState.error = "";
           const email = document.getElementById("cloudEmailInput").value.trim();
           const password = document.getElementById("cloudPasswordInput").value;
           if (!email || !password) return toast("Enter email and password.");
@@ -2667,12 +3052,16 @@
           toast("Cloud login failed. Check Supabase config.");
         }
       }
-      function cloudLogout() {
+      function cloudLogout(showMessage = true) {
         cloudState.session = null;
         cloudState.role = null;
+        cloudState.email = "";
+        cloudState.active = true;
+        cloudState.error = "";
+        cloudState.source = "Local fallback";
         nativeSetItem(supabaseSessionKey, "null");
         renderCloudStatus();
-        toast("Logged out. Local mode active.");
+        if (showMessage) toast("Logged out. Local mode active.");
       }
       function cloudSnapshot() {
         const data = {};
@@ -2696,26 +3085,60 @@
       async function loadCloudRole() {
         if (!cloudState.session || !cloudState.session.user) return;
         try {
-          const rows = await supabaseFetch(`/rest/v1/eco_screen_profiles?id=eq.${cloudState.session.user.id}&select=role`);
-          cloudState.role = rows && rows[0] && rows[0].role || "sales";
+          const rows = await supabaseFetch(`/rest/v1/eco_screen_profiles?id=eq.${cloudState.session.user.id}&select=id,email,role,active`);
+          const profile = rows && rows[0] || {};
+          cloudState.role = profile.role || "sales";
+          cloudState.email = profile.email || cloudState.session.user.email || "";
+          cloudState.active = profile.active !== false;
+          if (!cloudState.active) {
+            cloudLogout(false);
+            toast("This staff account is inactive. Please contact Admin.");
+            return;
+          }
           if (cloudState.role !== "admin") {
             currentRole = cloudState.role;
             nativeSetItem(roleKey, currentRole);
             currentPage = roleMenus[currentRole][0][0];
+          } else {
+            await loadStaffProfiles();
           }
         } catch (error) {
-          cloudState.role = "sales";
+          try {
+            const rows = await supabaseFetch(`/rest/v1/eco_screen_profiles?id=eq.${cloudState.session.user.id}&select=id,email,role`);
+            const profile = rows && rows[0] || {};
+            cloudState.role = profile.role || "sales";
+            cloudState.email = profile.email || cloudState.session.user.email || "";
+            cloudState.active = true;
+          } catch (fallbackError) {
+            cloudState.role = "sales";
+          }
         }
       }
       async function loadCloudSnapshot(reloadAfter) {
         if (!cloudState.session || !supabaseReady()) return;
-        const rows = await supabaseFetch("/rest/v1/eco_screen_state?id=eq.main&select=data,updated_at");
-        if (rows && rows[0] && rows[0].data) {
-          applyCloudSnapshot(rows[0].data);
+        cloudState.loading = true;
+        cloudState.error = "";
+        renderCloudStatus();
+        try {
+          const loadedBusinessTables = await loadSupabaseBusinessData();
+          if (!loadedBusinessTables) {
+            const rows = await supabaseFetch("/rest/v1/eco_screen_state?id=eq.main&select=data,updated_at");
+            if (rows && rows[0] && rows[0].data) {
+              applyCloudSnapshot(rows[0].data);
+              cloudState.source = "Supabase snapshot fallback";
+            } else {
+              await saveCloudSnapshot(true);
+              cloudState.source = "Local fallback seeded to Supabase";
+            }
+          }
+          cloudState.loading = false;
+          renderCloudStatus();
           if (reloadAfter) location.reload();
-        } else {
-          await loadNormalizedQuotations();
-          await saveCloudSnapshot(true);
+        } catch (error) {
+          cloudState.loading = false;
+          cloudState.error = "Supabase loading failed. Local fallback is active.";
+          renderCloudStatus();
+          toast(cloudState.error);
         }
       }
       function scheduleCloudSave() {
@@ -2754,10 +3177,17 @@
       function uniqueCustomersFrom(data) {
         const map = {};
         const sources = [
-          ...(data[quotesKey] || []).map((item) => item.customer),
-          ...(data[ordersKey] || []).map((item) => item.customer),
-          ...(data[installationsKey] || []).map((item) => item.customer),
-          ...(data[productionsKey] || []).map((item) => item.customer)
+          ...safeArray(data[quotesKey]).map((item) => item.customer),
+          ...safeArray(data[ordersKey]).map((item) => item.customer),
+          ...safeArray(data[installationsKey]).map((item) => item.customer),
+          ...safeArray(data[productionsKey]).map((item) => item.customer),
+          ...safeArray(data[appointmentsKey]).map((item) => ({
+            name: item.customerName,
+            phone: item.phone,
+            address: item.address,
+            area: "",
+            appointmentDate: item.appointmentDate
+          }))
         ];
         sources.filter(Boolean).forEach((customer) => {
           const id = customerKey(customer);
@@ -2774,11 +3204,11 @@
         return Object.values(map);
       }
       function normalizedRowsFrom(data) {
-        const productsList = data[productsKey] || products;
+        const productsList = safeArray(data[productsKey]).length ? safeArray(data[productsKey]) : products;
         const productMap = new Map(productsList.map((item) => [item.id, item]));
         const quoteRows = [];
         const itemRows = [];
-        (data[quotesKey] || []).forEach((quote) => {
+        safeArray(data[quotesKey]).forEach((quote) => {
           quoteRows.push({
             id: quote.id,
             quote_no: quote.quoteNo,
@@ -2787,10 +3217,11 @@
             total: Number(quote.total || 0),
             deposit: Number(quote.deposit || 0),
             balance: Number(quote.balance || 0),
+            remarks: quote.remarks || "",
             created_at: quote.createdAt || new Date().toISOString(),
             updated_at: quote.updatedAt || quote.createdAt || new Date().toISOString()
           });
-          (quote.items || []).forEach((line, index) => {
+          safeArray(quote.items).forEach((line, index) => {
             const p = productMap.get(line.productId) || product(line.productId);
             itemRows.push({
               id: line.id,
@@ -2814,7 +3245,7 @@
             });
           });
         });
-        const productionRows = (data[productionsKey] || []).map((row) => ({
+        const productionRows = safeArray(data[productionsKey]).map((row) => ({
           id: row.id,
           production_no: row.productionNo,
           order_no: row.orderNo,
@@ -2825,7 +3256,7 @@
           inventory_deducted: Boolean(row.inventoryDeducted),
           created_at: row.createdAt || new Date().toISOString()
         }));
-        const installationRows = (data[installationsKey] || []).map((row) => ({
+        const installationRows = safeArray(data[installationsKey]).map((row) => ({
           id: row.id,
           installation_no: row.installationNo,
           order_no: row.orderNo,
@@ -2847,8 +3278,8 @@
           created_at: row.createdAt || new Date().toISOString()
         }));
         const collectionRows = [];
-        (data[ordersKey] || []).forEach((order) => {
-          (order.payments || []).forEach((payment) => {
+        safeArray(data[ordersKey]).forEach((order) => {
+          safeArray(order.payments).filter((payment) => String(payment.remark || "").toLowerCase() !== "deposit from quotation").forEach((payment) => {
             collectionRows.push({
               id: payment.id,
               order_id: order.id,
@@ -2863,7 +3294,78 @@
             });
           });
         });
-        return { customers: uniqueCustomersFrom(data), quotations: quoteRows, quotation_items: itemRows, production_orders: productionRows, installations: installationRows, collections: collectionRows };
+        const orderRows = safeArray(data[ordersKey]).map((order) => ({
+          id: order.id,
+          order_no: order.orderNo,
+          quote_no: order.quoteNo,
+          customer_id: customerKey(order.customer),
+          items: order.items || [],
+          subtotal: Number(order.subtotal || 0),
+          discount: Number(order.discount || 0),
+          total: Number(order.total || 0),
+          deposit: Number(order.deposit || 0),
+          balance: Number(order.balance || 0),
+          costs: order.costs || {},
+          installation_date: order.installationDate || null,
+          installation_notes: order.installationNotes || "",
+          created_at: order.createdAt || new Date().toISOString(),
+          updated_at: order.updatedAt || order.createdAt || new Date().toISOString()
+        }));
+        const productRows = (safeArray(data[productsKey]).length ? safeArray(data[productsKey]) : products).map((item) => ({
+          id: item.id,
+          name: item.name || item.id,
+          price: Number(item.price || 0),
+          minimum_sqft: Number(item.minimumSqft || 0),
+          updated_at: new Date().toISOString()
+        }));
+        const inventoryRows = (safeArray(data[inventoryKey]).length ? safeArray(data[inventoryKey]) : inventory).map((item) => ({
+          id: item.id,
+          category: item.category || "",
+          name: item.name || item.id,
+          unit: item.unit || "",
+          quantity: Number(item.quantity || 0),
+          safety_quantity: Number(item.safetyQuantity || 0),
+          usage_per_item: Number(item.usagePerItem || 0),
+          rmb_unit_cost: Number(item.rmbUnitCost || 0),
+          unit_cost: Number(item.unitCost || 0),
+          updated_at: new Date().toISOString()
+        }));
+        const staffMap = {};
+        safeArray(data[appointmentsKey]).forEach((appointment) => {
+          const name = (appointment.assignedStaff || "").trim();
+          if (name) staffMap[name.toLowerCase()] = { id: `staff-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`, name, role: "measurement", active: true, updated_at: new Date().toISOString() };
+        });
+        safeArray(data[installationsKey]).forEach((installation) => {
+          const name = (installation.installerName || "").trim();
+          if (name) staffMap[name.toLowerCase()] = { id: `staff-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`, name, role: "installer", active: true, updated_at: new Date().toISOString() };
+        });
+        const staffRows = Object.values(staffMap);
+        const settingsRows = [
+          { id: "company", value: companyInfo, updated_at: new Date().toISOString() },
+          { id: "pricing", value: { products: safeArray(data[productsKey]).length ? safeArray(data[productsKey]) : products }, updated_at: new Date().toISOString() },
+          { id: "google_review", value: { url: localStorage.getItem(googleReviewLinkKey) || googleReviewLink }, updated_at: new Date().toISOString() },
+          { id: "google_calendar", value: { webhookUrl: localStorage.getItem(googleCalendarWebhookKey) || googleCalendarWebhook }, updated_at: new Date().toISOString() },
+          { id: "site", value: { url: localStorage.getItem(siteUrlKey) || siteUrl || authRedirectUrl() }, updated_at: new Date().toISOString() },
+          { id: "currency", value: { rmbToMyrRate: Number(localStorage.getItem(exchangeRateKey) || rmbToMyrRate) }, updated_at: new Date().toISOString() }
+        ];
+        const appointmentRows = safeArray(data[appointmentsKey]).map((appointment) => ({
+          id: appointment.id,
+          customer_name: appointment.customerName || "",
+          phone: appointment.phone || "",
+          address: appointment.address || "",
+          product: appointment.product || "",
+          appointment_date: appointment.appointmentDate || null,
+          appointment_time: appointment.appointmentTime || null,
+          assigned_staff: appointment.assignedStaff || "",
+          remarks: appointment.remarks || "",
+          google_event_id: appointment.googleEventId || "",
+          google_event_link: appointment.googleEventLink || "",
+          google_status: appointment.googleStatus || "",
+          reminder_sent_at: appointment.reminderSentAt || null,
+          created_at: appointment.createdAt || new Date().toISOString(),
+          updated_at: appointment.updatedAt || appointment.createdAt || new Date().toISOString()
+        }));
+        return { customers: uniqueCustomersFrom(data), products: productRows, quotations: quoteRows, quotation_items: itemRows, orders: orderRows, production_orders: productionRows, installations: installationRows, collections: collectionRows, appointments: appointmentRows, inventory_items: inventoryRows, staff: staffRows, app_settings: settingsRows };
       }
       async function upsertRows(table, rows) {
         if (!rows.length) return;
@@ -2873,18 +3375,238 @@
           body: JSON.stringify(rows)
         });
       }
+      async function fetchTable(table, query = "select=*") {
+        try {
+          return await supabaseFetch(`/rest/v1/${table}?${query}`);
+        } catch (error) {
+          return [];
+        }
+      }
+      function rowsById(rows) {
+        return (rows || []).reduce((map, row) => {
+          map[row.id] = row;
+          return map;
+        }, {});
+      }
+      async function loadSupabaseBusinessData() {
+        const [
+          customerRows,
+          productRows,
+          quoteRows,
+          itemRows,
+          orderRows,
+          productionRows,
+          installationRows,
+          collectionRows,
+          appointmentRows,
+          inventoryRows,
+          settingsRows
+        ] = await Promise.all([
+          fetchTable("customers", "select=*"),
+          fetchTable("products", "select=*&order=name.asc"),
+          fetchTable("quotations", "select=*&order=created_at.desc"),
+          fetchTable("quotation_items", "select=*&order=sort_order.asc"),
+          fetchTable("orders", "select=*&order=created_at.desc"),
+          fetchTable("production_orders", "select=*&order=created_at.desc"),
+          fetchTable("installations", "select=*&order=created_at.desc"),
+          fetchTable("collections", "select=*&order=created_at.desc"),
+          fetchTable("appointments", "select=*&order=appointment_date.asc,appointment_time.asc"),
+          fetchTable("inventory_items", "select=*&order=category.asc,name.asc"),
+          fetchTable("app_settings", "select=*")
+        ]);
+        const hasBusinessData = [quoteRows, orderRows, productionRows, installationRows, collectionRows, appointmentRows, inventoryRows, productRows].some((rows) => rows && rows.length);
+        if (!hasBusinessData) return false;
+        const customersById = rowsById(customerRows);
+        const itemsByQuote = {};
+        (itemRows || []).forEach((item) => {
+          itemsByQuote[item.quotation_id] = [...(itemsByQuote[item.quotation_id] || []), item];
+        });
+        const paymentsByOrder = {};
+        (collectionRows || []).forEach((payment) => {
+          const key = payment.order_id || payment.order_no;
+          paymentsByOrder[key] = [...(paymentsByOrder[key] || []), payment];
+        });
+        const loadedProducts = productRows && productRows.length ? productRows.map((item) => ({
+          id: item.id,
+          name: item.name || item.id,
+          price: Number(item.price || 0),
+          minimumSqft: Number(item.minimum_sqft || 0)
+        })) : products;
+        const loadedQuotes = (quoteRows || []).map((quote) => {
+          const customer = customersById[quote.customer_id] || {};
+          return {
+            id: quote.id,
+            quoteNo: quote.quote_no,
+            createdAt: quote.created_at,
+            updatedAt: quote.updated_at,
+            status: quote.status || "quoted",
+            customer: {
+              name: customer.name || "",
+              phone: customer.phone || "",
+              address: customer.address || "",
+              area: customer.area || "",
+              appointmentDate: customer.appointment_date || today()
+            },
+            items: (itemsByQuote[quote.id] || []).map((item) => ({
+              id: item.id,
+              label: item.line_label || "",
+              productId: item.product_id || "roller",
+              widthMm: Number(item.width_mm || 0),
+              heightMm: Number(item.height_mm || 0),
+              quantity: Number(item.quantity || 0),
+              color: item.color || "",
+              trackType: item.track_type || "",
+              trackWidthMm: Number(item.track_width_mm || 0),
+              handleHeightMm: Number(item.handle_height_mm || item.track_height_mm || 0),
+              installationType: item.installation_type || "",
+              openingDirection: item.opening_direction || "Not Applicable"
+            })),
+            remarks: quote.remarks || "",
+            subtotal: Number(quote.subtotal || quote.total || 0),
+            discount: Number(quote.discount || 0),
+            total: Number(quote.total || 0),
+            deposit: Number(quote.deposit || 0),
+            balance: Number(quote.balance || 0)
+          };
+        });
+        const loadedOrders = (orderRows || []).map((order) => {
+          const customer = customersById[order.customer_id] || {};
+          const payments = [...(paymentsByOrder[order.id] || []), ...(paymentsByOrder[order.order_no] || [])]
+            .filter((payment, index, list) => list.findIndex((row) => row.id === payment.id) === index)
+            .map((payment) => ({
+              id: payment.id,
+              label: payment.label || "Payment",
+              amount: Number(payment.amount || 0),
+              method: payment.method || "",
+              date: payment.payment_date || "",
+              remark: payment.remark || ""
+            }));
+          return {
+            id: order.id,
+            orderNo: order.order_no,
+            quoteNo: order.quote_no,
+            createdAt: order.created_at,
+            updatedAt: order.updated_at,
+            customer: {
+              name: customer.name || "",
+              phone: customer.phone || "",
+              address: customer.address || "",
+              area: customer.area || "",
+              appointmentDate: customer.appointment_date || ""
+            },
+            items: order.items || [],
+            subtotal: Number(order.subtotal || 0),
+            discount: Number(order.discount || 0),
+            total: Number(order.total || 0),
+            deposit: Number(order.deposit || 0),
+            balance: Number(order.balance || 0),
+            costs: order.costs || {},
+            payments,
+            installationDate: order.installation_date || "",
+            installationNotes: order.installation_notes || ""
+          };
+        });
+        const loadedProductions = (productionRows || []).map((row) => {
+          const customer = customersById[row.customer_id] || {};
+          return {
+            id: row.id,
+            productionNo: row.production_no,
+            orderNo: row.order_no,
+            quoteNo: row.quote_no,
+            customer: { name: customer.name || "", phone: customer.phone || "", address: customer.address || "", area: customer.area || "" },
+            status: row.status || "pending-production",
+            items: row.items || [],
+            inventoryDeducted: Boolean(row.inventory_deducted),
+            createdAt: row.created_at
+          };
+        });
+        const loadedInstallations = (installationRows || []).map((row) => {
+          const customer = customersById[row.customer_id] || {};
+          return {
+            id: row.id,
+            installationNo: row.installation_no,
+            orderNo: row.order_no,
+            quoteNo: row.quote_no,
+            customer: { name: customer.name || "", phone: customer.phone || "", address: customer.address || "", area: customer.area || "" },
+            installationDate: row.installation_date || "",
+            completedDate: row.completed_date || "",
+            installerName: row.installer_name || "",
+            status: row.status || "pending-installation",
+            balance: Number(row.balance || 0),
+            customerRating: Number(row.customer_rating || 0),
+            photoUploaded: Boolean(row.photo_uploaded),
+            referredFriend: Boolean(row.referred_friend),
+            referralNote: row.referral_note || "",
+            checklist: row.checklist || {},
+            items: row.items || [],
+            signature: row.signature || "",
+            installationNotes: row.installation_notes || "",
+            createdAt: row.created_at
+          };
+        });
+        const loadedAppointments = (appointmentRows || []).map((row) => ({
+          id: row.id,
+          customerName: row.customer_name || "",
+          phone: row.phone || "",
+          address: row.address || "",
+          product: row.product || "",
+          appointmentDate: row.appointment_date || today(),
+          appointmentTime: row.appointment_time ? String(row.appointment_time).slice(0, 5) : "09:00",
+          assignedStaff: row.assigned_staff || "",
+          remarks: row.remarks || "",
+          googleEventId: row.google_event_id || "",
+          googleEventLink: row.google_event_link || "",
+          googleStatus: row.google_status || "Not Synced",
+          reminderSentAt: row.reminder_sent_at || "",
+          createdAt: row.created_at,
+          updatedAt: row.updated_at
+        }));
+        const loadedInventory = inventoryRows && inventoryRows.length ? normalizeInventory(inventoryRows.map((row) => ({
+          id: row.id,
+          category: row.category || "",
+          name: row.name || "",
+          unit: row.unit || "",
+          quantity: Number(row.quantity || 0),
+          safetyQuantity: Number(row.safety_quantity || 0),
+          usagePerItem: Number(row.usage_per_item || 0),
+          rmbUnitCost: Number(row.rmb_unit_cost || 0),
+          unitCost: Number(row.unit_cost || 0)
+        }))) : inventory;
+        const settingsById = rowsById(settingsRows);
+        cloudState.applying = true;
+        nativeSetItem(productsKey, JSON.stringify(loadedProducts));
+        nativeSetItem(quotesKey, JSON.stringify(loadedQuotes));
+        nativeSetItem(ordersKey, JSON.stringify(loadedOrders));
+        nativeSetItem(productionsKey, JSON.stringify(loadedProductions));
+        nativeSetItem(installationsKey, JSON.stringify(loadedInstallations));
+        nativeSetItem(appointmentsKey, JSON.stringify(loadedAppointments));
+        nativeSetItem(inventoryKey, JSON.stringify(loadedInventory));
+        if (settingsById.google_review && settingsById.google_review.value && settingsById.google_review.value.url) nativeSetItem(googleReviewLinkKey, settingsById.google_review.value.url);
+        if (settingsById.google_calendar && settingsById.google_calendar.value && settingsById.google_calendar.value.webhookUrl) nativeSetItem(googleCalendarWebhookKey, settingsById.google_calendar.value.webhookUrl);
+        if (settingsById.site && settingsById.site.value && settingsById.site.value.url) nativeSetItem(siteUrlKey, settingsById.site.value.url);
+        if (settingsById.currency && settingsById.currency.value && settingsById.currency.value.rmbToMyrRate) nativeSetItem(exchangeRateKey, settingsById.currency.value.rmbToMyrRate);
+        cloudState.applying = false;
+        cloudState.source = "Supabase business tables";
+        return true;
+      }
       async function saveNormalizedTables(data) {
         const rows = normalizedRowsFrom(data);
         await upsertRows("customers", rows.customers);
+        await upsertRows("products", rows.products);
         await upsertRows("quotations", rows.quotations);
         if (rows.quotations.length) {
           const ids = rows.quotations.map((quote) => quote.id).join(",");
           await supabaseFetch(`/rest/v1/quotation_items?quotation_id=in.(${ids})`, { method: "DELETE" });
         }
         await upsertRows("quotation_items", rows.quotation_items);
+        await upsertRows("orders", rows.orders);
         await upsertRows("production_orders", rows.production_orders);
         await upsertRows("installations", rows.installations);
         await upsertRows("collections", rows.collections);
+        await upsertRows("appointments", rows.appointments);
+        await upsertRows("inventory_items", rows.inventory_items);
+        await upsertRows("staff", rows.staff);
+        await upsertRows("app_settings", rows.app_settings);
       }
       async function loadNormalizedQuotations() {
         try {
@@ -3006,6 +3728,7 @@
           status: document.getElementById("status").value,
           customer: getCustomer(),
           items: orderedItems(),
+          remarks: document.getElementById("quoteRemarks").value,
           subtotal: subtotal(),
           discount: discount(),
           deposit: deposit(),
@@ -3030,6 +3753,7 @@
           status: document.getElementById("status").value,
           customer: getCustomer(),
           items: orderedItems(),
+          remarks: document.getElementById("quoteRemarks").value,
           subtotal: subtotal(),
           discount: discount(),
           deposit: deposit(),
@@ -3067,14 +3791,7 @@
           deposit: quote.deposit,
           balance: quote.balance,
           costs: { material: 0, hardware: 0, installation: 0, transport: 0 },
-          payments: Number(quote.deposit || 0) > 0 ? [{
-            id: uid(),
-            label: "Deposit",
-            amount: Number(quote.deposit || 0),
-            method: "Cash",
-            date: today(),
-            remark: "Deposit from quotation"
-          }] : [],
+          payments: [],
           installationDate: document.getElementById("installationDate").value,
           installationNotes: document.getElementById("installationNotes").value
         };
@@ -3098,7 +3815,7 @@
           createdAt: new Date().toISOString(),
           customer: order.customer,
           status: "pending-production",
-          items: (order.items || []).map((item) => ({
+          items: safeArray(order.items).map((item) => ({
             id: item.id,
             productId: item.productId,
             label: item.label,
@@ -3227,7 +3944,7 @@
         render();
       }
       function productionQtyTotal(production) {
-        return (production.items || []).reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+        return safeArray(production.items).reduce((sum, item) => sum + Number(item.quantity || 0), 0);
       }
       function daysSince(value) {
         if (!value) return 0;
@@ -3343,6 +4060,185 @@
         localStorage.setItem(googleReviewLinkKey, googleReviewLink);
         render();
       }
+      function updateGoogleCalendarWebhook(value) {
+        googleCalendarWebhook = value || "";
+        localStorage.setItem(googleCalendarWebhookKey, googleCalendarWebhook);
+        render();
+      }
+      function updateSiteUrl(value) {
+        siteUrl = (value || "").replace(/\/$/, "");
+        localStorage.setItem(siteUrlKey, siteUrl);
+        render();
+      }
+      function authRedirectUrl() {
+        const configured = (localStorage.getItem(siteUrlKey) || siteUrl || "").replace(/\/$/, "");
+        if (configured) return configured;
+        if (location.protocol === "http:" || location.protocol === "https:") return location.origin + location.pathname;
+        return "";
+      }
+      function appointmentStart(appointment) {
+        return new Date(`${appointment.appointmentDate || today()}T${appointment.appointmentTime || "09:00"}:00`);
+      }
+      function appointmentEnd(appointment) {
+        return new Date(appointmentStart(appointment).getTime() + 60 * 60 * 1000);
+      }
+      function googleCalendarUrl(appointment) {
+        const title = `[Site Measurement] ${appointment.customerName || "Customer"}`;
+        const details = [
+          appointment.customerName || "",
+          appointment.phone || "",
+          appointment.address || "",
+          appointment.product || "",
+          appointment.remarks || ""
+        ].filter(Boolean).join("\n");
+        const start = appointmentStart(appointment).toISOString().replace(/[-:]|\.\d{3}/g, "");
+        const end = appointmentEnd(appointment).toISOString().replace(/[-:]|\.\d{3}/g, "");
+        return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${start}/${end}&details=${encodeURIComponent(details)}&location=${encodeURIComponent(appointment.address || "")}`;
+      }
+      function hasAppointmentConflict(nextAppointment) {
+        return appointments.some((appointment) =>
+          appointment.id !== nextAppointment.id &&
+          appointment.assignedStaff &&
+          nextAppointment.assignedStaff &&
+          appointment.assignedStaff.trim().toLowerCase() === nextAppointment.assignedStaff.trim().toLowerCase() &&
+          appointment.appointmentDate === nextAppointment.appointmentDate &&
+          appointment.appointmentTime === nextAppointment.appointmentTime
+        );
+      }
+      async function syncAppointmentToGoogle(id) {
+        const appointment = appointments.find((item) => item.id === id);
+        if (!appointment) return;
+        if (!googleCalendarWebhook) {
+          appointments = appointments.map((item) => item.id === id ? {
+            ...item,
+            googleStatus: "Calendar Link Ready",
+            googleEventLink: item.googleEventLink || googleCalendarUrl(item)
+          } : item);
+          localStorage.setItem(appointmentsKey, JSON.stringify(appointments));
+          render();
+          return;
+        }
+        try {
+          const response = await fetch(googleCalendarWebhook, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "upsert", appointment })
+          });
+          if (!response.ok) throw new Error("Google Calendar webhook failed.");
+          const result = await response.json();
+          appointments = appointments.map((item) => item.id === id ? {
+            ...item,
+            googleEventId: result.eventId || item.googleEventId,
+            googleEventLink: result.htmlLink || result.googleEventLink || item.googleEventLink || googleCalendarUrl(item),
+            googleStatus: "Synced",
+            updatedAt: new Date().toISOString()
+          } : item);
+          localStorage.setItem(appointmentsKey, JSON.stringify(appointments));
+          toast("Google Calendar event synced.");
+          render();
+        } catch (error) {
+          appointments = appointments.map((item) => item.id === id ? { ...item, googleStatus: "Sync Failed" } : item);
+          localStorage.setItem(appointmentsKey, JSON.stringify(appointments));
+          toast("Google Calendar sync failed. Check webhook setup.");
+          render();
+        }
+      }
+      async function syncAppointmentsFromGoogle() {
+        if (!googleCalendarWebhook) {
+          toast("Add Google Calendar Webhook URL in Settings first.");
+          return;
+        }
+        try {
+          const response = await fetch(googleCalendarWebhook, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "pull", appointments })
+          });
+          if (!response.ok) throw new Error("Google Calendar pull failed.");
+          const result = await response.json();
+          if (Array.isArray(result.appointments)) {
+            appointments = normalizeAppointments(result.appointments);
+            localStorage.setItem(appointmentsKey, JSON.stringify(appointments));
+            toast("Google Calendar changes synced to CRM.");
+            render();
+          }
+        } catch (error) {
+          toast("Unable to sync from Google Calendar.");
+        }
+      }
+      function saveAppointment(id = "") {
+        const existing = appointments.find((item) => item.id === id);
+        const appointment = {
+          id: id || uid(),
+          createdAt: existing ? existing.createdAt : new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          customerName: document.getElementById("appointmentCustomerName").value.trim(),
+          phone: document.getElementById("appointmentPhone").value.trim(),
+          address: document.getElementById("appointmentAddress").value.trim(),
+          product: document.getElementById("appointmentProduct").value.trim(),
+          appointmentDate: document.getElementById("appointmentDateField").value,
+          appointmentTime: document.getElementById("appointmentTimeField").value,
+          assignedStaff: document.getElementById("appointmentStaff").value.trim(),
+          remarks: document.getElementById("appointmentRemarks").value.trim(),
+          googleEventId: existing ? existing.googleEventId : "",
+          googleEventLink: existing ? existing.googleEventLink : "",
+          googleStatus: existing ? existing.googleStatus : "Not Synced",
+          reminderSentAt: existing ? existing.reminderSentAt : ""
+        };
+        if (!appointment.customerName || !appointment.phone || !appointment.appointmentDate || !appointment.appointmentTime || !appointment.assignedStaff) {
+          toast("Customer, phone, date, time and staff are required.");
+          return;
+        }
+        if (hasAppointmentConflict(appointment)) {
+          toast("Double booking blocked: this staff already has an appointment at that time.");
+          return;
+        }
+        appointments = existing ? appointments.map((item) => item.id === id ? appointment : item) : [appointment, ...appointments];
+        localStorage.setItem(appointmentsKey, JSON.stringify(appointments));
+        toast(existing ? "Appointment updated." : "Appointment created.");
+        syncAppointmentToGoogle(appointment.id);
+        render();
+      }
+      function editAppointment(id) {
+        const appointment = appointments.find((item) => item.id === id);
+        if (!appointment) return;
+        document.getElementById("appointmentCustomerName").value = appointment.customerName || "";
+        document.getElementById("appointmentPhone").value = appointment.phone || "";
+        document.getElementById("appointmentAddress").value = appointment.address || "";
+        document.getElementById("appointmentProduct").value = appointment.product || "";
+        document.getElementById("appointmentDateField").value = appointment.appointmentDate || today();
+        document.getElementById("appointmentTimeField").value = appointment.appointmentTime || "09:00";
+        document.getElementById("appointmentStaff").value = appointment.assignedStaff || "";
+        document.getElementById("appointmentRemarks").value = appointment.remarks || "";
+        document.getElementById("appointmentSaveButton").textContent = "Update Appointment";
+        document.getElementById("appointmentSaveButton").setAttribute("onclick", `saveAppointment('${id}')`);
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+      function deleteAppointment(id) {
+        const appointment = appointments.find((item) => item.id === id);
+        if (!appointment || !confirm(`Delete appointment for ${appointment.customerName}?`)) return;
+        appointments = appointments.filter((item) => item.id !== id);
+        localStorage.setItem(appointmentsKey, JSON.stringify(appointments));
+        render();
+      }
+      function setCalendarView(view) {
+        calendarView = view;
+        localStorage.setItem(calendarViewKey, view);
+        renderAppointments();
+      }
+      function appointmentReminderDue(appointment) {
+        const diffHours = (appointmentStart(appointment).getTime() - Date.now()) / 36e5;
+        return diffHours > 0 && diffHours <= 24 && !appointment.reminderSentAt;
+      }
+      async function copyAppointmentReminder(id) {
+        const appointment = appointments.find((item) => item.id === id);
+        if (!appointment) return;
+        const text = `Hi ${appointment.customerName || "Customer"}, reminder from Eco Screen: your site measurement appointment is on ${appointment.appointmentDate} at ${appointment.appointmentTime}. Staff: ${appointment.assignedStaff}. Thank you.`;
+        appointments = appointments.map((item) => item.id === id ? { ...item, reminderSentAt: new Date().toISOString() } : item);
+        localStorage.setItem(appointmentsKey, JSON.stringify(appointments));
+        await copyText(text);
+        render();
+      }
       function updateProductionArea(id, value) {
         productions = productions.map((item) => item.id === id ? {
           ...item,
@@ -3354,7 +4250,7 @@
         const nextValue = ["trackWidthMm","handleHeightMm"].includes(field) ? Number(String(value).replace(/[^\d.]/g, "") || 0) : value;
         productions = productions.map((production) => production.id === productionId ? {
           ...production,
-          items: production.items.map((item) => item.id === itemId ? { ...item, [field]: nextValue } : item)
+          items: safeArray(production.items).map((item) => item.id === itemId ? { ...item, [field]: nextValue } : item)
         } : production);
         localStorage.setItem(productionsKey, JSON.stringify(productions));
       }
@@ -3481,6 +4377,7 @@
         setCustomer(quote.customer || {});
         document.getElementById("discount").value = quote.discount || "";
         document.getElementById("deposit").value = quote.deposit || "";
+        document.getElementById("quoteRemarks").value = quote.remarks || "";
         document.getElementById("status").value = quote.status || "quoted";
         window.scrollTo({ top: 0, behavior: "smooth" });
         render();
@@ -3518,6 +4415,7 @@
         setCustomer({ appointmentDate: today() });
         document.getElementById("discount").value = "";
         document.getElementById("deposit").value = "";
+        document.getElementById("quoteRemarks").value = "";
         document.getElementById("status").value = "quoted";
         document.getElementById("installationDate").value = "";
         document.getElementById("installationNotes").value = "";
@@ -3533,44 +4431,51 @@
         const month = todayValue.slice(0, 7);
         const monthOrders = orders.filter((order) => (order.createdAt || "").slice(0, 7) === month);
         const todayOrders = orders.filter((order) => (order.createdAt || "").slice(0, 10) === todayValue);
-        const allPayments = orders.flatMap((order) => (order.payments || []).map((payment) => ({ ...payment, order })));
-        const adminSales = orders.reduce((sum, order) => sum + Number(order.total || 0), 0);
-        const adminCost = orders.reduce((sum, order) => sum + orderCostTotal(order), 0);
-        const adminProfit = adminSales - adminCost;
+        const allPayments = orders.flatMap((order) => (order.payments || [])
+          .filter((payment) => String(payment.remark || "").toLowerCase() !== "deposit from quotation")
+          .map((payment) => ({ ...payment, order })));
+        const monthProfit = monthOrders.reduce((sum, order) => sum + orderGrossProfit(order), 0);
+        const outstandingBalance = orders.reduce((sum, order) => sum + unpaidTotal(order), 0);
+        const depositCollected = allPayments
+          .filter((payment) => String(`${payment.label || ""} ${payment.remark || ""}`).toLowerCase().includes("deposit"))
+          .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
         const dashboardByRole = {
           admin: [
-            ["Today's Sales", money(todayOrders.reduce((sum, order) => sum + Number(order.total || 0), 0))],
-            ["Monthly Sales", money(monthOrders.reduce((sum, order) => sum + Number(order.total || 0), 0))],
-            ["Today's Collection", money(allPayments.filter((payment) => payment.date === todayValue).reduce((sum, payment) => sum + Number(payment.amount || 0), 0))],
-            ["Monthly Collection", money(allPayments.filter((payment) => (payment.date || "").slice(0, 7) === month).reduce((sum, payment) => sum + Number(payment.amount || 0), 0))],
-            ["Pending Balance", money(orders.reduce((sum, order) => sum + unpaidTotal(order), 0))],
-            ["Profit", money(adminProfit)],
-            ["Margin", `${adminSales > 0 ? (adminProfit / adminSales * 100).toFixed(1) : "0.0"}%`],
-            ["Won Orders", orders.length],
-            ["Unpaid Orders", orders.filter((order) => unpaidTotal(order) > 0).length],
-            ["Overdue", orders.filter((order) => isOverdue(order)).length],
+            ["Today Sales", money(todayOrders.reduce((sum, order) => sum + Number(order.total || 0), 0))],
+            ["Month Sales", money(monthOrders.reduce((sum, order) => sum + Number(order.total || 0), 0))],
+            ["Deposit Collected", money(depositCollected)],
+            ["Outstanding Balance", money(outstandingBalance)],
             ["Pending Production", productions.filter((item) => item.status !== "completed").length],
-            ["Production Alerts", productions.filter((item) => isProductionOverdue(item)).length],
             ["Pending Installation", installations.filter((item) => item.status === "pending-installation").length],
-            ["Today's Install", installations.filter((item) => item.installationDate === todayValue).length],
-            ["Need Rework", installations.filter((item) => item.status === "rework").length],
-            ["Sliding Items", slidingDashboardRows().length],
-            ["Customer Referrals", installations.filter((item) => item.referredFriend).length],
-            ["Low Stock Items", inventory.filter((item) => Number(item.quantity || 0) <= Number(item.safetyQuantity || 0)).length],
-            ["Today Follow Up", customersDueToday().length],
-            ["Need Follow Up", customersNeedFollowUp().length],
+            ["Open Service Cases", installations.filter((item) => item.status === "rework").length],
+            ["Today Appointments", appointments.filter((item) => item.appointmentDate === todayValue).length],
+            ["Reminder Due", appointments.filter(appointmentReminderDue).length],
             ["Top Product", topProductFromOrders()],
-            ["Top Area", topAreaFromOrders()]
+            ["Top Area", topAreaFromOrders()],
+            ["Top Salesperson", topSalespersonFromOrders()],
+            ["Monthly Profit", money(monthProfit)]
           ],
           sales: [
             ["Today's Quotes", quotes.filter((quote) => (quote.createdAt || "").slice(0, 10) === todayValue).length],
             ["Follow Up", quotes.filter((quote) => quote.status === "follow-up").length],
             ["Today Follow Up", customersDueToday().length],
             ["Need Follow Up", customersNeedFollowUp().length],
+            ["Today Appointments", appointments.filter((item) => item.appointmentDate === todayValue).length],
+            ["Reminder Due", appointments.filter(appointmentReminderDue).length],
             ["Won Orders", orders.length],
             ["Unpaid Orders", orders.filter((order) => unpaidTotal(order) > 0).length],
             ["Top Product", topProductFromOrders()],
             ["Top Area", topAreaFromOrders()]
+          ],
+          secretary: [
+            ["Today's Installations", installations.filter((item) => item.installationDate === todayValue).length],
+            ["Pending Installations", installations.filter((item) => item.status === "pending-installation").length],
+            ["Pending Services", installations.filter((item) => item.status === "rework").length],
+            ["Today Appointments", appointments.filter((item) => item.appointmentDate === todayValue).length],
+            ["Reminder Due", appointments.filter(appointmentReminderDue).length],
+            ["Outstanding Balances", money(outstandingBalance)],
+            ["New Quotations", quotes.filter((quote) => (quote.createdAt || "").slice(0, 10) === todayValue || quote.status === "quoted").length],
+            ["Customers Waiting for Measurement", customersWaitingForMeasurement()]
           ],
           production: [
             ["Pending Production", productions.filter((item) => item.status === "pending-production").length],
@@ -3587,7 +4492,7 @@
             ["Pending Balance", money(orders.reduce((sum, order) => sum + unpaidTotal(order), 0))]
           ]
         };
-        const metrics = dashboardByRole[currentRole];
+        const metrics = dashboardByRole[currentRole] || dashboardByRole.admin;
         const installerRows = installerPerformanceRows();
         const slidingRows = slidingDashboardRows();
         const installerRanking = currentRole === "admin" ? `
@@ -3613,15 +4518,23 @@
             `).join("") : `<p style="color:var(--muted);margin-top:8px">No Sliding track details yet.</p>`}
           </div>
         ` : "";
-        document.getElementById("dashboard").innerHTML = `<div class="boss-grid">${metrics.map(([label, value]) => `<div class="metric"><span class="eyebrow">${label}</span><strong>${value}</strong></div>`).join("")}</div>` +
+        document.getElementById("dashboard").innerHTML = `<div class="boss-grid">${metrics.map(([label, value]) => metricCard(label, value)).join("")}</div>` +
           installerRanking +
           slidingDetailsPanel +
-          (currentRole === "admin" || currentRole === "sales" ? statuses.map(([value, label]) => `<div class="status-row"><span>${label}</span><strong>${quotes.filter((quote) => quote.status === value).length}</strong></div>`).join("") : "");
+          (currentRole === "admin" || currentRole === "sales" || currentRole === "secretary" ? statuses.map(([value, label]) => `<div class="status-row"><span>${label}</span><strong>${quotes.filter((quote) => quote.status === value).length}</strong></div>`).join("") : "");
       }
       function renderSettings() {
         document.getElementById("settings").innerHTML = `
           <div class="item-card">
             <div class="field"><label>Google Review Link</label><input value="${googleReviewLink}" onchange="updateGoogleReviewLink(this.value)" placeholder="Paste your Google Review link here" /></div>
+          </div>
+          <div class="item-card">
+            <div class="field"><label>Google Calendar Webhook URL</label><input value="${googleCalendarWebhook}" onchange="updateGoogleCalendarWebhook(this.value)" placeholder="Paste Google Apps Script Web App URL" /></div>
+            <p style="color:var(--muted);margin-top:8px;font-size:13px">When this is configured, new and edited appointments will sync to Google Calendar automatically. Without it, the CRM uses Google Calendar add-link mode.</p>
+          </div>
+          <div class="item-card">
+            <div class="field"><label>CRM Site URL</label><input value="${siteUrl}" onchange="updateSiteUrl(this.value)" placeholder="https://your-crm.vercel.app" /></div>
+            <p style="color:var(--muted);margin-top:8px;font-size:13px">Used for Supabase email verification redirect. Put your production Vercel URL here.</p>
           </div>
         ` + products.map((item) => `
           <div class="item-card">
@@ -3632,6 +4545,34 @@
             </div>
           </div>
         `).join("");
+      }
+      function renderStaffManagement() {
+        const el = document.getElementById("staffManagement");
+        if (!el) return;
+        if (currentRole !== "admin") {
+          el.innerHTML = `<p style="color:var(--muted)">Admin only.</p>`;
+          return;
+        }
+        el.innerHTML = `
+          <div class="item-card">
+            <div class="field"><label>Staff Email</label><input id="staffEmail" type="email" placeholder="staff@email.com" /></div>
+            <div class="field" style="margin-top:10px"><label>Password</label><input id="staffPassword" type="password" placeholder="Minimum 6 characters" /></div>
+            <div class="field" style="margin-top:10px"><label>Role</label><select id="staffRole">${staffRoleOptions("sales")}</select></div>
+            <button class="btn primary" style="width:100%;margin-top:12px" onclick="createStaffAccount()">Create Staff</button>
+          </div>
+          <div class="item-card">
+            <div class="item-head"><h3>Staff List</h3><button class="btn" onclick="loadStaffProfiles().then(renderStaffManagement)">Refresh</button></div>
+            ${staffProfiles.length ? staffProfiles.map((profile) => `
+              <div class="payment-row" style="align-items:center">
+                <span><strong>${profile.email || "-"}</strong><br><small>${profile.active === false ? "Inactive" : "Active"}</small></span>
+                <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+                  <select onchange="updateStaffProfile('${profile.id}','role',this.value)">${staffRoleOptions(profile.role || "sales")}</select>
+                  <button class="btn ${profile.active === false ? "primary" : "danger"}" onclick="updateStaffProfile('${profile.id}','active','${profile.active === false ? "true" : "false"}')">${profile.active === false ? "Activate" : "Deactivate"}</button>
+                </span>
+              </div>
+            `).join("") : `<p style="color:var(--muted);margin-top:8px">No staff profiles loaded. Login as Admin and click Refresh.</p>`}
+          </div>
+        `;
       }
       function renderInventory() {
         const lowStock = inventory.filter((item) => Number(item.quantity || 0) <= Number(item.safetyQuantity || 0));
@@ -3734,6 +4675,7 @@
         const date = new Date().toLocaleDateString("en-MY", { year: "numeric", month: "long", day: "numeric" });
         const discountAmount = discount();
         const discountLine = discountAmount > 0 ? `<div class="line"><span>Discount</span><strong>- ${money(discountAmount)}</strong></div>` : "";
+        const remarks = document.getElementById("quoteRemarks").value.trim();
         document.getElementById("quotePreview").innerHTML = `
           <div class="quote-head">
             <div>
@@ -3749,16 +4691,22 @@
           <div class="table-wrap"><table><thead><tr><th>Description</th><th>Product</th><th class="right">Size</th><th class="right">Sqft</th><th class="right">Rate</th><th class="right">Qty</th><th class="right">Amount</th></tr></thead><tbody>
             ${orderedItems().map((item, index) => `<tr><td>${item.label || `Item ${index + 1}`}${itemExtraDetails(item) ? `<p style="color:var(--muted);font-size:12px;margin-top:4px">${itemExtraDetails(item)}</p>` : ""}</td><td>${product(item.productId).name}</td><td class="right">${item.widthMm || 0} x ${item.heightMm || 0} mm</td><td class="right">${chargeableSqft(item).toFixed(2)}</td><td class="right">${money(product(item.productId).price)}</td><td class="right">${item.quantity || 0}</td><td class="right"><strong>${money(itemTotal(item))}</strong></td></tr>`).join("")}
           </tbody></table></div>
+          ${remarks ? `<div class="info-box" style="margin-top:18px"><p class="eyebrow">Remarks</p><p style="white-space:pre-wrap;margin-top:8px">${remarks}</p></div>` : ""}
           <div class="quote-bottom"><div class="notes"><strong style="color:var(--ink)">Terms & Conditions</strong><p style="margin-top:8px">i) Prices quoted are valid for a period of two (2) weeks from the quotation date.</p><p style="margin-top:8px">ii) 50% deposit is required upon confirmation, balance of payment upon completion.</p><p style="margin-top:8px">iii) Deposit paid is non-refundable.</p><p style="margin-top:8px">iv) All cheques should not be crossed and make payable to:</p><p style="margin-top:8px"><strong>ECO SCREEN SDN BHD<br>PUBLIC BANK<br>3242952413</strong></p></div><div><div class="line"><span>Subtotal</span><strong>${money(subtotal())}</strong></div>${discountLine}<div class="line"><span>Total</span><strong>${money(total())}</strong></div><div class="line"><span>Deposit</span><strong>${money(deposit())}</strong></div><div class="total-box" style="margin-top:10px"><div class="line"><span>Balance</span><strong>${money(balance())}</strong></div></div></div></div>
         `;
       }
       function renderHistory() {
-        document.getElementById("history").innerHTML = quotes.length ? quotes.map((quote) => `
+        const filter = activeDashboardFilter("follow-up");
+        const rows = filter === "new-quotations"
+          ? quotes.filter((quote) => (quote.createdAt || "").slice(0, 10) === today() || quote.status === "quoted")
+          : quotes;
+        const banner = filterBanner("follow-up", { "new-quotations": "New Quotations" });
+        document.getElementById("history").innerHTML = banner + (rows.length ? rows.map((quote) => `
           <div class="history-card">
-            <div><strong>${quote.quoteNo}</strong> <span class="pill">${statusLabel(quote.status)}</span><p style="color:var(--muted);margin-top:5px">${quote.customer.name || "Unnamed Customer"} - ${quote.customer.area || "No area"} - ${money(quote.total)}</p></div>
+            <div><strong>${quote.quoteNo}</strong> <span class="pill">${statusLabel(quote.status)}</span><p style="color:var(--muted);margin-top:5px">${quote.customer.name || "Unnamed Customer"} - ${quote.customer.area || "No area"} - ${money(quote.total)}</p>${quote.remarks ? `<p style="white-space:pre-wrap;color:var(--muted);margin-top:6px">${quote.remarks}</p>` : ""}</div>
             <div class="history-actions"><button class="btn" onclick="editQuote('${quote.id}')">Edit</button><button class="btn danger" onclick="deleteQuote('${quote.id}')">Delete</button></div>
           </div>
-        `).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No saved quotations yet.</p>`;
+        `).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No saved quotations yet.</p>`);
       }
       function renderFollowUps() {
         const customers = collectCustomers()
@@ -3781,11 +4729,37 @@
         `).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No follow-ups for today.</p>`;
       }
       function renderOrders() {
-        document.getElementById("orders").innerHTML = orders.length ? orders.map((order) => {
+        const filter = activeDashboardFilter("order");
+        const month = today().slice(0, 7);
+        const rows = orders.filter((order) => {
+          const actualPayments = (order.payments || []).filter((payment) => String(payment.remark || "").toLowerCase() !== "deposit from quotation");
+          if (filter === "today-sales") return (order.createdAt || "").slice(0, 10) === today();
+          if (filter === "month-sales") return (order.createdAt || "").slice(0, 7) === month;
+          if (filter === "today-collection") return actualPayments.some((payment) => payment.date === today());
+          if (filter === "month-collection") return actualPayments.some((payment) => (payment.date || "").slice(0, 7) === month);
+          if (filter === "deposit-collected") return actualPayments.some((payment) => String(`${payment.label || ""} ${payment.remark || ""}`).toLowerCase().includes("deposit"));
+          if (filter === "unpaid-orders") return unpaidTotal(order) > 0;
+          if (filter === "overdue-orders") return isOverdue(order);
+          if (filter === "won-orders") return true;
+          return true;
+        });
+        const banner = filterBanner("order", {
+          "today-sales": "Today's Sales",
+          "month-sales": "Monthly Sales",
+          "today-collection": "Today's Collection",
+          "month-collection": "Monthly Collection",
+          "deposit-collected": "Deposit Collected",
+          "unpaid-orders": "Unpaid Orders",
+          "overdue-orders": "Overdue Orders",
+          "won-orders": "Won Orders",
+          all: "All Orders"
+        });
+        document.getElementById("orders").innerHTML = banner + (rows.length ? rows.map((order) => {
           const productionInfo = productionSummary(order);
           const installationInfo = installationSummary(order);
           const cost = orderCostBreakdown(order);
           const debugRows = costDebugRows(order);
+          const paymentRows = (order.payments || []).filter((payment) => String(payment.remark || "").toLowerCase() !== "deposit from quotation");
           return `
           <div class="order-card">
             <div>
@@ -3809,7 +4783,15 @@
                 <div class="payment-row"><span>Unpaid Amount</span><strong>${money(unpaidTotal(order))}</strong></div>
               </div>
               <div class="order-items">
-                ${(order.payments || []).length ? (order.payments || []).map((payment) => `<div class="payment-row"><span>${payment.label || "Payment"} - ${payment.method} - ${payment.date}</span><strong>${money(payment.amount)}</strong></div>${payment.remark ? `<p style="color:var(--muted)">${payment.remark}</p>` : ""}`).join("") : `<p style="color:var(--muted)">No payment records yet.</p>`}
+                <strong>Payment Debug</strong>
+                <div class="payment-row"><span>Deposit From Quotation</span><strong>${money(order.deposit)}</strong></div>
+                <div class="payment-row"><span>Payment Records Total</span><strong>${money(paymentRecordsTotal(order))}</strong></div>
+                <div class="payment-row"><span>Total Paid</span><strong>${money(paidTotal(order))}</strong></div>
+                <div class="payment-row"><span>Outstanding Balance</span><strong>${money(unpaidTotal(order))}</strong></div>
+                <p style="color:var(--muted);font-size:13px;margin-top:6px">Total Paid counts only payment records added here. Quotation deposit is shown for reference and is not counted twice.</p>
+              </div>
+              <div class="order-items">
+                ${paymentRows.length ? paymentRows.map((payment) => `<div class="payment-row"><span>${payment.label || "Payment"} - ${payment.method} - ${payment.date}</span><strong>${money(payment.amount)}</strong></div>${payment.remark ? `<p style="color:var(--muted)">${payment.remark}</p>` : ""}`).join("") : `<p style="color:var(--muted)">No payment records yet.</p>`}
               </div>
               <div class="payment-grid">
                 <div class="field"><label>Payment</label><input id="paymentLabel-${order.id}" placeholder="Deposit / Balance" /></div>
@@ -3863,7 +4845,7 @@
             </div>
           </div>
         `;
-        }).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No orders yet. Change a quotation status to Won, then click Convert to Order.</p>`;
+        }).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No orders found for this view.</p>`);
       }
       function renderPendingBalances() {
         const pending = orders.filter((order) => unpaidTotal(order) > 0);
@@ -3888,8 +4870,15 @@
         `).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No pending balance orders.</p>`;
       }
       function renderCustomers() {
-        const customers = collectCustomers();
-        document.getElementById("customers").innerHTML = customers.length ? customers.map((customer) => `
+        const filter = activeDashboardFilter("customer");
+        const customers = collectCustomers().filter((customer) => {
+          if (filter === "waiting-measurement") {
+            return quotes.some((quote) => customerKey(quote.customer || {}) === customer.key && ["quoted", "follow-up"].includes(quote.status));
+          }
+          return true;
+        });
+        const banner = filterBanner("customer", { "waiting-measurement": "Customers Waiting for Measurement" });
+        document.getElementById("customers").innerHTML = banner + (customers.length ? customers.map((customer) => `
           <div class="history-card">
             <div>
               <strong>${customer.name || "Unnamed Customer"}</strong> <span class="pill">${customer.crm.status}</span>
@@ -3904,12 +4893,268 @@
               <p style="color:var(--muted);margin-top:8px;font-size:13px">Last follow up: ${customer.crm.lastFollowUpAt || "-"}</p>
             </div>
           </div>
-        `).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No customers yet.</p>`;
+        `).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No customers found for this view.</p>`);
+      }
+      function calendarDatesForView() {
+        const base = new Date();
+        const dates = [];
+        if (calendarView === "day") {
+          dates.push(today());
+          return dates;
+        }
+        if (calendarView === "week") {
+          const start = new Date(base);
+          start.setDate(base.getDate() - base.getDay() + 1);
+          for (let index = 0; index < 7; index += 1) {
+            const date = new Date(start);
+            date.setDate(start.getDate() + index);
+            dates.push(date.toISOString().slice(0, 10));
+          }
+          return dates;
+        }
+        const start = new Date(base.getFullYear(), base.getMonth(), 1);
+        const end = new Date(base.getFullYear(), base.getMonth() + 1, 0);
+        for (let day = 1; day <= end.getDate(); day += 1) {
+          dates.push(new Date(start.getFullYear(), start.getMonth(), day).toISOString().slice(0, 10));
+        }
+        return dates;
+      }
+      function renderAppointments() {
+        const el = document.getElementById("appointments");
+        if (!el) return;
+        const filter = activeDashboardFilter("appointment");
+        const dates = filter === "today-appointments" || filter === "reminder-due" ? [today()] : calendarDatesForView();
+        const sortedAppointments = [...appointments]
+          .filter((appointment) => {
+            if (filter === "today-appointments") return appointment.appointmentDate === today();
+            if (filter === "reminder-due") return appointmentReminderDue(appointment);
+            return true;
+          })
+          .sort((a, b) => `${a.appointmentDate} ${a.appointmentTime}`.localeCompare(`${b.appointmentDate} ${b.appointmentTime}`));
+        const reminderRows = sortedAppointments.filter(appointmentReminderDue);
+        const banner = filterBanner("appointment", { "today-appointments": "Today Appointments", "reminder-due": "Reminder Due" });
+        el.innerHTML = `
+          ${banner}
+          <div class="item-card">
+            <div class="item-head">
+              <h3>Create Appointment</h3>
+              <span class="pill">${googleCalendarWebhook ? "Google Calendar Auto Sync On" : "Google Calendar Link Mode"}</span>
+            </div>
+            <div class="form-grid">
+              <div class="field"><label>Customer Name</label><input id="appointmentCustomerName" /></div>
+              <div class="field"><label>Phone</label><input id="appointmentPhone" /></div>
+              <div class="field wide"><label>Address</label><textarea id="appointmentAddress" rows="2"></textarea></div>
+              <div class="field"><label>Product</label><input id="appointmentProduct" placeholder="Roller / Security Mesh / Sliding" /></div>
+              <div class="field"><label>Appointment Date</label><input id="appointmentDateField" type="date" value="${today()}" /></div>
+              <div class="field"><label>Appointment Time</label><input id="appointmentTimeField" type="time" value="09:00" /></div>
+              <div class="field"><label>Assigned Staff</label><input id="appointmentStaff" placeholder="Sales / Measurement staff" /></div>
+              <div class="field wide"><label>Remarks</label><textarea id="appointmentRemarks" rows="3" placeholder="Gate access, customer request, parking, special product note"></textarea></div>
+            </div>
+            <div class="actions" style="margin-top:12px">
+              <button id="appointmentSaveButton" class="btn primary" onclick="saveAppointment()">Create Appointment</button>
+              <button class="btn" onclick="syncAppointmentsFromGoogle()">Sync Google Calendar</button>
+            </div>
+          </div>
+          ${reminderRows.length ? `
+            <div class="alert">
+              <strong>WhatsApp reminders due within 24 hours</strong>
+              ${reminderRows.map((appointment) => `<div class="payment-row"><span>${appointment.customerName} - ${appointment.appointmentDate} ${appointment.appointmentTime}</span><button class="btn" onclick="copyAppointmentReminder('${appointment.id}')">Copy Reminder</button></div>`).join("")}
+            </div>
+          ` : ""}
+          <div class="item-card">
+            <div class="calendar-toolbar">
+              <div class="actions">
+                ${["day","week","month"].map((view) => `<button class="btn ${calendarView === view ? "primary" : ""}" onclick="setCalendarView('${view}')">${view[0].toUpperCase() + view.slice(1)}</button>`).join("")}
+              </div>
+              <span class="pill">${appointments.length} Appointments</span>
+            </div>
+            <div class="calendar-grid">
+              ${dates.map((date) => {
+                const rows = sortedAppointments.filter((appointment) => appointment.appointmentDate === date);
+                return `<div class="calendar-day">
+                  <strong>${date}</strong>
+                  ${rows.map((appointment) => `<div class="calendar-event">
+                    <strong>${appointment.appointmentTime} ${appointment.customerName}</strong>
+                    <p>${appointment.product || "-"}</p>
+                    <p style="color:var(--muted)">${appointment.assignedStaff || "-"} | ${appointment.googleStatus || "Not Synced"}</p>
+                  </div>`).join("") || `<p style="color:var(--muted);font-size:12px">No appointment</p>`}
+                </div>`;
+              }).join("")}
+            </div>
+          </div>
+          <div class="item-card">
+            <div class="item-head"><h3>Appointment Records</h3><span class="pill">${sortedAppointments.length}</span></div>
+            ${sortedAppointments.length ? sortedAppointments.map((appointment) => `
+              <div class="history-card">
+                <div>
+                  <strong>${appointment.customerName}</strong> <span class="pill">${appointment.appointmentDate} ${appointment.appointmentTime}</span>
+                  <p style="color:var(--muted);margin-top:5px">${appointment.phone || "-"} - ${appointment.assignedStaff || "-"}</p>
+                  <p style="white-space:pre-wrap;color:var(--muted)">${appointment.address || "-"}</p>
+                  <div class="order-items">
+                    <div class="payment-row"><span>Product</span><strong>${appointment.product || "-"}</strong></div>
+                    <div class="payment-row"><span>Google Calendar</span><strong>${appointment.googleStatus || "Not Synced"}</strong></div>
+                    ${appointment.googleEventId ? `<div class="payment-row"><span>Google Event ID</span><strong>${appointment.googleEventId}</strong></div>` : ""}
+                  </div>
+                  ${appointment.remarks ? `<p style="white-space:pre-wrap;color:var(--muted);margin-top:6px">${appointment.remarks}</p>` : ""}
+                </div>
+                <div class="history-actions">
+                  ${appointment.googleEventLink ? `<button class="btn" onclick="window.open('${appointment.googleEventLink}', '_blank')">Open Calendar</button>` : `<button class="btn" onclick="window.open('${googleCalendarUrl(appointment)}', '_blank')">Add Calendar</button>`}
+                  <button class="btn" onclick="editAppointment('${appointment.id}')">Edit</button>
+                  <button class="btn" onclick="syncAppointmentToGoogle('${appointment.id}')">Sync</button>
+                  <button class="btn danger" onclick="deleteAppointment('${appointment.id}')">Delete</button>
+                </div>
+              </div>
+            `).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No appointments yet.</p>`}
+          </div>
+        `;
+        applyLanguageToDom();
+      }
+      function adNumber(value) {
+        return Number(value || 0);
+      }
+      function adCostPerWhatsapp(row) {
+        return adNumber(row.whatsapp) > 0 ? adNumber(row.spend) / adNumber(row.whatsapp) : 0;
+      }
+      function adAppointmentRate(row) {
+        return adNumber(row.whatsapp) > 0 ? adNumber(row.appointments) / adNumber(row.whatsapp) * 100 : 0;
+      }
+      function adClosingRate(row) {
+        return adNumber(row.appointments) > 0 ? adNumber(row.closedOrders) / adNumber(row.appointments) * 100 : 0;
+      }
+      function adRoas(row) {
+        return adNumber(row.spend) > 0 ? adNumber(row.revenue) / adNumber(row.spend) : 0;
+      }
+      function adProfit(row) {
+        return adNumber(row.revenue) - adNumber(row.spend);
+      }
+      function adDecision(row, allRows = facebookAds) {
+        const text = `${row.campaign || ""} ${row.adSet || ""} ${row.ad || ""}`.toLowerCase();
+        const cpw = adCostPerWhatsapp(row);
+        const roas = adRoas(row);
+        const recentNoSales = allRows
+          .filter((item) => item.ad === row.ad && item.date <= row.date)
+          .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+          .slice(0, 7);
+        if (roas > 8 && adNumber(row.closedOrders) > 0) return "Increase Budget 20%";
+        if (cpw > 25 && adNumber(row.appointments) <= 0) return "Pause";
+        if (adNumber(row.whatsapp) >= 10 && adNumber(row.closedOrders) <= 0) return "Follow-up Problem";
+        if (text.includes("retarget") && cpw > 0 && cpw <= 10) return "Continue Running";
+        if (recentNoSales.length >= 7 && recentNoSales.every((item) => adNumber(item.closedOrders) <= 0)) return "Check Creative And Sales Script";
+        return "Observe";
+      }
+      function filteredAdsRows() {
+        const from = document.getElementById("adsFilterFrom") && document.getElementById("adsFilterFrom").value;
+        const to = document.getElementById("adsFilterTo") && document.getElementById("adsFilterTo").value;
+        const campaign = (document.getElementById("adsFilterCampaign") && document.getElementById("adsFilterCampaign").value || "").toLowerCase();
+        return facebookAds.filter((row) => (!from || row.date >= from) && (!to || row.date <= to) && (!campaign || String(row.campaign || "").toLowerCase().includes(campaign)));
+      }
+      function summarizeAds(rows) {
+        const map = {};
+        rows.forEach((row) => {
+          const key = row.campaign || "Unnamed Campaign";
+          map[key] = map[key] || { campaign: key, spend: 0, whatsapp: 0, appointments: 0, closedOrders: 0, revenue: 0 };
+          map[key].spend += adNumber(row.spend);
+          map[key].whatsapp += adNumber(row.whatsapp);
+          map[key].appointments += adNumber(row.appointments);
+          map[key].closedOrders += adNumber(row.closedOrders);
+          map[key].revenue += adNumber(row.revenue);
+        });
+        return Object.values(map).map((row) => ({
+          ...row,
+          costPerWhatsapp: row.whatsapp > 0 ? row.spend / row.whatsapp : 0,
+          appointmentRate: row.whatsapp > 0 ? row.appointments / row.whatsapp * 100 : 0,
+          closingRate: row.appointments > 0 ? row.closedOrders / row.appointments * 100 : 0,
+          roas: row.spend > 0 ? row.revenue / row.spend : 0,
+          profit: row.revenue - row.spend
+        })).sort((a, b) => b.spend - a.spend);
+      }
+      function saveFacebookAd() {
+        const row = {
+          id: uid(),
+          date: document.getElementById("adDate").value || today(),
+          campaign: document.getElementById("adCampaign").value.trim(),
+          adSet: document.getElementById("adSet").value.trim(),
+          ad: document.getElementById("adName").value.trim(),
+          spend: adNumber(document.getElementById("adSpend").value),
+          whatsapp: adNumber(document.getElementById("adWhatsapp").value),
+          leadQuality: document.getElementById("adLeadQuality").value,
+          appointments: adNumber(document.getElementById("adAppointments").value),
+          closedOrders: adNumber(document.getElementById("adClosedOrders").value),
+          revenue: adNumber(document.getElementById("adRevenue").value),
+          remark: document.getElementById("adRemark").value.trim()
+        };
+        if (!row.campaign || !row.ad) return toast("Enter Campaign and Ad name.");
+        facebookAds = [row, ...facebookAds];
+        localStorage.setItem(facebookAdsKey, JSON.stringify(facebookAds));
+        toast("Facebook ad record saved.");
+        render();
+      }
+      function deleteFacebookAd(id) {
+        facebookAds = facebookAds.filter((row) => row.id !== id);
+        localStorage.setItem(facebookAdsKey, JSON.stringify(facebookAds));
+        render();
+      }
+      function renderFacebookAds() {
+        const el = document.getElementById("facebookAds");
+        if (!el) return;
+        const fromValue = document.getElementById("adsFilterFrom") && document.getElementById("adsFilterFrom").value || "";
+        const toValue = document.getElementById("adsFilterTo") && document.getElementById("adsFilterTo").value || "";
+        const campaignValue = document.getElementById("adsFilterCampaign") && document.getElementById("adsFilterCampaign").value || "";
+        const rows = facebookAds.filter((row) => (!fromValue || row.date >= fromValue) && (!toValue || row.date <= toValue) && (!campaignValue || String(row.campaign || "").toLowerCase().includes(campaignValue.toLowerCase())));
+        const summary = summarizeAds(rows);
+        const totals = summary.reduce((sum, row) => ({
+          spend: sum.spend + row.spend,
+          whatsapp: sum.whatsapp + row.whatsapp,
+          appointments: sum.appointments + row.appointments,
+          closedOrders: sum.closedOrders + row.closedOrders,
+          revenue: sum.revenue + row.revenue,
+          profit: sum.profit + row.profit
+        }), { spend: 0, whatsapp: 0, appointments: 0, closedOrders: 0, revenue: 0, profit: 0 });
+        const dailyRows = [...rows].sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 10);
+        el.innerHTML = `
+          <div class="form-grid">
+            <div class="field"><label>Date</label><input id="adDate" type="date" value="${today()}" /></div>
+            <div class="field"><label>Campaign Name</label><input id="adCampaign" placeholder="Main Campaign" /></div>
+            <div class="field"><label>Ad Set Name</label><input id="adSet" placeholder="Targeting / audience" /></div>
+            <div class="field"><label>Ad Name</label><input id="adName" placeholder="Creative name" /></div>
+            <div class="field"><label>Spend</label><input id="adSpend" type="number" min="0" placeholder="0.00" /></div>
+            <div class="field"><label>WhatsApp Conversations</label><input id="adWhatsapp" type="number" min="0" placeholder="0" /></div>
+            <div class="field"><label>Cost Per Conversation</label><input value="Auto" readonly /></div>
+            <div class="field"><label>Leads Quality</label><select id="adLeadQuality"><option value="Cold">Cold</option><option value="Normal">Normal</option><option value="Hot">Hot</option></select></div>
+            <div class="field"><label>Appointment Count</label><input id="adAppointments" type="number" min="0" placeholder="0" /></div>
+            <div class="field"><label>Closed Orders</label><input id="adClosedOrders" type="number" min="0" placeholder="0" /></div>
+            <div class="field"><label>Revenue</label><input id="adRevenue" type="number" min="0" placeholder="0.00" /></div>
+            <div class="field wide"><label>Remark</label><textarea id="adRemark" rows="2" placeholder="Daily note, lead quality, creative issue"></textarea></div>
+          </div>
+          <button class="btn primary" style="margin-top:12px" onclick="saveFacebookAd()">Save</button>
+          <div class="payment-grid" style="margin-top:16px">
+            <div class="field"><label>From</label><input id="adsFilterFrom" type="date" value="${fromValue}" onchange="renderFacebookAds()" /></div>
+            <div class="field"><label>To</label><input id="adsFilterTo" type="date" value="${toValue}" onchange="renderFacebookAds()" /></div>
+            <div class="field"><label>Campaign Filter</label><input id="adsFilterCampaign" value="${campaignValue}" oninput="renderFacebookAds()" placeholder="Search campaign" /></div>
+          </div>
+          <div class="boss-grid" style="margin-top:14px">
+            <div class="metric"><span class="eyebrow">Spend</span><strong>${money(totals.spend)}</strong></div>
+            <div class="metric"><span class="eyebrow">WhatsApp Conversations</span><strong>${totals.whatsapp}</strong></div>
+            <div class="metric"><span class="eyebrow">Cost Per WhatsApp</span><strong>${money(totals.whatsapp ? totals.spend / totals.whatsapp : 0)}</strong></div>
+            <div class="metric"><span class="eyebrow">Appointment Rate</span><strong>${totals.whatsapp ? (totals.appointments / totals.whatsapp * 100).toFixed(1) : "0.0"}%</strong></div>
+            <div class="metric"><span class="eyebrow">Closing Rate</span><strong>${totals.appointments ? (totals.closedOrders / totals.appointments * 100).toFixed(1) : "0.0"}%</strong></div>
+            <div class="metric"><span class="eyebrow">ROAS</span><strong>${totals.spend ? (totals.revenue / totals.spend).toFixed(2) : "0.00"}x</strong></div>
+            <div class="metric"><span class="eyebrow">Profit Estimate</span><strong>${money(totals.profit)}</strong></div>
+          </div>
+          <div class="table-wrap"><table><thead><tr><th>Campaign Summary</th><th class="right">Spend</th><th class="right">WhatsApp</th><th class="right">Cost / WhatsApp</th><th class="right">Appointment Rate</th><th class="right">Closing Rate</th><th class="right">ROAS</th><th class="right">Profit Estimate</th></tr></thead><tbody>
+            ${summary.map((row) => `<tr><td>${row.campaign}</td><td class="right">${money(row.spend)}</td><td class="right">${row.whatsapp}</td><td class="right">${money(row.costPerWhatsapp)}</td><td class="right">${row.appointmentRate.toFixed(1)}%</td><td class="right">${row.closingRate.toFixed(1)}%</td><td class="right">${row.roas.toFixed(2)}x</td><td class="right">${money(row.profit)}</td></tr>`).join("") || `<tr><td colspan="8">No Facebook ads data yet.</td></tr>`}
+          </tbody></table></div>
+          <div class="table-wrap"><table><thead><tr><th>Daily Report</th><th>Campaign</th><th>Ad Set</th><th>Ad</th><th class="right">Spend</th><th class="right">WhatsApp</th><th class="right">CPA</th><th>Quality</th><th class="right">Appointments</th><th class="right">Closed</th><th class="right">Revenue</th><th>Ad Decision</th><th></th></tr></thead><tbody>
+            ${dailyRows.map((row) => `<tr><td>${row.date}</td><td>${row.campaign}</td><td>${row.adSet || "-"}</td><td>${row.ad}</td><td class="right">${money(row.spend)}</td><td class="right">${row.whatsapp}</td><td class="right">${money(adCostPerWhatsapp(row))}</td><td>${row.leadQuality}</td><td class="right">${row.appointments}</td><td class="right">${row.closedOrders}</td><td class="right">${money(row.revenue)}</td><td><span class="pill">${adDecision(row, rows)}</span>${row.remark ? `<p style="color:var(--muted);font-size:12px">${row.remark}</p>` : ""}</td><td><button class="btn danger" onclick="deleteFacebookAd('${row.id}')">Delete</button></td></tr>`).join("") || `<tr><td colspan="13">No daily report yet.</td></tr>`}
+          </tbody></table></div>
+        `;
       }
       function renderFinancialDashboard() {
         const todayValue = today();
         const month = todayValue.slice(0, 7);
-        const allPayments = orders.flatMap((order) => (order.payments || []).map((payment) => ({ ...payment, order })));
+        const allPayments = orders.flatMap((order) => (order.payments || [])
+          .filter((payment) => String(payment.remark || "").toLowerCase() !== "deposit from quotation")
+          .map((payment) => ({ ...payment, order })));
         const metrics = [
           ["Total Sales", money(orders.reduce((sum, order) => sum + Number(order.total || 0), 0))],
           ["Monthly Sales", money(orders.filter((order) => (order.createdAt || "").slice(0, 7) === month).reduce((sum, order) => sum + Number(order.total || 0), 0))],
@@ -3918,7 +5163,7 @@
           ["Pending Balance", money(orders.reduce((sum, order) => sum + unpaidTotal(order), 0))],
           ["Overdue Orders", orders.filter((order) => isOverdue(order)).length]
         ];
-        document.getElementById("financialDashboard").innerHTML = `<div class="boss-grid">${metrics.map(([label, value]) => `<div class="metric"><span class="eyebrow">${label}</span><strong>${value}</strong></div>`).join("")}</div>`;
+        document.getElementById("financialDashboard").innerHTML = `<div class="boss-grid">${metrics.map(([label, value]) => metricCard(label, value)).join("")}</div>`;
       }
       function renderProfitAnalysis() {
         const sales = orders.reduce((sum, order) => sum + Number(order.total || 0), 0);
@@ -3986,13 +5231,23 @@
             `).join("")}
           </div>
         `;
+        const filter = activeDashboardFilter("production");
+        const productionRows = productions.filter((production) => {
+          if (filter === "pending-production") return production.status !== "completed";
+          if (filter === "production-alerts") return isProductionOverdue(production);
+          return true;
+        });
+        const banner = filterBanner("production", {
+          "pending-production": "Pending Production",
+          "production-alerts": "Production Alerts"
+        });
         const groups = [
           ["pending-production", "Not Yet Produced / 还没生产"],
           ["in-production", "In Production / 生产中"],
           ["completed", "Completed / 生产完毕"]
         ];
-        document.getElementById("productions").innerHTML = productions.length ? groups.map(([status, label]) => {
-          const rows = productions.filter((production) => production.status === status);
+        document.getElementById("productions").innerHTML = banner + (productionRows.length ? groups.map(([status, label]) => {
+          const rows = productionRows.filter((production) => production.status === status);
           return `
             <div style="margin-bottom:16px">
               <div class="panel-head" style="margin-bottom:8px">
@@ -4002,7 +5257,7 @@
               ${rows.length ? rows.map(productionCard).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No ${label} production sheets.</p>`}
             </div>
           `;
-        }).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No production sheets yet.</p>`;
+        }).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No production sheets found for this view.</p>`);
       }
       function renderProductionStatus() {
         const groups = [
@@ -4033,7 +5288,19 @@
         }).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No production status yet.</p>`;
       }
       function renderInstallations() {
-        document.getElementById("installations").innerHTML = installations.length ? installations.map((installation) => `
+        const filter = activeDashboardFilter("installation");
+        const rows = installations.filter((installation) => {
+          if (filter === "today-install") return installation.installationDate === today();
+          if (filter === "pending-installation") return installation.status === "pending-installation";
+          if (filter === "rework") return installation.status === "rework";
+          return true;
+        });
+        const banner = filterBanner("installation", {
+          "today-install": "Today's Installations",
+          "pending-installation": "Pending Installations",
+          rework: "Service / Rework Cases"
+        });
+        document.getElementById("installations").innerHTML = banner + (rows.length ? rows.map((installation) => `
           <div class="install-card">
             <div class="ops-head">
               <div>
@@ -4127,7 +5394,7 @@
               </div>
             </div>
           </div>
-        `).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No installation sheets yet.</p>`;
+        `).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No installation sheets found for this view.</p>`);
         setupSignaturePads();
       }
       function renderSignaturePage() {
@@ -4321,6 +5588,7 @@
         document.getElementById("orderConvertPanel").style.display = document.getElementById("status").value === "won" ? "block" : "none";
         renderDashboard();
         renderSettings();
+        renderStaffManagement();
         renderItems();
         renderQuote();
         renderHistory();
@@ -4328,6 +5596,8 @@
         renderOrders();
         renderPendingBalances();
         renderCustomers();
+        renderAppointments();
+        renderFacebookAds();
         renderFinancialDashboard();
         renderProfitAnalysis();
         renderInventory();
@@ -4387,8 +5657,14 @@
       }
       async function initializeCloud() {
         renderCloudStatus();
+        await restoreSessionFromUrlHash();
         if (!cloudState.session || !supabaseReady()) return;
         try {
+          await refreshCloudSessionIfNeeded();
+          if (!cloudState.session) {
+            renderCloudStatus();
+            return;
+          }
           await loadCloudRole();
           const loadedFlag = `eco-screen-cloud-loaded-${cloudState.session.user && cloudState.session.user.id}`;
           if (!sessionStorage.getItem(loadedFlag)) {
