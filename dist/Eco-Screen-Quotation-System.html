@@ -113,6 +113,7 @@
       }
       input, select, textarea {
         width: 100%;
+        max-width: 100%;
         min-height: 44px;
         border: 1px solid var(--line);
         border-radius: 10px;
@@ -434,28 +435,66 @@
       @media (max-width: 980px) {
         .topbar-inner { align-items: flex-start; flex-direction: column; }
         .shell, .grid-main { grid-template-columns: 1fr; }
+        .shell { max-width: 100%; }
         .sidebar { order: 2; }
         .summary { position: static; }
         .item-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .payment-grid, .ops-line-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .bottom-actions { display: block; }
         .topbar .actions { display: none; }
       }
       @media (max-width: 640px) {
+        body { overflow-x: hidden; }
         h1 { font-size: 20px; }
+        h2 { font-size: 17px; }
+        .topbar-inner, .shell { padding: 12px; }
+        .brand { align-items: flex-start; }
+        .logo { width: 38px; height: 38px; border-radius: 9px; }
+        .panel, .quote, .item-card, .order-card, .history-card, .install-card, .ops-card {
+          border-radius: 12px;
+          padding: 12px;
+          max-width: 100%;
+        }
+        .panel-head, .item-head, .ops-head {
+          align-items: stretch;
+          flex-direction: column;
+        }
+        .actions, .history-actions {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          width: 100%;
+        }
+        .btn {
+          width: 100%;
+          min-height: 46px;
+          padding: 0 10px;
+          white-space: normal;
+        }
         .form-grid, .quote-info, .quote-bottom { grid-template-columns: 1fr; }
-        .quote { padding: 18px; }
+        .quote { padding: 14px; }
         .quote-head { flex-direction: column; }
         .quote-box { text-align: left; }
         .history-card { grid-template-columns: 1fr; }
         .order-card { grid-template-columns: 1fr; }
-        .boss-grid, .payment-grid, .crm-grid { grid-template-columns: 1fr; }
+        .boss-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .payment-grid, .crm-grid, .item-grid { grid-template-columns: 1fr; }
         .ops-head { flex-direction: column; }
         .ops-line-grid { grid-template-columns: 1fr; }
         .install-checklist { grid-template-columns: 1fr; }
         .calendar-grid { grid-template-columns: 1fr; }
-        .history-actions { display: grid; grid-template-columns: 1fr 1fr; }
-        table { min-width: 760px; }
-        .table-wrap { overflow-x: auto; }
+        table { min-width: 680px; font-size: 13px; }
+        th, td { padding: 9px; }
+        .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        .metric strong { font-size: 17px; overflow-wrap: anywhere; }
+        .check-tile { min-height: 52px; font-size: 14px; align-items: center; }
+        .check-tile input { width: 24px; min-height: 24px; flex: 0 0 auto; }
+        .signature-pad { height: 190px; }
+        .bottom-actions .actions { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+        .bottom-actions .btn { min-height: 44px; font-size: 12px; padding: 0 6px; }
+      }
+      @media (max-width: 380px) {
+        .boss-grid { grid-template-columns: 1fr; }
+        .bottom-actions .actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       }
       @media print {
         @page { size: A4; margin: 12mm; }
@@ -866,9 +905,9 @@
         { id: "three-section-screen", name: "3 Section Screen", price: 0, minimumSqft: 11 },
         { id: "pocket-lock-screen", name: "Pocket Lock Screen", price: 50, minimumSqft: 11 },
         { id: "roller-door", name: "Roller Door", price: 41, minimumSqft: 21 },
-        { id: "sliding-screen", name: "Sliding Screen / 推拉纱窗", price: 55, minimumSqft: 11 },
-        { id: "sliding-security-window", name: "Sliding Security Window / 推拉防盗窗", price: 90, minimumSqft: 11 },
-        { id: "sliding-door", name: "Sliding Door / 推拉门", price: 100, minimumSqft: 21 },
+        { id: "sliding-screen", name: "Sliding Screen", price: 55, minimumSqft: 11 },
+        { id: "sliding-security-window", name: "Sliding Security Window", price: 90, minimumSqft: 11 },
+        { id: "sliding-door", name: "Sliding Door", price: 100, minimumSqft: 21 },
         { id: "sliding-stainless-steel-net", name: "Sliding Stainless Steel Net", price: 55, minimumSqft: 21 },
         { id: "magnetic-screen", name: "Magnetic Screen", price: 10, minimumSqft: 11 },
         { id: "security-mesh-window", name: "Security Mesh Window", price: 90, minimumSqft: 11 },
@@ -1283,7 +1322,7 @@
           .map((row) => row.item);
       }
       function money(value) { return "RM " + Number(value || 0).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
-      function labelText(label) { return currentLanguage === "zh" ? (labelTranslations.zh[label] || label) : label; }
+      function labelText(label) { return label; }
       function translateText(text) {
         if (currentLanguage !== "zh") return text;
         const trimmed = String(text || "").trim();
@@ -1298,7 +1337,7 @@
         return text;
       }
       function applyLanguageToDom() {
-        if (currentLanguage !== "zh") return;
+        return;
         const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
           acceptNode(node) {
             const parent = node.parentElement;
@@ -1326,9 +1365,9 @@
       function digitsOnly(value) { return String(value || "").replace(/\D/g, ""); }
       function ensureProductList(list) {
         const required = [
-          { id: "sliding-screen", name: "Sliding Screen / 推拉纱窗", price: 55, minimumSqft: 11 },
-          { id: "sliding-security-window", name: "Sliding Security Window / 推拉防盗窗", price: 90, minimumSqft: 11 },
-          { id: "sliding-door", name: "Sliding Door / 推拉门", price: 100, minimumSqft: 21 },
+          { id: "sliding-screen", name: "Sliding Screen", price: 55, minimumSqft: 11 },
+          { id: "sliding-security-window", name: "Sliding Security Window", price: 90, minimumSqft: 11 },
+          { id: "sliding-door", name: "Sliding Door", price: 100, minimumSqft: 21 },
           { id: "removeable-screen", name: "Removeable Screen", price: 36, minimumSqft: 11 }
         ];
         const next = [...(list || [])];
@@ -1338,6 +1377,18 @@
         return next;
       }
       function product(id) { return products.find((item) => item.id === id) || products[0]; }
+      function englishProductName(value) {
+        const text = String(value || "");
+        const mapped = {
+          "Sliding Screen / 推拉纱窗": "Sliding Screen",
+          "Sliding Security Window / 推拉防盗窗": "Sliding Security Window",
+          "Sliding Door / 推拉门": "Sliding Door"
+        };
+        return mapped[text] || text.replace(/\s*\/\s*[\u4e00-\u9fff].*$/, "");
+      }
+      function productDisplayName(id) {
+        return englishProductName(product(id).name);
+      }
       function isSlidingProductName(name) {
         const text = String(name || "").toLowerCase();
         return text.includes("sliding screen") ||
@@ -1367,7 +1418,7 @@
       function validateSlidingItems(list) {
         const invalid = (list || []).find((item) => isSlidingItem(item) && (!item.trackType || !Number(item.trackWidthMm || 0) || !Number(item.handleHeightMm || item.trackHeightMm || 0) || !item.installationType));
         if (invalid) {
-          toast(`Sliding item "${invalid.label || product(invalid.productId).name}" needs Track Type, Track Width, Handle Height and Installation Type.`);
+          toast(`Sliding item "${invalid.label || productDisplayName(invalid.productId)}" needs Track Type, Track Width, Handle Height and Installation Type.`);
           return false;
         }
         return true;
@@ -2784,7 +2835,7 @@
           const costSplit = itemCostSplit(item);
           return {
             item,
-            productName: product(item.productId).name,
+          productName: productDisplayName(item.productId),
             categories,
             stockItems,
             stockCost,
@@ -2867,7 +2918,7 @@
           .map((item) => ({
             quoteNo: quote.quoteNo,
             customer: quote.customer && quote.customer.name || "-",
-            productName: product(item.productId).name,
+            productName: productDisplayName(item.productId),
             location: item.label || "Item",
             widthMm: item.widthMm || 0,
             heightMm: item.heightMm || 0,
@@ -2993,18 +3044,15 @@
         return `<div class="alert" style="display:flex;justify-content:space-between;gap:10px;align-items:center"><span>Filtered: ${labels[filter] || filter}</span><button class="btn" onclick="clearDashboardFilter()">Clear</button></div>`;
       }
       function setLanguage(language) {
-        currentLanguage = language;
-        localStorage.setItem(languageKey, language);
+        currentLanguage = "en";
+        localStorage.setItem(languageKey, "en");
         render();
       }
       function renderRoleShell() {
-        document.querySelector(".brand h1").textContent = currentLanguage === "zh" ? "报价 CRM 系统" : "Quotation CRM";
-        document.getElementById("languageButtons").innerHTML = [
-          ["en", "English"],
-          ["zh", "中文"]
-        ].map(([value, label]) =>
-          `<button class="role-btn ${currentLanguage === value ? "active" : ""}" onclick="setLanguage('${value}')">${label}</button>`
-        ).join("");
+        currentLanguage = "en";
+        localStorage.setItem(languageKey, "en");
+        document.querySelector(".brand h1").textContent = "Quotation CRM";
+        document.getElementById("languageButtons").innerHTML = `<span class="pill">English</span>`;
         const canSwitchRoles = !cloudState.session || cloudState.role === "admin";
         document.getElementById("roleButtons").innerHTML = canSwitchRoles ? roles.map(([value, label]) =>
           `<button class="role-btn ${currentRole === value ? "active" : ""}" onclick="setRole('${value}')">${labelText(label)}</button>`
@@ -4651,7 +4699,7 @@
         const newWarranties = (installation.items || [])
           .filter((item) => !warranties.some((warranty) => warranty.installationNo === installation.installationNo && warranty.itemId === item.id))
           .map((item, index) => {
-            const productName = product(item.productId).name;
+            const productName = productDisplayName(item.productId);
             const years = warrantyYears(productName);
             const startDate = installation.installationDate || today();
             return {
@@ -4849,7 +4897,7 @@
           </div>
         ` + products.map((item) => `
           <div class="item-card">
-            <div class="field"><label>Product</label><input value="${item.name}" oninput="updateProduct('${item.id}','name',this.value)" /></div>
+            <div class="field"><label>Product</label><input value="${englishProductName(item.name)}" oninput="updateProduct('${item.id}','name',this.value)" /></div>
             <div class="form-grid" style="margin-top:10px">
               <div class="field"><label>RM/sqft</label><input type="number" value="${item.price}" oninput="updateProduct('${item.id}','price',this.value)" /></div>
               <div class="field"><label>Min sqft</label><input type="number" value="${item.minimumSqft}" oninput="updateProduct('${item.id}','minimumSqft',this.value)" /></div>
@@ -4950,7 +4998,7 @@
             </div>
             <div class="item-grid">
               <div class="field"><label>Location</label><input data-item-id="${item.id}" data-field="label" value="${item.label || ""}" oninput="updateItem('${item.id}','label',this.value)" placeholder="Living room window" /></div>
-              <div class="field"><label>Product</label><select data-item-id="${item.id}" data-field="productId" onchange="updateItem('${item.id}','productId',this.value)">${products.map((p) => `<option value="${p.id}" ${p.id === item.productId ? "selected" : ""}>${p.name}</option>`).join("")}</select></div>
+              <div class="field"><label>Product</label><select data-item-id="${item.id}" data-field="productId" onchange="updateItem('${item.id}','productId',this.value)">${products.map((p) => `<option value="${p.id}" ${p.id === item.productId ? "selected" : ""}>${englishProductName(p.name)}</option>`).join("")}</select></div>
               <div class="field"><label>Width mm</label><input data-item-id="${item.id}" data-field="widthMm" type="text" inputmode="numeric" value="${item.widthMm || ""}" oninput="updateItem('${item.id}','widthMm',this.value)" /></div>
               <div class="field"><label>Height mm</label><input data-item-id="${item.id}" data-field="heightMm" type="text" inputmode="numeric" value="${item.heightMm || ""}" oninput="updateItem('${item.id}','heightMm',this.value)" /></div>
               <div class="field"><label>Qty</label><input data-item-id="${item.id}" data-field="quantity" type="text" inputmode="numeric" value="${item.quantity || ""}" oninput="updateItem('${item.id}','quantity',this.value)" /></div>
@@ -4962,20 +5010,20 @@
                 <div class="line"><span>Total</span><strong>${money(itemTotal(item))}</strong></div>
               </div>
               <div style="grid-column:1/-1;border-top:1px solid var(--line);padding-top:12px;margin-top:4px">
-                <p class="eyebrow">${isSlidingItem(item) ? "Sliding Track Details / Sliding 必填" : "Production Details / 非 Sliding 可选填"}</p>
+                <p class="eyebrow">${isSlidingItem(item) ? "Sliding Track Details Required" : "Production Details Optional"}</p>
               </div>
-              <div class="field"><label>Track Type / 轨道类型 ${isSlidingItem(item) ? "*" : ""}</label><select data-item-id="${item.id}" data-field="trackType" onchange="updateItem('${item.id}','trackType',this.value)">
+              <div class="field"><label>Track Type ${isSlidingItem(item) ? "*" : ""}</label><select data-item-id="${item.id}" data-field="trackType" onchange="updateItem('${item.id}','trackType',this.value)">
                   <option value="">Select</option>
                   ${["1 Track","2 Track","3 Track"].map((value) => `<option value="${value}" ${item.trackType === value ? "selected" : ""}>${value}</option>`).join("")}
               </select></div>
-              <div class="field"><label>Track Width mm / 轨道宽度 ${isSlidingItem(item) ? "*" : ""}</label><input data-item-id="${item.id}" data-field="trackWidthMm" type="text" inputmode="numeric" value="${item.trackWidthMm || ""}" oninput="updateItem('${item.id}','trackWidthMm',this.value)" placeholder="76" /></div>
-              <div class="field"><label>Handle Height mm / 把手高度 ${isSlidingItem(item) ? "*" : ""}</label><input data-item-id="${item.id}" data-field="handleHeightMm" type="text" inputmode="numeric" value="${item.handleHeightMm || item.trackHeightMm || ""}" oninput="updateItem('${item.id}','handleHeightMm',this.value)" /></div>
-              <div class="field"><label>Installation Type / 安装方式 ${isSlidingItem(item) ? "*" : ""}</label><select data-item-id="${item.id}" data-field="installationType" onchange="updateItem('${item.id}','installationType',this.value)">
+              <div class="field"><label>Track Width mm ${isSlidingItem(item) ? "*" : ""}</label><input data-item-id="${item.id}" data-field="trackWidthMm" type="text" inputmode="numeric" value="${item.trackWidthMm || ""}" oninput="updateItem('${item.id}','trackWidthMm',this.value)" placeholder="76" /></div>
+              <div class="field"><label>Handle Height mm ${isSlidingItem(item) ? "*" : ""}</label><input data-item-id="${item.id}" data-field="handleHeightMm" type="text" inputmode="numeric" value="${item.handleHeightMm || item.trackHeightMm || ""}" oninput="updateItem('${item.id}','handleHeightMm',this.value)" /></div>
+              <div class="field"><label>Installation Type ${isSlidingItem(item) ? "*" : ""}</label><select data-item-id="${item.id}" data-field="installationType" onchange="updateItem('${item.id}','installationType',this.value)">
                   <option value="">Select</option>
-                  <option value="Inside Mount" ${item.installationType === "Inside Mount" ? "selected" : ""}>Inside Mount / 内装</option>
-                  <option value="Outside Mount" ${item.installationType === "Outside Mount" ? "selected" : ""}>Outside Mount / 外装</option>
+                  <option value="Inside Mount" ${item.installationType === "Inside Mount" ? "selected" : ""}>Inside Mount</option>
+                  <option value="Outside Mount" ${item.installationType === "Outside Mount" ? "selected" : ""}>Outside Mount</option>
               </select></div>
-              <div class="field"><label>Opening Direction / 开向</label><select data-item-id="${item.id}" data-field="openingDirection" onchange="updateItem('${item.id}','openingDirection',this.value)">
+              <div class="field"><label>Opening Direction</label><select data-item-id="${item.id}" data-field="openingDirection" onchange="updateItem('${item.id}','openingDirection',this.value)">
                   ${["Left","Right","Middle","Not Applicable"].map((value) => `<option value="${value}" ${(item.openingDirection || "Not Applicable") === value ? "selected" : ""}>${value}</option>`).join("")}
               </select></div>
             </div>
@@ -5000,7 +5048,7 @@
             <div class="info-box"><p class="eyebrow">Job Details</p><p style="margin-top:8px"><strong>Area:</strong> ${customer.area || "-"}</p><p><strong>Appointment:</strong> ${customer.appointmentDate || "-"}</p></div>
           </div>
           <div class="table-wrap"><table><thead><tr><th>Description</th><th>Product</th><th class="right">Size</th><th class="right">Sqft</th><th class="right">Rate</th><th class="right">Qty</th><th class="right">Amount</th></tr></thead><tbody>
-            ${orderedItems().map((item, index) => `<tr><td>${item.label || `Item ${index + 1}`}${itemExtraDetails(item) ? `<p style="color:var(--muted);font-size:12px;margin-top:4px">${itemExtraDetails(item)}</p>` : ""}</td><td>${product(item.productId).name}</td><td class="right">${item.widthMm || 0} x ${item.heightMm || 0} mm</td><td class="right">${chargeableSqft(item).toFixed(2)}</td><td class="right">${money(product(item.productId).price)}</td><td class="right">${item.quantity || 0}</td><td class="right"><strong>${money(itemTotal(item))}</strong></td></tr>`).join("")}
+            ${orderedItems().map((item, index) => `<tr><td>${item.label || `Item ${index + 1}`}${itemExtraDetails(item) ? `<p style="color:var(--muted);font-size:12px;margin-top:4px">${itemExtraDetails(item)}</p>` : ""}</td><td>${productDisplayName(item.productId)}</td><td class="right">${item.widthMm || 0} x ${item.heightMm || 0} mm</td><td class="right">${chargeableSqft(item).toFixed(2)}</td><td class="right">${money(product(item.productId).price)}</td><td class="right">${item.quantity || 0}</td><td class="right"><strong>${money(itemTotal(item))}</strong></td></tr>`).join("")}
           </tbody></table></div>
           <div class="quote-bottom"><div class="notes"><strong style="color:var(--ink)">Terms & Conditions</strong><p style="margin-top:8px">i) Prices quoted are valid for a period of two (2) weeks from the quotation date.</p><p style="margin-top:8px">ii) 50% deposit is required upon confirmation, balance of payment upon completion.</p><p style="margin-top:8px">iii) Deposit paid is non-refundable.</p><p style="margin-top:8px">iv) All cheques should not be crossed and make payable to:</p><p style="margin-top:8px"><strong>ECO SCREEN SDN BHD<br>PUBLIC BANK<br>3242952413</strong></p></div><div><div class="line"><span>Subtotal</span><strong>${money(subtotal())}</strong></div>${discountLine}<div class="line"><span>Total</span><strong>${money(total())}</strong></div><div class="line"><span>Deposit</span><strong>${money(deposit())}</strong></div><div class="total-box" style="margin-top:10px"><div class="line"><span>Balance</span><strong>${money(balance())}</strong></div></div></div></div>
         `;
@@ -5144,7 +5192,7 @@
                 </div>
               ` : ""}
               <div class="order-items">
-                ${(order.items || []).map((item) => `<div>${item.label || "Item"} - ${product(item.productId).name} - ${item.widthMm || 0} x ${item.heightMm || 0} mm - Qty ${item.quantity || 0}${itemExtraDetails(item) ? `<p style="color:var(--muted);font-size:12px">${itemExtraDetails(item)}</p>` : ""}</div>`).join("")}
+                ${(order.items || []).map((item) => `<div>${item.label || "Item"} - ${productDisplayName(item.productId)} - ${item.widthMm || 0} x ${item.heightMm || 0} mm - Qty ${item.quantity || 0}${itemExtraDetails(item) ? `<p style="color:var(--muted);font-size:12px">${itemExtraDetails(item)}</p>` : ""}</div>`).join("")}
               </div>
             </div>
             <div style="display:grid;gap:8px;text-align:right">
@@ -5543,7 +5591,7 @@
             ` : ""}
             ${(production.items || []).map((item) => `
               <div class="ops-line-grid">
-                <div class="field"><label>Product</label><input value="${product(item.productId).name}" readonly /></div>
+                <div class="field"><label>Product</label><input value="${productDisplayName(item.productId)}" readonly /></div>
                 <div class="field"><label>Location</label><input value="${item.label || ""}" onchange="updateProductionItem('${production.id}','${item.id}','label',this.value)" /></div>
                 <div class="field"><label>Width mm</label><input value="${item.widthMm || 0}" readonly /></div>
                 <div class="field"><label>Height mm</label><input value="${item.heightMm || 0}" readonly /></div>
@@ -5570,9 +5618,9 @@
           "production-alerts": "Production Alerts"
         });
         const groups = [
-          ["pending-production", "Not Yet Produced / 还没生产"],
-          ["in-production", "In Production / 生产中"],
-          ["completed", "Completed / 生产完毕"]
+          ["pending-production", "Not Yet Produced"],
+          ["in-production", "In Production"],
+          ["completed", "Completed"]
         ];
         document.getElementById("productions").innerHTML = banner + (productionRows.length ? groups.map(([status, label]) => {
           const rows = productionRows.filter((production) => production.status === status);
@@ -5589,9 +5637,9 @@
       }
       function renderProductionStatus() {
         const groups = [
-          ["pending-production", "Not Yet Produced / 还没生产"],
-          ["in-production", "In Production / 生产中"],
-          ["completed", "Completed / 生产完毕"]
+          ["pending-production", "Not Yet Produced"],
+          ["in-production", "In Production"],
+          ["completed", "Completed"]
         ];
         document.getElementById("productionStatus").innerHTML = productions.length ? groups.map(([status, label]) => {
           const rows = productions.filter((production) => production.status === status);
@@ -5648,7 +5696,7 @@
               </div>
             </div>
             <div class="order-items">
-              ${(installation.items || []).map((item) => `<div>${item.label || "Item"} - ${product(item.productId).name} - ${item.widthMm || 0} x ${item.heightMm || 0} mm - Qty ${item.quantity || 0}${itemExtraDetails(item) ? `<p style="color:var(--muted);font-size:12px">${itemExtraDetails(item)}</p>` : ""}</div>`).join("")}
+              ${(installation.items || []).map((item) => `<div>${item.label || "Item"} - ${productDisplayName(item.productId)} - ${item.widthMm || 0} x ${item.heightMm || 0} mm - Qty ${item.quantity || 0}${itemExtraDetails(item) ? `<p style="color:var(--muted);font-size:12px">${itemExtraDetails(item)}</p>` : ""}</div>`).join("")}
             </div>
             <div class="payment-grid" style="margin-top:12px">
               <div class="field"><label>Installer Name</label><input value="${installation.installerName || ""}" onchange="updateInstallationField('${installation.id}','installerName',this.value)" placeholder="Installer name" /></div>
