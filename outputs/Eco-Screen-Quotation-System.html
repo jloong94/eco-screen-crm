@@ -2595,6 +2595,109 @@
         return actualPaymentRecords(order)
           .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
       }
+      function quoteIdForQuoteNo(quoteNoValue) {
+        const quote = quotes.find((item) => item.quoteNo === quoteNoValue);
+        return quote ? quote.id : "";
+      }
+      function installerCollectionReference(installation) {
+        return `installation:${installation.id}`;
+      }
+      function paymentRemarkWithReference(payment) {
+        const parts = [payment.remark || ""];
+        if (payment.source) parts.push(`Source: ${payment.source}`);
+        if (payment.reference) parts.push(`Reference: ${payment.reference}`);
+        if (payment.installationId) parts.push(`Installation ID: ${payment.installationId}`);
+        return parts.filter(Boolean).join(" | ");
+      }
+      function isInstallerCollectionPayment(payment, installation) {
+        const reference = installerCollectionReference(installation);
+        return payment.id === `installer-collection-${installation.id}` ||
+          payment.reference === reference ||
+          payment.installationId === installation.id ||
+          String(payment.source || "").toLowerCase() === "installation" && String(payment.remark || "").includes(installation.installationNo || installation.id);
+      }
+      function installationCollectionChecked(installation) {
+        return Boolean(installation && (installation.status === "balance-collected" || installation.checklist && installation.checklist.balanceCollected));
+      }
+      function findOrderForInstallation(installation) {
+        if (!installation) return null;
+        const phone = digitsOnly(installation.customer && installation.customer.phone);
+        return orders.find((order) => order.orderNo === installation.orderNo) ||
+          orders.find((order) => installation.quoteNo && order.quoteNo === installation.quoteNo) ||
+          orders.find((order) => phone && digitsOnly(order.customer && order.customer.phone) === phone) ||
+          null;
+      }
+      function installerPaymentForInstallation(installation, order, paymentsWithoutInstallerRecord) {
+        const outstandingBefore = unpaidTotal({ ...order, payments: paymentsWithoutInstallerRecord });
+        let amount = Number(installation.amountCollected || 0);
+        if (amount <= 0) amount = Number(outstandingBefore || installation.balance || 0);
+        if (outstandingBefore > 0) amount = Math.min(amount, outstandingBefore);
+        if (amount <= 0) return null;
+        return {
+          id: `installer-collection-${installation.id}`,
+          label: "Installer Balance Collection",
+          amount,
+          method: installation.paymentMethod || "Cash",
+          date: installation.completedDate || today(),
+          remark: `Installer collection from ${installation.installationNo || "installation"}`,
+          source: "installation",
+          reference: installerCollectionReference(installation),
+          installationId: installation.id,
+          quotationId: quoteIdForQuoteNo(order.quoteNo),
+          customerName: order.customer && order.customer.name || "",
+          createdAt: new Date().toISOString()
+        };
+      }
+      function reconcileInstallationCollections() {
+        if (cloudState.applying) return;
+        let changedOrders = false;
+        let changedInstallations = false;
+        const syncedPayments = [];
+        installations.forEach((installation) => {
+          if (!installationCollectionChecked(installation)) return;
+          const order = findOrderForInstallation(installation);
+          if (!order) return;
+          const paymentsWithoutInstallerRecord = safeArray(order.payments).filter((payment) => !isInstallerCollectionPayment(payment, installation));
+          const payment = installerPaymentForInstallation(installation, order, paymentsWithoutInstallerRecord);
+          if (!payment) return;
+          const existing = safeArray(order.payments).find((item) => isInstallerCollectionPayment(item, installation));
+          const nextOrder = {
+            ...order,
+            payments: [...paymentsWithoutInstallerRecord, existing ? { ...existing, ...payment } : payment],
+            updatedAt: new Date().toISOString()
+          };
+          nextOrder.balance = unpaidTotal(nextOrder);
+          const orderChanged = !existing ||
+            Number(existing.amount || 0) !== Number(payment.amount || 0) ||
+            existing.date !== payment.date ||
+            existing.method !== payment.method ||
+            Number(order.balance || 0) !== Number(nextOrder.balance || 0);
+          if (orderChanged) {
+            orders = orders.map((item) => item.id === order.id ? nextOrder : item);
+            syncedPayments.push({ payment, order: nextOrder, installation });
+            changedOrders = true;
+          }
+          const installationNeedsUpdate = Number(installation.amountCollected || 0) !== Number(payment.amount || 0) ||
+            Number(installation.balance || 0) !== Number(nextOrder.balance || 0) ||
+            !installation.checklist || !installation.checklist.balanceCollected ||
+            installation.status !== "balance-collected";
+          if (installationNeedsUpdate) {
+            installations = installations.map((item) => item.id === installation.id ? {
+              ...item,
+              amountCollected: payment.amount,
+              paymentMethod: item.paymentMethod || payment.method,
+              completedDate: item.completedDate || today(),
+              checklist: { ...(item.checklist || {}), balanceCollected: true },
+              balance: nextOrder.balance,
+              status: "balance-collected"
+            } : item);
+            changedInstallations = true;
+          }
+        });
+        if (changedOrders) localStorage.setItem(ordersKey, JSON.stringify(orders));
+        if (changedInstallations) localStorage.setItem(installationsKey, JSON.stringify(installations));
+        syncedPayments.forEach(({ payment, order, installation }) => upsertInstallerCollectionToSupabase(payment, order, installation));
+      }
       function paymentRecordsTotal(order) { return paidTotal(order); }
       function unpaidTotal(order) {
         return Math.max(Number(order.total || 0) - paidTotal(order), 0);
@@ -3361,7 +3464,7 @@
               amount: Number(payment.amount || 0),
               method: payment.method || "",
               payment_date: payment.date || null,
-              remark: payment.remark || "",
+              remark: paymentRemarkWithReference(payment),
               created_at: order.createdAt || new Date().toISOString()
             });
           });
@@ -3552,7 +3655,12 @@
               amount: Number(payment.amount || 0),
               method: payment.method || "",
               date: payment.payment_date || "",
-              remark: payment.remark || ""
+              remark: payment.remark || "",
+              source: payment.source || "",
+              reference: payment.reference || "",
+              installationId: payment.installation_id || "",
+              quotationId: payment.quotation_id || "",
+              customerName: payment.customer_name || ""
             }));
           return {
             id: order.id,
@@ -4379,6 +4487,64 @@
         localStorage.setItem(installationsKey, JSON.stringify(installations));
         render();
       }
+      async function upsertInstallerCollectionToSupabase(payment, order, installation) {
+        if (!cloudState.session || !supabaseReady()) return;
+        const baseCollectionRow = {
+          id: payment.id,
+          order_id: order.id,
+          order_no: order.orderNo,
+          customer_id: customerKey(order.customer),
+          label: payment.label,
+          amount: Number(payment.amount || 0),
+          method: payment.method || "",
+          payment_date: payment.date || today(),
+          remark: paymentRemarkWithReference(payment),
+          created_at: payment.createdAt || new Date().toISOString()
+        };
+        try {
+          await supabaseFetch("/rest/v1/collections", {
+            method: "POST",
+            headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+            body: JSON.stringify(baseCollectionRow)
+          });
+          try {
+            await supabaseFetch(`/rest/v1/collections?id=eq.${encodeURIComponent(payment.id)}`, {
+              method: "PATCH",
+              headers: { Prefer: "return=minimal" },
+              body: JSON.stringify({
+                quotation_id: payment.quotationId || quoteIdForQuoteNo(order.quoteNo) || null,
+                customer_name: payment.customerName || order.customer && order.customer.name || "",
+                source: "installation",
+                reference: payment.reference,
+                installation_id: installation.id
+              })
+            });
+          } catch (extraError) {
+            toast("Payment saved. Run Phase 1 SQL to save source/reference fields in Supabase.");
+          }
+          await supabaseFetch(`/rest/v1/orders?id=eq.${encodeURIComponent(order.id)}`, {
+            method: "PATCH",
+            headers: { Prefer: "return=minimal" },
+            body: JSON.stringify({
+              balance: Number(order.balance || 0),
+              updated_at: new Date().toISOString()
+            })
+          });
+        } catch (error) {
+          toast(`Supabase collection sync failed: ${String(error.message || error).slice(0, 160)}`);
+        }
+      }
+      async function deleteInstallerCollectionFromSupabase(paymentId) {
+        if (!cloudState.session || !supabaseReady()) return;
+        try {
+          await supabaseFetch(`/rest/v1/collections?id=eq.${encodeURIComponent(paymentId)}`, {
+            method: "DELETE",
+            headers: { Prefer: "return=minimal" }
+          });
+        } catch (error) {
+          toast(`Supabase collection delete failed: ${String(error.message || error).slice(0, 160)}`);
+        }
+      }
       function syncInstallationCollection(id, checked) {
         const installation = installations.find((item) => item.id === id);
         if (!installation) return;
@@ -4394,7 +4560,7 @@
           return;
         }
         const paymentId = `installer-collection-${installation.id}`;
-        const paymentsWithoutInstallerRecord = safeArray(order.payments).filter((payment) => payment.id !== paymentId);
+        const paymentsWithoutInstallerRecord = safeArray(order.payments).filter((payment) => !isInstallerCollectionPayment(payment, installation));
         if (!checked) {
           const nextOrder = { ...order, payments: paymentsWithoutInstallerRecord };
           nextOrder.balance = unpaidTotal(nextOrder);
@@ -4408,24 +4574,14 @@
           localStorage.setItem(ordersKey, JSON.stringify(orders));
           localStorage.setItem(installationsKey, JSON.stringify(installations));
           toast("Installer collection record removed.");
+          deleteInstallerCollectionFromSupabase(paymentId);
           return;
         }
-        const outstandingBefore = unpaidTotal({ ...order, payments: paymentsWithoutInstallerRecord });
-        let amount = Number(installation.amountCollected || 0);
-        if (amount <= 0) amount = Number(installation.balance || outstandingBefore || 0);
-        if (outstandingBefore > 0) amount = Math.min(amount, outstandingBefore);
-        if (amount <= 0) {
+        const payment = installerPaymentForInstallation(installation, order, paymentsWithoutInstallerRecord);
+        if (!payment) {
           toast("No outstanding balance to collect.");
           return;
         }
-        const payment = {
-          id: paymentId,
-          label: "Installer Balance Collection",
-          amount,
-          method: installation.paymentMethod || "Cash",
-          date: installation.completedDate || today(),
-          remark: `Installer collection from ${installation.installationNo || "installation"}`
-        };
         const nextOrder = {
           ...order,
           payments: [...paymentsWithoutInstallerRecord, payment],
@@ -4435,7 +4591,7 @@
         orders = orders.map((item) => item.id === order.id ? nextOrder : item);
         installations = installations.map((item) => item.id === id ? {
           ...item,
-          amountCollected: amount,
+          amountCollected: payment.amount,
           paymentMethod: item.paymentMethod || payment.method,
           completedDate: item.completedDate || today(),
           checklist: { ...(item.checklist || {}), balanceCollected: true },
@@ -4445,6 +4601,7 @@
         localStorage.setItem(ordersKey, JSON.stringify(orders));
         localStorage.setItem(installationsKey, JSON.stringify(installations));
         toast("Installer collection synced to order payment records.");
+        upsertInstallerCollectionToSupabase(payment, nextOrder, installation);
       }
       function saveSignature(id, dataUrl) {
         installations = installations.map((item) => item.id === id ? { ...item, signature: dataUrl } : item);
@@ -5748,6 +5905,7 @@
       }
       function render() {
         renderRoleShell();
+        reconcileInstallationCollections();
         if (!document.getElementById("status").options.length) {
           document.getElementById("status").innerHTML = statuses.map(([value, label]) => `<option value="${value}">${label}</option>`).join("");
         }
