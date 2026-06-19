@@ -21,7 +21,9 @@
         background: var(--bg);
         color: var(--ink);
         font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        overflow-x: hidden;
       }
+      html { overflow-x: hidden; }
       button, input, select, textarea { font: inherit; }
       button { cursor: pointer; }
       .topbar {
@@ -31,6 +33,11 @@
         border-bottom: 1px solid var(--line);
         background: rgba(255,255,255,.94);
         backdrop-filter: blur(10px);
+      }
+      .table-wrap {
+        width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
       }
       .topbar-inner, .shell {
         max-width: 1240px;
@@ -433,27 +440,40 @@
       }
       .page-hidden { display: none !important; }
       @media (max-width: 980px) {
-        .topbar-inner { align-items: flex-start; flex-direction: column; }
+        .topbar { position: static; }
+        .topbar-inner { align-items: flex-start; flex-direction: column; padding: 12px; }
         .shell, .grid-main { grid-template-columns: 1fr; }
-        .shell { max-width: 100%; }
-        .sidebar { order: 2; }
+        .shell { max-width: 100%; gap: 12px; padding: 12px 12px 104px; }
+        .sidebar { order: 0; }
+        .main { order: 1; }
         .summary { position: static; }
         .item-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .payment-grid, .ops-line-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .bottom-actions { display: block; }
         .topbar .actions { display: none; }
+        .role-inner { max-width: 100%; padding: 10px 12px; }
+        .role-row, .menu-row {
+          flex-wrap: nowrap;
+          overflow-x: auto;
+          padding-bottom: 4px;
+          scrollbar-width: none;
+        }
+        .role-row::-webkit-scrollbar, .menu-row::-webkit-scrollbar { display: none; }
+        .role-btn, .menu-btn { flex: 0 0 auto; }
       }
       @media (max-width: 640px) {
-        body { overflow-x: hidden; }
         h1 { font-size: 20px; }
         h2 { font-size: 17px; }
         .topbar-inner, .shell { padding: 12px; }
+        .shell { padding-bottom: 118px; }
         .brand { align-items: flex-start; }
         .logo { width: 38px; height: 38px; border-radius: 9px; }
+        .eyebrow { font-size: 11px; letter-spacing: .04em; }
         .panel, .quote, .item-card, .order-card, .history-card, .install-card, .ops-card {
           border-radius: 12px;
           padding: 12px;
           max-width: 100%;
+          box-shadow: 0 8px 22px rgba(15,23,42,.05);
         }
         .panel-head, .item-head, .ops-head {
           align-items: stretch;
@@ -476,19 +496,28 @@
         .quote-box { text-align: left; }
         .history-card { grid-template-columns: 1fr; }
         .order-card { grid-template-columns: 1fr; }
+        .history-card > div, .order-card > div, .install-card > div { min-width: 0; }
+        .history-card p, .order-card p, .install-card p, .order-items { overflow-wrap: anywhere; }
         .boss-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .payment-grid, .crm-grid, .item-grid { grid-template-columns: 1fr; }
+        .metric { padding: 11px; min-height: 76px; }
         .ops-head { flex-direction: column; }
         .ops-line-grid { grid-template-columns: 1fr; }
         .install-checklist { grid-template-columns: 1fr; }
         .calendar-grid { grid-template-columns: 1fr; }
-        table { min-width: 680px; font-size: 13px; }
+        table { min-width: 640px; font-size: 13px; }
         th, td { padding: 9px; }
         .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        .payment-row { align-items: flex-start; flex-direction: column; gap: 3px; }
+        .payment-row strong { color: var(--ink); }
         .metric strong { font-size: 17px; overflow-wrap: anywhere; }
         .check-tile { min-height: 52px; font-size: 14px; align-items: center; }
         .check-tile input { width: 24px; min-height: 24px; flex: 0 0 auto; }
+        input, select, textarea { min-height: 48px; font-size: 16px; }
+        textarea { line-height: 1.4; }
+        select { padding-right: 34px; }
         .signature-pad { height: 190px; }
+        .bottom-actions { padding: 8px; }
         .bottom-actions .actions { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
         .bottom-actions .btn { min-height: 44px; font-size: 12px; padding: 0 6px; }
       }
@@ -587,12 +616,12 @@
                 <select id="status" onchange="render()"></select>
               </div>
               <div class="form-grid">
-                <div class="field"><label>Customer Name</label><input id="name" oninput="render()" /></div>
-                <div class="field"><label>Phone Number</label><input id="phone" oninput="render()" /></div>
-                <div class="field"><label>Area</label><input id="area" oninput="render()" /></div>
-                <div class="field"><label>Appointment Date</label><input id="appointmentDate" type="date" onchange="render()" /></div>
+                <div class="field"><label>Customer Name</label><input id="name" oninput="refreshQuotePreview()" /></div>
+                <div class="field"><label>Phone Number</label><input id="phone" oninput="refreshQuotePreview()" /></div>
+                <div class="field"><label>Area</label><input id="area" oninput="refreshQuotePreview()" /></div>
+                <div class="field"><label>Appointment Date</label><input id="appointmentDate" type="date" onchange="refreshQuotePreview()" /></div>
                 <div class="field"><label>Quotation Number</label><input id="quoteNoField" oninput="updateQuoteNo(this.value)" /></div>
-                <div class="field wide"><label>Address</label><textarea id="address" rows="3" oninput="render()"></textarea></div>
+                <div class="field wide"><label>Address</label><textarea id="address" rows="3" oninput="refreshQuotePreview()"></textarea></div>
                 <textarea id="quoteRemarks" style="display:none"></textarea>
               </div>
             </section>
@@ -609,9 +638,9 @@
           <section class="panel summary">
             <p style="color:#cbd5e1;font-weight:800">Quote Summary</p>
             <div class="summary-row"><span>Subtotal</span><strong id="summarySubtotal">RM 0.00</strong></div>
-            <div class="field" style="margin-top:12px"><label>Discount RM</label><input id="discount" type="number" min="0" oninput="render()" placeholder="0.00" /></div>
+            <div class="field" style="margin-top:12px"><label>Discount RM</label><input id="discount" type="number" min="0" oninput="refreshQuotePreview()" placeholder="0.00" /></div>
             <div class="summary-row"><span>Total</span><strong id="summaryTotal">RM 0.00</strong></div>
-            <div class="field" style="margin-top:12px"><label>Deposit</label><input id="deposit" type="number" min="0" oninput="render()" /></div>
+            <div class="field" style="margin-top:12px"><label>Deposit</label><input id="deposit" type="number" min="0" oninput="refreshQuotePreview()" /></div>
             <div class="summary-row"><span>Balance</span><strong id="summaryBalance">RM 0.00</strong></div>
             <div id="orderConvertPanel" class="convert-box">
               <p style="font-weight:900">Order Conversion</p>
@@ -921,6 +950,7 @@
       let dashboardFilter = null;
       let editingId = null;
       let quoteNo = makeQuoteNo();
+      let inputRenderTimer = null;
       let items = [makeItem()];
       const cloudDataKeys = [
         productsKey,
@@ -1286,9 +1316,26 @@
         "With Grill": "加花铁",
         "Opening": "开口",
         "Digital Lock": "电子锁",
+        "Sliding Screen": "推拉纱窗",
+        "Sliding Security Window": "推拉防盗窗",
+        "Sliding Door": "推拉门",
         "Sliding Screen / 推拉纱窗": "推拉纱窗",
         "Sliding Security Window / 推拉防盗窗": "推拉防盗窗",
-        "Sliding Door / 推拉门": "推拉门"
+        "Sliding Door / 推拉门": "推拉门",
+        "Quotation Number": "报价单编号",
+        "Line Remark": "项目备注",
+        "Sliding Track Details Required": "推拉轨道资料必填",
+        "Production Details Optional": "生产资料选填",
+        "Staff Accounts": "员工账号",
+        "Boss Dashboard": "老板 Dashboard",
+        "Editing": "编辑",
+        "Filtered": "已筛选",
+        "Clear": "清除",
+        "Lead / Quotation List": "潜在客户 / 报价列表",
+        "Open Quote": "打开报价",
+        "No confirmed customers found for this view.": "这个页面没有已确认客户。",
+        "No pending quotation leads.": "没有待确认报价客户。",
+        "Special size, handle note, site condition": "特殊尺寸、把手备注、现场情况"
       };
 
       function today() { return new Date().toISOString().slice(0, 10); }
@@ -1301,7 +1348,7 @@
           .map((row) => row.item);
       }
       function money(value) { return "RM " + Number(value || 0).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
-      function labelText(label) { return label; }
+      function labelText(label) { return currentLanguage === "zh" ? (labelTranslations.zh[label] || label) : label; }
       function translateText(text) {
         if (currentLanguage !== "zh") return text;
         const trimmed = String(text || "").trim();
@@ -1309,6 +1356,7 @@
         if (/^Line Item \d+$/.test(trimmed)) return trimmed.replace("Line Item", "项目");
         if (/^Editing ESQ-/.test(trimmed)) return trimmed.replace("Editing", "编辑");
         if (/^New Quote ESQ-/.test(trimmed)) return trimmed.replace("New Quote", "新报价");
+        if (/^Filtered:\s/.test(trimmed)) return trimmed.replace("Filtered:", "已筛选:");
         if (/^No .+ yet\.?$/.test(trimmed)) return trimmed.replace(/^No /, "暂无").replace(/ yet\.?$/, "");
         const termMatch = trimmed.match(/^([ivx]+\)\s)(.+)$/i);
         if (termMatch && uiTranslationsZh[termMatch[2]]) return `${termMatch[1]}${uiTranslationsZh[termMatch[2]]}`;
@@ -1316,11 +1364,12 @@
         return text;
       }
       function applyLanguageToDom() {
-        return;
+        if (currentLanguage !== "zh") return;
         const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
           acceptNode(node) {
             const parent = node.parentElement;
             if (!parent || ["SCRIPT", "STYLE", "TEXTAREA"].includes(parent.tagName)) return NodeFilter.FILTER_REJECT;
+            if (parent.closest("input, textarea")) return NodeFilter.FILTER_REJECT;
             if (parent.closest("canvas")) return NodeFilter.FILTER_REJECT;
             return NodeFilter.FILTER_ACCEPT;
           }
@@ -1333,10 +1382,12 @@
           if (translated !== original) node.nodeValue = original.replace(String(original).trim(), translated);
         });
         document.querySelectorAll("input[placeholder], textarea[placeholder]").forEach((field) => {
+          if (field === document.activeElement) return;
           const translated = translateText(field.getAttribute("placeholder"));
           if (translated) field.setAttribute("placeholder", translated);
         });
         document.querySelectorAll("input[value][readonly]").forEach((field) => {
+          if (field === document.activeElement) return;
           const translated = translateText(field.value);
           if (translated !== field.value) field.value = translated;
         });
@@ -1365,8 +1416,11 @@
         };
         return mapped[text] || text.replace(/\s*\/\s*[\u4e00-\u9fff].*$/, "");
       }
+      function productNameForUi(value) {
+        return labelText(englishProductName(value));
+      }
       function productDisplayName(id) {
-        return englishProductName(product(id).name);
+        return productNameForUi(product(id).name);
       }
       function isSlidingProductName(name) {
         const text = String(name || "").toLowerCase();
@@ -1419,8 +1473,8 @@
       function updateQuoteNo(value) {
         quoteNo = cleanQuoteNo(value);
         const title = document.getElementById("formTitle");
-        if (title) title.textContent = editingId ? `Editing ${quoteNo || "Quotation"}` : `New Quote ${quoteNo || "Quotation"}`;
-        renderQuote();
+        if (title) title.textContent = editingId ? `${labelText("Editing")} ${quoteNo || labelText("Quotation")}` : `${labelText("New Quote")} ${quoteNo || labelText("Quotation")}`;
+        refreshQuotePreview();
       }
       function quoteNumberIsDuplicate(nextQuoteNo) {
         const value = cleanQuoteNo(nextQuoteNo).toLowerCase();
@@ -1480,6 +1534,19 @@
           area: document.getElementById("area").value,
           appointmentDate: document.getElementById("appointmentDate").value
         };
+      }
+      function refreshQuotePreview() {
+        const subtotalEl = document.getElementById("summarySubtotal");
+        const totalEl = document.getElementById("summaryTotal");
+        const balanceEl = document.getElementById("summaryBalance");
+        if (subtotalEl) subtotalEl.textContent = money(subtotal());
+        if (totalEl) totalEl.textContent = money(total());
+        if (balanceEl) balanceEl.textContent = money(balance());
+        const panel = document.getElementById("orderConvertPanel");
+        const status = document.getElementById("status");
+        if (panel && status) panel.style.display = status.value === "won" ? "block" : "none";
+        renderQuote();
+        applyLanguageToDom();
       }
       function setCustomer(customer) {
         document.getElementById("name").value = customer.name || "";
@@ -3023,15 +3090,22 @@
         return `<div class="alert" style="display:flex;justify-content:space-between;gap:10px;align-items:center"><span>Filtered: ${labels[filter] || filter}</span><button class="btn" onclick="clearDashboardFilter()">Clear</button></div>`;
       }
       function setLanguage(language) {
-        currentLanguage = "en";
-        localStorage.setItem(languageKey, "en");
+        currentLanguage = language;
+        localStorage.setItem(languageKey, language);
+        if (language === "en") {
+          location.reload();
+          return;
+        }
         render();
       }
       function renderRoleShell() {
-        currentLanguage = "en";
-        localStorage.setItem(languageKey, "en");
-        document.querySelector(".brand h1").textContent = "Quotation CRM";
-        document.getElementById("languageButtons").innerHTML = `<span class="pill">English</span>`;
+        document.querySelector(".brand h1").textContent = labelText("Quotation CRM");
+        document.getElementById("languageButtons").innerHTML = [
+          ["en", "English"],
+          ["zh", "中文"]
+        ].map(([value, label]) =>
+          `<button class="role-btn ${currentLanguage === value ? "active" : ""}" onclick="setLanguage('${value}')">${label}</button>`
+        ).join("");
         const canSwitchRoles = !cloudState.session || cloudState.role === "admin";
         document.getElementById("roleButtons").innerHTML = canSwitchRoles ? roles.map(([value, label]) =>
           `<button class="role-btn ${currentRole === value ? "active" : ""}" onclick="setRole('${value}')">${labelText(label)}</button>`
@@ -3889,13 +3963,23 @@
         }, 150);
       }
       function removeItem(id) { if (items.length > 1) items = items.filter((item) => item.id !== id); render(); }
+      function scheduleInputRender() {
+        clearTimeout(inputRenderTimer);
+        inputRenderTimer = setTimeout(() => {
+          if (document.activeElement && ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) return;
+          render();
+        }, 450);
+      }
       function updateItem(id, field, value) {
-        const focusInfo = captureItemFocus();
         const numberFields = ["widthMm","heightMm","quantity","trackWidthMm","handleHeightMm"];
         const nextValue = numberFields.includes(field) ? Number(String(value).replace(/[^\d.]/g, "") || 0) : value;
         items = items.map((item) => item.id === id ? { ...item, [field]: nextValue } : item);
-        render();
-        restoreItemFocus(focusInfo);
+        if (["productId","trackType","installationType","openingDirection"].includes(field)) {
+          render();
+          return;
+        }
+        refreshQuotePreview();
+        scheduleInputRender();
       }
       function updateProduct(id, field, value) {
         products = products.map((item) => item.id === id ? { ...item, [field]: field === "name" ? value : Number(value || 0) } : item);
@@ -4876,10 +4960,10 @@
           </div>
         ` + products.map((item) => `
           <div class="item-card">
-            <div class="field"><label>Product</label><input value="${englishProductName(item.name)}" oninput="updateProduct('${item.id}','name',this.value)" /></div>
+            <div class="field"><label>Product</label><input value="${englishProductName(item.name)}" onchange="updateProduct('${item.id}','name',this.value)" /></div>
             <div class="form-grid" style="margin-top:10px">
-              <div class="field"><label>RM/sqft</label><input type="number" value="${item.price}" oninput="updateProduct('${item.id}','price',this.value)" /></div>
-              <div class="field"><label>Min sqft</label><input type="number" value="${item.minimumSqft}" oninput="updateProduct('${item.id}','minimumSqft',this.value)" /></div>
+              <div class="field"><label>RM/sqft</label><input type="number" value="${item.price}" onchange="updateProduct('${item.id}','price',this.value)" /></div>
+              <div class="field"><label>Min sqft</label><input type="number" value="${item.minimumSqft}" onchange="updateProduct('${item.id}','minimumSqft',this.value)" /></div>
             </div>
           </div>
         `).join("");
@@ -4977,7 +5061,7 @@
             </div>
             <div class="item-grid">
               <div class="field"><label>Location</label><input data-item-id="${item.id}" data-field="label" value="${item.label || ""}" oninput="updateItem('${item.id}','label',this.value)" placeholder="Living room window" /></div>
-              <div class="field"><label>Product</label><select data-item-id="${item.id}" data-field="productId" onchange="updateItem('${item.id}','productId',this.value)">${products.map((p) => `<option value="${p.id}" ${p.id === item.productId ? "selected" : ""}>${englishProductName(p.name)}</option>`).join("")}</select></div>
+              <div class="field"><label>Product</label><select data-item-id="${item.id}" data-field="productId" onchange="updateItem('${item.id}','productId',this.value)">${products.map((p) => `<option value="${p.id}" ${p.id === item.productId ? "selected" : ""}>${productNameForUi(p.name)}</option>`).join("")}</select></div>
               <div class="field"><label>Width mm</label><input data-item-id="${item.id}" data-field="widthMm" type="text" inputmode="numeric" value="${item.widthMm || ""}" oninput="updateItem('${item.id}','widthMm',this.value)" /></div>
               <div class="field"><label>Height mm</label><input data-item-id="${item.id}" data-field="heightMm" type="text" inputmode="numeric" value="${item.heightMm || ""}" oninput="updateItem('${item.id}','heightMm',this.value)" /></div>
               <div class="field"><label>Qty</label><input data-item-id="${item.id}" data-field="quantity" type="text" inputmode="numeric" value="${item.quantity || ""}" oninput="updateItem('${item.id}','quantity',this.value)" /></div>
@@ -6039,6 +6123,10 @@
       }
       setCustomer({ appointmentDate: today() });
       document.getElementById("status").innerHTML = statuses.map(([value, label]) => `<option value="${value}">${label}</option>`).join("");
+      document.addEventListener("focusout", (event) => {
+        const target = event.target;
+        if (target && target.dataset && target.dataset.itemId) setTimeout(render, 80);
+      }, true);
       render();
       initializeCloud();
     </script>
