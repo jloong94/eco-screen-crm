@@ -11,6 +11,7 @@ const incrementalSqlSource = join(root, "outputs", "secretary-payment-remarks-mi
 const calendarSqlSource = join(root, "outputs", "google-calendar-appointments-migration.sql");
 const primarySqlSource = join(root, "outputs", "supabase-primary-database-migration.sql");
 const staffSqlSource = join(root, "outputs", "supabase-staff-management-migration.sql");
+const phaseOneSqlSource = join(root, "outputs", "phase-1-payment-quotation-migration.sql");
 const envGuideSource = join(root, "outputs", "supabase-env-guide.md");
 const calendarGuideSource = join(root, "outputs", "google-calendar-webhook-guide.md");
 const envLocal = join(root, ".env.local");
@@ -60,6 +61,7 @@ copyFileSync(incrementalSqlSource, join(dist, "secretary-payment-remarks-migrati
 copyFileSync(calendarSqlSource, join(dist, "google-calendar-appointments-migration.sql"));
 copyFileSync(primarySqlSource, join(dist, "supabase-primary-database-migration.sql"));
 copyFileSync(staffSqlSource, join(dist, "supabase-staff-management-migration.sql"));
+copyFileSync(phaseOneSqlSource, join(dist, "phase-1-payment-quotation-migration.sql"));
 copyFileSync(envGuideSource, join(dist, "supabase-env-guide.md"));
 copyFileSync(calendarGuideSource, join(dist, "google-calendar-webhook-guide.md"));
 
