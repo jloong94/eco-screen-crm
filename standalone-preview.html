@@ -925,21 +925,21 @@
       ];
       const installationPaymentMethods = ["Cash", "Bank Transfer", "DuitNow QR"];
       const defaultProducts = [
-        { id: "roller", name: "Roller", price: 33, minimumSqft: 11 },
-        { id: "removeable-screen", name: "Removeable Screen", price: 36, minimumSqft: 11 },
-        { id: "three-section-screen", name: "3 Section Screen", price: 0, minimumSqft: 11 },
-        { id: "pocket-lock-screen", name: "Pocket Lock Screen", price: 50, minimumSqft: 11 },
-        { id: "roller-door", name: "Roller Door", price: 41, minimumSqft: 21 },
-        { id: "sliding-screen", name: "Sliding Screen", price: 55, minimumSqft: 11 },
-        { id: "sliding-security-window", name: "Sliding Security Window", price: 90, minimumSqft: 11 },
-        { id: "sliding-door", name: "Sliding Door", price: 100, minimumSqft: 21 },
-        { id: "sliding-stainless-steel-net", name: "Sliding Stainless Steel Net", price: 55, minimumSqft: 21 },
-        { id: "magnetic-screen", name: "Magnetic Screen", price: 10, minimumSqft: 11 },
-        { id: "security-mesh-window", name: "Security Mesh Window", price: 90, minimumSqft: 11 },
-        { id: "security-mesh-door", name: "Security Mesh Door", price: 100, minimumSqft: 21 },
-        { id: "with-grill", name: "With Grill", price: 13, minimumSqft: 11 },
-        { id: "opening", name: "Opening", price: 35, minimumSqft: 11 },
-        { id: "digital-lock", name: "Digital Lock", price: 0, minimumSqft: 21 }
+        { id: "roller", name: "Roller", category: "Roller", price: 33, minimumSqft: 11, active: true },
+        { id: "removeable-screen", name: "Removeable Screen", category: "Window", price: 36, minimumSqft: 11, active: true },
+        { id: "three-section-screen", name: "3 Section Screen", category: "Window", price: 0, minimumSqft: 11, active: true },
+        { id: "pocket-lock-screen", name: "Pocket Lock Screen", category: "Window", price: 50, minimumSqft: 11, active: true },
+        { id: "roller-door", name: "Roller Door", category: "Door", price: 41, minimumSqft: 21, active: true },
+        { id: "sliding-screen", name: "Sliding Screen", category: "Sliding", price: 55, minimumSqft: 11, active: true },
+        { id: "sliding-security-window", name: "Sliding Security Window", category: "Security Mesh", price: 90, minimumSqft: 11, active: true },
+        { id: "sliding-door", name: "Sliding Door", category: "Sliding Door", price: 100, minimumSqft: 21, active: true },
+        { id: "sliding-stainless-steel-net", name: "Sliding Stainless Steel Net", category: "Sliding", price: 55, minimumSqft: 21, active: true },
+        { id: "magnetic-screen", name: "Magnetic Screen", category: "Magnetic", price: 10, minimumSqft: 11, active: true },
+        { id: "security-mesh-window", name: "Security Mesh Window", category: "Security Mesh", price: 90, minimumSqft: 11, active: true },
+        { id: "security-mesh-door", name: "Security Mesh Door", category: "Security Mesh", price: 100, minimumSqft: 21, active: true },
+        { id: "with-grill", name: "With Grill", category: "Add On", price: 13, minimumSqft: 11, active: true },
+        { id: "opening", name: "Opening", category: "Add On", price: 35, minimumSqft: 11, active: true },
+        { id: "digital-lock", name: "Digital Lock", category: "Hardware", price: 0, minimumSqft: 21, active: true }
       ];
       let products = safeArray(safeJsonParse(localStorage.getItem(productsKey), defaultProducts));
       if (!products.length) products = defaultProducts;
@@ -965,6 +965,7 @@
       if (!roleMenus[currentRole]) currentRole = "admin";
       let currentPage = roleMenus[currentRole][0][0];
       let dashboardFilter = null;
+      let productStatusFilter = "active";
       let editingId = null;
       let quoteNo = makeQuoteNo();
       let inputRenderTimer = null;
@@ -1140,6 +1141,18 @@
         "RM Unit Cost": "马币单价",
         "Stock Value": "库存价值",
         "Price Settings": "价格设置",
+        "Product Management": "产品管理",
+        "Product Name": "产品名称",
+        "Category": "分类",
+        "Unit Price": "单价",
+        "Minimum Sqft / Minimum Charge": "最低方尺 / 最低收费",
+        "Status": "状态",
+        "Active": "启用",
+        "Inactive": "停用",
+        "All Products": "全部产品",
+        "Add Product": "新增产品",
+        "No products in this filter.": "这个筛选没有产品。",
+        "Inactive products stay visible in old quotations, but will not appear in new quotation dropdowns.": "停用产品仍会显示在旧报价里，但不会出现在新报价的产品下拉。",
         "RM/sqft": "RM/方尺",
         "Min sqft": "最低方尺",
         "Not Yet Produced": "还没生产",
@@ -1357,7 +1370,42 @@
 
       function today() { return new Date().toISOString().slice(0, 10); }
       function uid() { return crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()); }
-      function makeItem() { return { id: uid(), createdAt: Date.now(), label: "", productId: "roller", widthMm: 0, heightMm: 0, quantity: 1, color: "", remark: "", ...makeSlidingFields() }; }
+      function productCategoryFromName(name) {
+        const text = String(name || "").toLowerCase();
+        if (text.includes("door")) return "Door";
+        if (text.includes("security")) return "Security Mesh";
+        if (text.includes("sliding")) return "Sliding";
+        if (text.includes("roller")) return "Roller";
+        if (text.includes("magnetic")) return "Magnetic";
+        return "Window";
+      }
+      function normalizeProduct(item) {
+        return {
+          id: item.id || `product-${uid()}`,
+          name: item.name || item.id || "New Product",
+          category: item.category || productCategoryFromName(item.name || item.id),
+          price: Number(item.price || 0),
+          minimumSqft: Number(item.minimumSqft || item.minimum_sqft || 0),
+          description: item.description || "",
+          active: item.active === undefined ? true : Boolean(item.active),
+          createdAt: item.createdAt || item.created_at || new Date().toISOString(),
+          updatedAt: item.updatedAt || item.updated_at || new Date().toISOString()
+        };
+      }
+      function activeProducts() {
+        return products.filter((item) => item.active !== false);
+      }
+      function productOptionsForQuote(selectedId) {
+        return [...activeProducts(), ...products.filter((item) => item.id === selectedId && item.active === false)]
+          .filter((item, index, list) => list.findIndex((next) => next.id === item.id) === index);
+      }
+      function defaultProductId() {
+        return (activeProducts()[0] || products[0] || { id: "roller" }).id;
+      }
+      function makeItem(productId = defaultProductId()) {
+        const p = product(productId);
+        return { id: uid(), createdAt: Date.now(), label: "", productId, unitPrice: Number(p.price || 0), minimumSqft: Number(p.minimumSqft || 0), widthMm: 0, heightMm: 0, quantity: 1, color: "", remark: "", ...makeSlidingFields() };
+      }
       function orderedItems(list = items) {
         return safeArray(list)
           .map((item, index) => ({ item, index }))
@@ -1412,14 +1460,14 @@
       function digitsOnly(value) { return String(value || "").replace(/\D/g, ""); }
       function ensureProductList(list) {
         const required = [
-          { id: "sliding-screen", name: "Sliding Screen", price: 55, minimumSqft: 11 },
-          { id: "sliding-security-window", name: "Sliding Security Window", price: 90, minimumSqft: 11 },
-          { id: "sliding-door", name: "Sliding Door", price: 100, minimumSqft: 21 },
-          { id: "removeable-screen", name: "Removeable Screen", price: 36, minimumSqft: 11 }
+          { id: "sliding-screen", name: "Sliding Screen", category: "Sliding", price: 55, minimumSqft: 11, active: true },
+          { id: "sliding-security-window", name: "Sliding Security Window", category: "Security Mesh", price: 90, minimumSqft: 11, active: true },
+          { id: "sliding-door", name: "Sliding Door", category: "Sliding Door", price: 100, minimumSqft: 21, active: true },
+          { id: "removeable-screen", name: "Removeable Screen", category: "Window", price: 36, minimumSqft: 11, active: true }
         ];
-        const next = [...(list || [])];
+        const next = safeArray(list).map(normalizeProduct);
         required.forEach((item) => {
-          if (!next.some((existing) => existing.id === item.id || existing.name === item.name)) next.push(item);
+          if (!next.some((existing) => existing.id === item.id || existing.name === item.name)) next.push(normalizeProduct(item));
         });
         return next;
       }
@@ -1474,8 +1522,14 @@
         return true;
       }
       function actualSqft(item) { return item.widthMm && item.heightMm ? item.widthMm * item.heightMm / mm2PerSqft : 0; }
-      function chargeableSqft(item) { return Math.max(actualSqft(item), product(item.productId).minimumSqft || 0); }
-      function itemTotal(item) { return chargeableSqft(item) * (product(item.productId).price || 0) * (item.quantity || 0); }
+      function itemMinimumSqft(item) {
+        return item.minimumSqft !== undefined ? Number(item.minimumSqft || 0) : Number(product(item.productId).minimumSqft || 0);
+      }
+      function itemUnitPrice(item) {
+        return item.unitPrice !== undefined ? Number(item.unitPrice || 0) : Number(product(item.productId).price || 0);
+      }
+      function chargeableSqft(item) { return Math.max(actualSqft(item), itemMinimumSqft(item)); }
+      function itemTotal(item) { return chargeableSqft(item) * itemUnitPrice(item) * (item.quantity || 0); }
       function subtotal() { return items.reduce((sum, item) => sum + itemTotal(item), 0); }
       function discount() {
         const field = document.getElementById("discount");
@@ -3528,8 +3582,9 @@
               quantity: Number(line.quantity || 0),
               actual_sqft: Number(actualSqft(line).toFixed(2)),
               chargeable_sqft: Number(chargeableSqft(line).toFixed(2)),
-              unit_price: Number(p && p.price || 0),
-              line_total: Number((chargeableSqft(line) * Number(p && p.price || 0) * Number(line.quantity || 0)).toFixed(2)),
+              unit_price: Number(itemUnitPrice(line)),
+              item_minimum_sqft: Number(itemMinimumSqft(line)),
+              line_total: Number(itemTotal(line).toFixed(2)),
               track_type: line.trackType || "",
               track_width_mm: Number(line.trackWidthMm || 0),
               handle_height_mm: Number(line.handleHeightMm || line.trackHeightMm || 0),
@@ -3607,8 +3662,11 @@
         const productRows = (safeArray(data[productsKey]).length ? safeArray(data[productsKey]) : products).map((item) => ({
           id: item.id,
           name: item.name || item.id,
+          category: item.category || productCategoryFromName(item.name || item.id),
           price: Number(item.price || 0),
           minimum_sqft: Number(item.minimumSqft || 0),
+          description: item.description || "",
+          active: item.active === undefined ? true : Boolean(item.active),
           updated_at: new Date().toISOString()
         }));
         const inventoryRows = (safeArray(data[inventoryKey]).length ? safeArray(data[inventoryKey]) : inventory).map((item) => ({
@@ -3719,12 +3777,17 @@
           const key = payment.order_id || payment.order_no;
           paymentsByOrder[key] = [...(paymentsByOrder[key] || []), payment];
         });
-        const loadedProducts = productRows && productRows.length ? productRows.map((item) => ({
+        const loadedProducts = productRows && productRows.length ? ensureProductList(productRows.map((item) => ({
           id: item.id,
           name: item.name || item.id,
+          category: item.category || productCategoryFromName(item.name || item.id),
           price: Number(item.price || 0),
-          minimumSqft: Number(item.minimum_sqft || 0)
-        })) : products;
+          minimumSqft: Number(item.minimum_sqft || 0),
+          description: item.description || "",
+          active: item.active === undefined ? true : Boolean(item.active),
+          createdAt: item.created_at || new Date().toISOString(),
+          updatedAt: item.updated_at || new Date().toISOString()
+        }))) : products;
         const loadedQuotes = (quoteRows || []).map((quote) => {
           const customer = customersById[quote.customer_id] || {};
           return {
@@ -3747,6 +3810,8 @@
               widthMm: Number(item.width_mm || 0),
               heightMm: Number(item.height_mm || 0),
               quantity: Number(item.quantity || 0),
+              unitPrice: item.unit_price === undefined || item.unit_price === null ? Number((productMap.get(item.product_id) || {}).price || 0) : Number(item.unit_price || 0),
+              minimumSqft: item.item_minimum_sqft === undefined || item.item_minimum_sqft === null ? (Number(item.chargeable_sqft || 0) > 0 && Number(item.actual_sqft || 0) < Number(item.chargeable_sqft || 0) ? Number(item.chargeable_sqft || 0) : Number((productMap.get(item.product_id) || {}).minimumSqft || 0)) : Number(item.item_minimum_sqft || 0),
               remark: item.line_remark || item.remark || "",
               color: item.color || "",
               trackType: item.track_type || "",
@@ -3916,6 +3981,7 @@
           (itemRows || []).forEach((item) => {
             itemsByQuote[item.quotation_id] = [...(itemsByQuote[item.quotation_id] || []), item];
           });
+          const productMap = new Map(products.map((item) => [item.id, item]));
           const loadedQuotes = quoteRows.map((quote) => ({
             id: quote.id,
             quoteNo: quote.quote_no,
@@ -3936,6 +4002,8 @@
               widthMm: Number(item.width_mm || 0),
               heightMm: Number(item.height_mm || 0),
               quantity: Number(item.quantity || 0),
+              unitPrice: item.unit_price === undefined || item.unit_price === null ? Number((productMap.get(item.product_id) || {}).price || 0) : Number(item.unit_price || 0),
+              minimumSqft: item.item_minimum_sqft === undefined || item.item_minimum_sqft === null ? (Number(item.chargeable_sqft || 0) > 0 && Number(item.actual_sqft || 0) < Number(item.chargeable_sqft || 0) ? Number(item.chargeable_sqft || 0) : Number((productMap.get(item.product_id) || {}).minimumSqft || 0)) : Number(item.item_minimum_sqft || 0),
               remark: item.line_remark || item.remark || "",
               trackType: item.track_type || "",
               trackWidthMm: Number(item.track_width_mm || 0),
@@ -3990,7 +4058,14 @@
       function updateItem(id, field, value) {
         const numberFields = ["widthMm","heightMm","quantity","trackWidthMm","handleHeightMm"];
         const nextValue = numberFields.includes(field) ? Number(String(value).replace(/[^\d.]/g, "") || 0) : value;
-        items = items.map((item) => item.id === id ? { ...item, [field]: nextValue } : item);
+        items = items.map((item) => {
+          if (item.id !== id) return item;
+          if (field === "productId") {
+            const nextProduct = product(nextValue);
+            return { ...item, productId: nextValue, unitPrice: Number(nextProduct.price || 0), minimumSqft: Number(nextProduct.minimumSqft || 0) };
+          }
+          return { ...item, [field]: nextValue };
+        });
         if (["productId","trackType","installationType","openingDirection"].includes(field)) {
           render();
           return;
@@ -3999,8 +4074,40 @@
         scheduleInputRender();
       }
       function updateProduct(id, field, value) {
-        products = products.map((item) => item.id === id ? { ...item, [field]: field === "name" ? value : Number(value || 0) } : item);
+        products = products.map((item) => {
+          if (item.id !== id) return item;
+          const nextValue = field === "price" || field === "minimumSqft" ? Number(value || 0) : field === "active" ? value === true || value === "true" : value;
+          return normalizeProduct({ ...item, [field]: nextValue, updatedAt: new Date().toISOString() });
+        });
         localStorage.setItem(productsKey, JSON.stringify(products));
+        render();
+      }
+      function setProductStatusFilter(value) {
+        productStatusFilter = value;
+        renderSettings();
+        applyLanguageToDom();
+      }
+      function addProduct() {
+        const name = document.getElementById("newProductName").value.trim();
+        const category = document.getElementById("newProductCategory").value.trim();
+        const price = Number(document.getElementById("newProductPrice").value || 0);
+        const minimumSqft = Number(document.getElementById("newProductMinimum").value || 0);
+        const description = document.getElementById("newProductDescription").value.trim();
+        const active = document.getElementById("newProductActive").value === "true";
+        if (!name || !category || price < 0) {
+          toast("Product Name, Category and Unit Price are required.");
+          return;
+        }
+        const idBase = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "product";
+        let id = idBase;
+        let counter = 2;
+        while (products.some((item) => item.id === id)) {
+          id = `${idBase}-${counter}`;
+          counter += 1;
+        }
+        products = [normalizeProduct({ id, name, category, price, minimumSqft, description, active }), ...products];
+        localStorage.setItem(productsKey, JSON.stringify(products));
+        toast("Product added.");
         render();
       }
       function captureItemFocus() {
@@ -4963,6 +5070,11 @@
           (currentRole === "admin" || currentRole === "sales" || currentRole === "secretary" ? statuses.map(([value, label]) => `<div class="status-row"><span>${label}</span><strong>${quotes.filter((quote) => quote.status === value).length}</strong></div>`).join("") : "");
       }
       function renderSettings() {
+        const filteredProducts = products.filter((item) => {
+          if (productStatusFilter === "all") return true;
+          if (productStatusFilter === "inactive") return item.active === false;
+          return item.active !== false;
+        });
         document.getElementById("settings").innerHTML = `
           <div class="item-card">
             <div class="field"><label>Google Review Link</label><input value="${googleReviewLink}" onchange="updateGoogleReviewLink(this.value)" placeholder="Paste your Google Review link here" /></div>
@@ -4975,15 +5087,44 @@
             <div class="field"><label>CRM Site URL</label><input value="${siteUrl}" onchange="updateSiteUrl(this.value)" placeholder="https://your-crm.vercel.app" /></div>
             <p style="color:var(--muted);margin-top:8px;font-size:13px">Used for Supabase email verification redirect. Put your production Vercel URL here.</p>
           </div>
-        ` + products.map((item) => `
           <div class="item-card">
-            <div class="field"><label>Product</label><input value="${englishProductName(item.name)}" onchange="updateProduct('${item.id}','name',this.value)" /></div>
+            <div class="item-head">
+              <div>
+                <h3>Product Management</h3>
+                <p style="color:var(--muted);margin-top:5px;font-size:13px">Inactive products stay visible in old quotations, but will not appear in new quotation dropdowns.</p>
+              </div>
+              <select onchange="setProductStatusFilter(this.value)" style="max-width:180px">
+                <option value="active" ${productStatusFilter === "active" ? "selected" : ""}>Active</option>
+                <option value="inactive" ${productStatusFilter === "inactive" ? "selected" : ""}>Inactive</option>
+                <option value="all" ${productStatusFilter === "all" ? "selected" : ""}>All Products</option>
+              </select>
+            </div>
+            <div class="form-grid" style="margin-top:12px">
+              <div class="field"><label>Product Name</label><input id="newProductName" placeholder="Example: Folding Screen" /></div>
+              <div class="field"><label>Category</label><input id="newProductCategory" placeholder="Window / Door / Sliding" /></div>
+              <div class="field"><label>Unit Price</label><input id="newProductPrice" type="number" step="0.01" placeholder="RM / sqft" /></div>
+              <div class="field"><label>Minimum Sqft / Minimum Charge</label><input id="newProductMinimum" type="number" step="0.01" placeholder="11" /></div>
+              <div class="field"><label>Status</label><select id="newProductActive"><option value="true">Active</option><option value="false">Inactive</option></select></div>
+              <div class="field wide"><label>Description</label><textarea id="newProductDescription" rows="2" placeholder="Optional internal note"></textarea></div>
+            </div>
+            <button class="btn primary" style="margin-top:12px" onclick="addProduct()">Add Product</button>
+          </div>
+        ` + (filteredProducts.length ? filteredProducts.map((item) => `
+          <div class="item-card">
+            <div class="item-head">
+              <h3>${englishProductName(item.name)}</h3>
+              <span class="pill">${item.active === false ? "Inactive" : "Active"}</span>
+            </div>
             <div class="form-grid" style="margin-top:10px">
-              <div class="field"><label>RM/sqft</label><input type="number" value="${item.price}" onchange="updateProduct('${item.id}','price',this.value)" /></div>
-              <div class="field"><label>Min sqft</label><input type="number" value="${item.minimumSqft}" onchange="updateProduct('${item.id}','minimumSqft',this.value)" /></div>
+              <div class="field"><label>Product Name</label><input value="${englishProductName(item.name)}" onchange="updateProduct('${item.id}','name',this.value)" /></div>
+              <div class="field"><label>Category</label><input value="${item.category || ""}" onchange="updateProduct('${item.id}','category',this.value)" /></div>
+              <div class="field"><label>Unit Price</label><input type="number" step="0.01" value="${item.price}" onchange="updateProduct('${item.id}','price',this.value)" /></div>
+              <div class="field"><label>Minimum Sqft / Minimum Charge</label><input type="number" step="0.01" value="${item.minimumSqft}" onchange="updateProduct('${item.id}','minimumSqft',this.value)" /></div>
+              <div class="field"><label>Status</label><select onchange="updateProduct('${item.id}','active',this.value)"><option value="true" ${item.active !== false ? "selected" : ""}>Active</option><option value="false" ${item.active === false ? "selected" : ""}>Inactive</option></select></div>
+              <div class="field wide"><label>Description</label><textarea rows="2" onchange="updateProduct('${item.id}','description',this.value)">${item.description || ""}</textarea></div>
             </div>
           </div>
-        `).join("");
+        `).join("") : `<div class="item-card"><p style="color:var(--muted)">No products in this filter.</p></div>`);
       }
       function renderStaffManagement() {
         const el = document.getElementById("staffManagement");
@@ -5078,7 +5219,7 @@
             </div>
             <div class="item-grid">
               <div class="field"><label>Location</label><input data-item-id="${item.id}" data-field="label" value="${item.label || ""}" oninput="updateItem('${item.id}','label',this.value)" placeholder="Living room window" /></div>
-              <div class="field"><label>Product</label><select data-item-id="${item.id}" data-field="productId" onchange="updateItem('${item.id}','productId',this.value)">${products.map((p) => `<option value="${p.id}" ${p.id === item.productId ? "selected" : ""}>${productNameForUi(p.name)}</option>`).join("")}</select></div>
+              <div class="field"><label>Product</label><select data-item-id="${item.id}" data-field="productId" onchange="updateItem('${item.id}','productId',this.value)">${productOptionsForQuote(item.productId).map((p) => `<option value="${p.id}" ${p.id === item.productId ? "selected" : ""}>${productNameForUi(p.name)}${p.active === false ? " (Inactive)" : ""}</option>`).join("")}</select></div>
               <div class="field"><label>Width mm</label><input data-item-id="${item.id}" data-field="widthMm" type="text" inputmode="numeric" value="${item.widthMm || ""}" oninput="updateItem('${item.id}','widthMm',this.value)" /></div>
               <div class="field"><label>Height mm</label><input data-item-id="${item.id}" data-field="heightMm" type="text" inputmode="numeric" value="${item.heightMm || ""}" oninput="updateItem('${item.id}','heightMm',this.value)" /></div>
               <div class="field"><label>Qty</label><input data-item-id="${item.id}" data-field="quantity" type="text" inputmode="numeric" value="${item.quantity || ""}" oninput="updateItem('${item.id}','quantity',this.value)" /></div>
@@ -5128,7 +5269,7 @@
             <div class="info-box"><p class="eyebrow">Job Details</p><p style="margin-top:8px"><strong>Area:</strong> ${customer.area || "-"}</p><p><strong>Appointment:</strong> ${customer.appointmentDate || "-"}</p></div>
           </div>
           <div class="table-wrap"><table><thead><tr><th>Description</th><th>Product</th><th class="right">Size</th><th class="right">Sqft</th><th class="right">Rate</th><th class="right">Qty</th><th class="right">Amount</th></tr></thead><tbody>
-            ${orderedItems().map((item, index) => `<tr><td>${item.label || `Item ${index + 1}`}${itemExtraDetails(item) ? `<p style="color:var(--muted);font-size:12px;margin-top:4px">${itemExtraDetails(item)}</p>` : ""}</td><td>${productDisplayName(item.productId)}</td><td class="right">${item.widthMm || 0} x ${item.heightMm || 0} mm</td><td class="right">${chargeableSqft(item).toFixed(2)}</td><td class="right">${money(product(item.productId).price)}</td><td class="right">${item.quantity || 0}</td><td class="right"><strong>${money(itemTotal(item))}</strong></td></tr>`).join("")}
+            ${orderedItems().map((item, index) => `<tr><td>${item.label || `Item ${index + 1}`}${itemExtraDetails(item) ? `<p style="color:var(--muted);font-size:12px;margin-top:4px">${itemExtraDetails(item)}</p>` : ""}</td><td>${productDisplayName(item.productId)}</td><td class="right">${item.widthMm || 0} x ${item.heightMm || 0} mm</td><td class="right">${chargeableSqft(item).toFixed(2)}</td><td class="right">${money(itemUnitPrice(item))}</td><td class="right">${item.quantity || 0}</td><td class="right"><strong>${money(itemTotal(item))}</strong></td></tr>`).join("")}
           </tbody></table></div>
           <div class="quote-bottom"><div class="notes"><strong style="color:var(--ink)">Terms & Conditions</strong><p style="margin-top:8px">i) Prices quoted are valid for a period of two (2) weeks from the quotation date.</p><p style="margin-top:8px">ii) 50% deposit is required upon confirmation, balance of payment upon completion.</p><p style="margin-top:8px">iii) Deposit paid is non-refundable.</p><p style="margin-top:8px">iv) All cheques should not be crossed and make payable to:</p><p style="margin-top:8px"><strong>ECO SCREEN SDN BHD<br>PUBLIC BANK<br>3242952413</strong></p></div><div><div class="line"><span>Subtotal</span><strong>${money(subtotal())}</strong></div>${discountLine}<div class="line"><span>Total</span><strong>${money(total())}</strong></div><div class="line"><span>Deposit</span><strong>${money(deposit())}</strong></div><div class="total-box" style="margin-top:10px"><div class="line"><span>Balance</span><strong>${money(balance())}</strong></div></div></div></div>
         `;
