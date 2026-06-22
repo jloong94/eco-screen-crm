@@ -804,6 +804,7 @@
       const completionRecordsKey = "eco-screen-completion-records";
       const warrantiesKey = "eco-screen-warranties";
       const inventoryKey = "eco-screen-inventory";
+      const productMaterialMappingsKey = "eco-screen-product-material-mappings";
       const facebookAdsKey = "eco-screen-facebook-ads";
       const appointmentsKey = "eco-screen-appointments";
       const exchangeRateKey = "eco-screen-rmb-myr-rate";
@@ -945,6 +946,11 @@
         ["warrantyInformationReceived", "Customer Received Warranty Information"]
       ];
       const installationPaymentMethods = ["Cash", "Bank Transfer", "DuitNow QR"];
+      const inventoryItemTypes = ["aluminium", "mesh", "hardware", "accessory", "consumable"];
+      const stockUnits = ["pcs", "length", "m", "roll", "set", "pack"];
+      const materialRoles = ["frame", "mesh", "track", "lock", "handle", "wheel", "screw", "accessory"];
+      const mappingFormulaTypes = ["fixed", "per_qty", "perimeter", "area", "track_count"];
+      const mappingDeductUnits = ["pcs", "length", "m", "sqm", "set", "pack"];
       const defaultProducts = [
         { id: "roller", name: "Roller", category: "Roller", price: 33, minimumSqft: 11, active: true },
         { id: "removeable-screen", name: "Removeable Screen", category: "Window", price: 36, minimumSqft: 11, active: true },
@@ -977,6 +983,7 @@
       let siteUrl = localStorage.getItem(siteUrlKey) || "";
       let calendarView = localStorage.getItem(calendarViewKey) || "week";
       let inventory = normalizeInventory(safeJsonParse(localStorage.getItem(inventoryKey), []));
+      let productMaterialMappings = normalizeProductMaterialMappings(safeJsonParse(localStorage.getItem(productMaterialMappingsKey), []));
       let facebookAds = safeArray(safeJsonParse(localStorage.getItem(facebookAdsKey), []));
       let appointments = normalizeAppointments(safeJsonParse(localStorage.getItem(appointmentsKey), []));
       let customerCrm = safeObject(safeJsonParse(localStorage.getItem(customerCrmKey), {}));
@@ -987,6 +994,8 @@
       let currentPage = roleMenus[currentRole][0][0];
       let dashboardFilter = null;
       let productStatusFilter = "active";
+      let mappingPreviewProductId = defaultProductId();
+      let mappingPreviewItemId = "";
       let editingId = null;
       let quoteNo = makeQuoteNo();
       let inputRenderTimer = null;
@@ -1000,6 +1009,7 @@
         completionRecordsKey,
         warrantiesKey,
         inventoryKey,
+        productMaterialMappingsKey,
         facebookAdsKey,
         appointmentsKey,
         customerCrmKey,
@@ -1163,6 +1173,30 @@
         "Stock Value": "库存价值",
         "Price Settings": "价格设置",
         "Product Management": "产品管理",
+        "Product Material Mapping": "产品材料对应规则",
+        "Mapping Preview": "对应规则预览",
+        "Mapping Rules": "对应规则列表",
+        "Add Mapping": "新增对应规则",
+        "Inventory Item": "库存项目",
+        "Material Role": "材料角色",
+        "Formula Type": "公式类型",
+        "Base Qty": "基础数量",
+        "Wastage %": "损耗 %",
+        "Deduct Unit": "扣料单位",
+        "Preview Product": "预览产品",
+        "Preview Quotation / Order Item": "预览报价 / 订单项目",
+        "No Stock Deduction": "不会扣库存",
+        "Missing mapping for this product. Add mapping rules before Phase 3C stock deduction.": "这个产品还没有对应规则。Phase 3C 扣库存前请先新增规则。",
+        "Item Type": "项目类型",
+        "Stock Unit": "库存单位",
+        "Purchase Unit": "采购单位",
+        "Pcs Per Bundle": "每扎支数",
+        "Length mm Per Piece": "每支长度 mm",
+        "Meter Per Roll": "每卷米数",
+        "Cost Per Stock Unit": "每库存单位成本",
+        "Exclude Auto Deduct": "排除自动扣料",
+        "No": "否",
+        "Yes": "是",
         "Product Name": "产品名称",
         "Category": "分类",
         "Unit Price": "单价",
@@ -2647,15 +2681,41 @@
           const sameName = saved.filter((savedItem) => savedItem.name === item.name);
           const existing = sameCategory || (sameName.length === 1 ? sameName[0] : {});
           const rmbUnitCost = Number(existing.rmbUnitCost ?? existing.unitCost ?? item.rmbUnitCost ?? 0);
+          const unitText = String(existing.unit || item.unit || "").toLowerCase();
+          const stockUnit = existing.stockUnit || (unitText.includes("米") || unitText.includes("meter") ? "m" : unitText.includes("卷") ? "roll" : unitText.includes("套") ? "set" : "pcs");
           return {
             ...item,
             quantity: Number(existing.quantity ?? item.quantity),
             safetyQuantity: Number(existing.safetyQuantity ?? item.safetyQuantity),
             usagePerItem: Number(existing.usagePerItem ?? item.usagePerItem),
             rmbUnitCost,
-            unitCost: Number((rmbUnitCost * rmbToMyrRate).toFixed(2))
+            unitCost: Number((rmbUnitCost * rmbToMyrRate).toFixed(2)),
+            itemType: existing.itemType || existing.item_type || (isHardwareStock(existing.name ? existing : item) ? "hardware" : unitText.includes("网") || String(item.name || "").includes("网") ? "mesh" : "aluminium"),
+            stockUnit,
+            purchaseUnit: existing.purchaseUnit || existing.purchase_unit || item.unit || "",
+            pcsPerBundle: Number(existing.pcsPerBundle ?? existing.pcs_per_bundle ?? 0),
+            lengthMmPerPiece: Number(existing.lengthMmPerPiece ?? existing.length_mm_per_piece ?? 0),
+            meterPerRoll: Number(existing.meterPerRoll ?? existing.meter_per_roll ?? 0),
+            costPerStockUnit: Number(existing.costPerStockUnit ?? existing.cost_per_stock_unit ?? ((rmbUnitCost * rmbToMyrRate) || 0)),
+            excludeFromAutoDeduct: Boolean(existing.excludeFromAutoDeduct ?? existing.exclude_from_auto_deduct ?? false),
+            active: existing.active === undefined ? true : Boolean(existing.active)
           };
         });
+      }
+      function normalizeProductMaterialMappings(rawMappings) {
+        return safeArray(rawMappings).map((mapping) => ({
+          id: mapping.id || `mapping-${uid()}`,
+          productId: mapping.productId || mapping.product_id || defaultProductId(),
+          inventoryItemId: mapping.inventoryItemId || mapping.inventory_item_id || "",
+          materialRole: mapping.materialRole || mapping.material_role || "frame",
+          formulaType: mapping.formulaType || mapping.formula_type || "per_qty",
+          baseQty: Number(mapping.baseQty ?? mapping.base_qty ?? 1),
+          wastagePercent: Number(mapping.wastagePercent ?? mapping.wastage_percent ?? 0),
+          deductUnit: mapping.deductUnit || mapping.deduct_unit || "pcs",
+          active: mapping.active === undefined ? true : Boolean(mapping.active),
+          createdAt: mapping.createdAt || mapping.created_at || new Date().toISOString(),
+          updatedAt: mapping.updatedAt || mapping.updated_at || new Date().toISOString()
+        }));
       }
       function makeOrderNo() {
         const year = new Date().getFullYear();
@@ -3700,6 +3760,28 @@
           usage_per_item: Number(item.usagePerItem || 0),
           rmb_unit_cost: Number(item.rmbUnitCost || 0),
           unit_cost: Number(item.unitCost || 0),
+          item_type: item.itemType || "",
+          stock_unit: item.stockUnit || "",
+          purchase_unit: item.purchaseUnit || item.unit || "",
+          pcs_per_bundle: Number(item.pcsPerBundle || 0),
+          length_mm_per_piece: Number(item.lengthMmPerPiece || 0),
+          meter_per_roll: Number(item.meterPerRoll || 0),
+          cost_per_stock_unit: Number(item.costPerStockUnit || item.unitCost || 0),
+          exclude_from_auto_deduct: Boolean(item.excludeFromAutoDeduct),
+          active: item.active === undefined ? true : Boolean(item.active),
+          updated_at: new Date().toISOString()
+        }));
+        const mappingRows = (safeArray(data[productMaterialMappingsKey]).length ? safeArray(data[productMaterialMappingsKey]) : productMaterialMappings).map((mapping) => ({
+          id: mapping.id,
+          product_id: mapping.productId,
+          inventory_item_id: mapping.inventoryItemId,
+          material_role: mapping.materialRole || "frame",
+          formula_type: mapping.formulaType || "per_qty",
+          base_qty: Number(mapping.baseQty || 0),
+          wastage_percent: Number(mapping.wastagePercent || 0),
+          deduct_unit: mapping.deductUnit || "pcs",
+          active: mapping.active === undefined ? true : Boolean(mapping.active),
+          created_at: mapping.createdAt || new Date().toISOString(),
           updated_at: new Date().toISOString()
         }));
         const staffMap = {};
@@ -3737,7 +3819,7 @@
           created_at: appointment.createdAt || new Date().toISOString(),
           updated_at: appointment.updatedAt || appointment.createdAt || new Date().toISOString()
         }));
-        return { customers: uniqueCustomersFrom(data), products: productRows, quotations: quoteRows, quotation_items: itemRows, orders: orderRows, production_orders: productionRows, installations: installationRows, collections: collectionRows, appointments: appointmentRows, inventory_items: inventoryRows, staff: staffRows, app_settings: settingsRows };
+        return { customers: uniqueCustomersFrom(data), products: productRows, quotations: quoteRows, quotation_items: itemRows, orders: orderRows, production_orders: productionRows, installations: installationRows, collections: collectionRows, appointments: appointmentRows, inventory_items: inventoryRows, product_material_mappings: mappingRows, staff: staffRows, app_settings: settingsRows };
       }
       async function upsertRows(table, rows) {
         if (!rows.length) return;
@@ -3772,6 +3854,7 @@
           collectionRows,
           appointmentRows,
           inventoryRows,
+          mappingRows,
           settingsRows
         ] = await Promise.all([
           fetchTable("customers", "select=*"),
@@ -3784,9 +3867,10 @@
           fetchTable("collections", "select=*&order=created_at.desc"),
           fetchTable("appointments", "select=*&order=appointment_date.asc,appointment_time.asc"),
           fetchTable("inventory_items", "select=*&order=category.asc,name.asc"),
+          fetchTable("product_material_mappings", "select=*&order=created_at.desc"),
           fetchTable("app_settings", "select=*")
         ]);
-        const hasBusinessData = [quoteRows, orderRows, productionRows, installationRows, collectionRows, appointmentRows, inventoryRows, productRows].some((rows) => rows && rows.length);
+        const hasBusinessData = [quoteRows, orderRows, productionRows, installationRows, collectionRows, appointmentRows, inventoryRows, productRows, mappingRows].some((rows) => rows && rows.length);
         if (!hasBusinessData) return false;
         const customersById = rowsById(customerRows);
         const itemsByQuote = {};
@@ -3809,6 +3893,7 @@
           createdAt: item.created_at || new Date().toISOString(),
           updatedAt: item.updated_at || new Date().toISOString()
         }))) : products;
+        const productMap = new Map(loadedProducts.map((item) => [item.id, item]));
         const loadedQuotes = (quoteRows || []).map((quote) => {
           const customer = customersById[quote.customer_id] || {};
           return {
@@ -3955,8 +4040,18 @@
           safetyQuantity: Number(row.safety_quantity || 0),
           usagePerItem: Number(row.usage_per_item || 0),
           rmbUnitCost: Number(row.rmb_unit_cost || 0),
-          unitCost: Number(row.unit_cost || 0)
+          unitCost: Number(row.unit_cost || 0),
+          itemType: row.item_type || "",
+          stockUnit: row.stock_unit || "",
+          purchaseUnit: row.purchase_unit || "",
+          pcsPerBundle: Number(row.pcs_per_bundle || 0),
+          lengthMmPerPiece: Number(row.length_mm_per_piece || 0),
+          meterPerRoll: Number(row.meter_per_roll || 0),
+          costPerStockUnit: Number(row.cost_per_stock_unit || 0),
+          excludeFromAutoDeduct: Boolean(row.exclude_from_auto_deduct),
+          active: row.active === undefined ? true : Boolean(row.active)
         }))) : inventory;
+        const loadedMappings = mappingRows && mappingRows.length ? normalizeProductMaterialMappings(mappingRows) : productMaterialMappings;
         const settingsById = rowsById(settingsRows);
         cloudState.applying = true;
         nativeSetItem(productsKey, JSON.stringify(loadedProducts));
@@ -3966,11 +4061,20 @@
         nativeSetItem(installationsKey, JSON.stringify(loadedInstallations));
         nativeSetItem(appointmentsKey, JSON.stringify(loadedAppointments));
         nativeSetItem(inventoryKey, JSON.stringify(loadedInventory));
+        nativeSetItem(productMaterialMappingsKey, JSON.stringify(loadedMappings));
         if (settingsById.google_review && settingsById.google_review.value && settingsById.google_review.value.url) nativeSetItem(googleReviewLinkKey, settingsById.google_review.value.url);
         if (settingsById.google_calendar && settingsById.google_calendar.value && settingsById.google_calendar.value.webhookUrl) nativeSetItem(googleCalendarWebhookKey, settingsById.google_calendar.value.webhookUrl);
         if (settingsById.site && settingsById.site.value && settingsById.site.value.url) nativeSetItem(siteUrlKey, settingsById.site.value.url);
         if (settingsById.currency && settingsById.currency.value && settingsById.currency.value.rmbToMyrRate) nativeSetItem(exchangeRateKey, settingsById.currency.value.rmbToMyrRate);
         cloudState.applying = false;
+        products = loadedProducts;
+        quotes = normalizeQuotes(loadedQuotes);
+        orders = normalizeOrders(loadedOrders);
+        productions = normalizeProductions(loadedProductions);
+        installations = normalizeInstallations(loadedInstallations);
+        appointments = normalizeAppointments(loadedAppointments);
+        inventory = loadedInventory;
+        productMaterialMappings = loadedMappings;
         cloudState.source = "Supabase business tables";
         return true;
       }
@@ -3990,6 +4094,7 @@
         await upsertRows("collections", rows.collections);
         await upsertRows("appointments", rows.appointments);
         await upsertRows("inventory_items", rows.inventory_items);
+        await upsertRows("product_material_mappings", rows.product_material_mappings);
         await upsertRows("staff", rows.staff);
         await upsertRows("app_settings", rows.app_settings);
       }
@@ -4485,12 +4590,106 @@
       function updateInventory(id, field, value) {
         inventory = inventory.map((item) => {
           if (item.id !== id) return item;
-          const next = { ...item, [field]: Number(value || 0) };
+          const numericFields = ["quantity", "safetyQuantity", "usagePerItem", "rmbUnitCost", "unitCost", "pcsPerBundle", "lengthMmPerPiece", "meterPerRoll", "costPerStockUnit"];
+          const booleanFields = ["excludeFromAutoDeduct", "active"];
+          const nextValue = numericFields.includes(field) ? Number(value || 0) : booleanFields.includes(field) ? (value === true || value === "true") : value;
+          const next = { ...item, [field]: nextValue };
           const rmbUnitCost = Number(next.rmbUnitCost || 0);
-          return { ...next, unitCost: Number((rmbUnitCost * rmbToMyrRate).toFixed(2)) };
+          const convertedUnitCost = Number((rmbUnitCost * rmbToMyrRate).toFixed(2));
+          return { ...next, unitCost: convertedUnitCost, costPerStockUnit: field === "costPerStockUnit" ? Number(value || 0) : Number(next.costPerStockUnit || convertedUnitCost) };
         });
         localStorage.setItem(inventoryKey, JSON.stringify(inventory));
         render();
+      }
+      function mappingOption(options, selected) {
+        return options.map((option) => `<option value="${option}" ${option === selected ? "selected" : ""}>${option}</option>`).join("");
+      }
+      function inventoryName(id) {
+        const item = inventory.find((stock) => stock.id === id);
+        return item ? `${item.name} (${item.category || "General"})` : "-";
+      }
+      function updateMapping(id, field, value) {
+        productMaterialMappings = productMaterialMappings.map((mapping) => {
+          if (mapping.id !== id) return mapping;
+          const numericFields = ["baseQty", "wastagePercent"];
+          const nextValue = numericFields.includes(field) ? Number(value || 0) : field === "active" ? (value === true || value === "true") : value;
+          return { ...mapping, [field]: nextValue, updatedAt: new Date().toISOString() };
+        });
+        localStorage.setItem(productMaterialMappingsKey, JSON.stringify(productMaterialMappings));
+        render();
+      }
+      function addProductMaterialMapping() {
+        const productId = document.getElementById("mappingProductId").value;
+        const inventoryItemId = document.getElementById("mappingInventoryItemId").value;
+        if (!productId || !inventoryItemId) {
+          toast("Product and Inventory Item are required.");
+          return;
+        }
+        productMaterialMappings = [{
+          id: `mapping-${uid()}`,
+          productId,
+          inventoryItemId,
+          materialRole: document.getElementById("mappingMaterialRole").value || "frame",
+          formulaType: document.getElementById("mappingFormulaType").value || "per_qty",
+          baseQty: Number(document.getElementById("mappingBaseQty").value || 1),
+          wastagePercent: Number(document.getElementById("mappingWastagePercent").value || 0),
+          deductUnit: document.getElementById("mappingDeductUnit").value || "pcs",
+          active: document.getElementById("mappingActive").value === "true",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }, ...productMaterialMappings];
+        localStorage.setItem(productMaterialMappingsKey, JSON.stringify(productMaterialMappings));
+        toast("Mapping added.");
+        render();
+      }
+      function setMappingPreviewProduct(value) {
+        mappingPreviewProductId = value;
+        mappingPreviewItemId = "";
+        renderSettings();
+        applyLanguageToDom();
+      }
+      function setMappingPreviewItem(value) {
+        mappingPreviewItemId = value;
+        renderSettings();
+        applyLanguageToDom();
+      }
+      function trackCountFromItem(item) {
+        const match = String(item.trackType || "").match(/\d+/);
+        return match ? Number(match[0]) : 1;
+      }
+      function previewItemsForMapping() {
+        const rows = [];
+        orders.forEach((order) => safeArray(order.items).forEach((item) => rows.push({ ...item, sourceLabel: `${order.orderNo} - ${item.label || productDisplayName(item.productId)}` })));
+        quotes.forEach((quote) => safeArray(quote.items).forEach((item) => rows.push({ ...item, sourceLabel: `${quote.quoteNo} - ${item.label || productDisplayName(item.productId)}` })));
+        return rows;
+      }
+      function selectedMappingPreviewItem() {
+        const found = previewItemsForMapping().find((item) => item.id === mappingPreviewItemId);
+        if (found) return found;
+        return { id: "sample", productId: mappingPreviewProductId || defaultProductId(), widthMm: 1000, heightMm: 1000, quantity: 1, trackType: "2 Track" };
+      }
+      function estimateMappingQuantity(mapping, item) {
+        const base = Number(mapping.baseQty || 0);
+        const qty = Number(item.quantity || 1);
+        const widthM = Number(item.widthMm || 0) / 1000;
+        const heightM = Number(item.heightMm || 0) / 1000;
+        let required = base;
+        if (mapping.formulaType === "per_qty") required = base * qty;
+        if (mapping.formulaType === "perimeter") required = base * ((widthM + heightM) * 2) * qty;
+        if (mapping.formulaType === "area") required = base * widthM * heightM * qty;
+        if (mapping.formulaType === "track_count") required = base * trackCountFromItem(item) * qty;
+        required = required * (1 + Number(mapping.wastagePercent || 0) / 100);
+        return Number(required.toFixed(4));
+      }
+      function mappingPreviewRows() {
+        const previewItem = selectedMappingPreviewItem();
+        const rows = productMaterialMappings.filter((mapping) => mapping.active !== false && mapping.productId === previewItem.productId);
+        return rows.map((mapping) => {
+          const stock = inventory.find((item) => item.id === mapping.inventoryItemId) || {};
+          const requiredQty = estimateMappingQuantity(mapping, previewItem);
+          const unitCost = Number(stock.costPerStockUnit || stock.unitCost || 0);
+          return { mapping, stock, requiredQty, unitCost, estimatedCost: requiredQty * unitCost };
+        });
       }
       function updateExchangeRate(value) {
         rmbToMyrRate = Number(value || 0);
@@ -5145,7 +5344,69 @@
               <div class="field wide"><label>Description</label><textarea rows="2" onchange="updateProduct('${item.id}','description',this.value)">${item.description || ""}</textarea></div>
             </div>
           </div>
-        `).join("") : `<div class="item-card"><p style="color:var(--muted)">No products in this filter.</p></div>`);
+        `).join("") : `<div class="item-card"><p style="color:var(--muted)">No products in this filter.</p></div>`) + renderProductMaterialMappingSection();
+      }
+      function renderProductMaterialMappingSection() {
+        const previewItemOptions = previewItemsForMapping().slice(0, 80);
+        const previewItem = selectedMappingPreviewItem();
+        const previewRows = mappingPreviewRows();
+        return `
+          <div class="item-card">
+            <div class="item-head">
+              <div>
+                <h3>Product Material Mapping</h3>
+                <p style="color:var(--muted);margin-top:5px;font-size:13px">Build product-to-material rules for future stock deduction and costing. Phase 3B preview does not deduct inventory.</p>
+              </div>
+              <span class="pill">${productMaterialMappings.length} Rules</span>
+            </div>
+            <div class="form-grid" style="margin-top:12px">
+              <div class="field"><label>Product</label><select id="mappingProductId">${products.map((item) => `<option value="${item.id}">${englishProductName(item.name)}</option>`).join("")}</select></div>
+              <div class="field"><label>Inventory Item</label><select id="mappingInventoryItemId">${inventory.filter((item) => item.active !== false).map((item) => `<option value="${item.id}">${item.name} - ${item.category || "General"}</option>`).join("")}</select></div>
+              <div class="field"><label>Material Role</label><select id="mappingMaterialRole">${mappingOption(materialRoles, "frame")}</select></div>
+              <div class="field"><label>Formula Type</label><select id="mappingFormulaType">${mappingOption(mappingFormulaTypes, "per_qty")}</select></div>
+              <div class="field"><label>Base Qty</label><input id="mappingBaseQty" type="number" step="0.0001" value="1" /></div>
+              <div class="field"><label>Wastage %</label><input id="mappingWastagePercent" type="number" step="0.01" value="0" /></div>
+              <div class="field"><label>Deduct Unit</label><select id="mappingDeductUnit">${mappingOption(mappingDeductUnits, "pcs")}</select></div>
+              <div class="field"><label>Status</label><select id="mappingActive"><option value="true">Active</option><option value="false">Inactive</option></select></div>
+            </div>
+            <button class="btn primary" style="margin-top:12px" onclick="addProductMaterialMapping()">Add Mapping</button>
+          </div>
+          <div class="item-card">
+            <div class="item-head">
+              <h3>Mapping Preview</h3>
+              <span class="pill">No Stock Deduction</span>
+            </div>
+            <div class="form-grid">
+              <div class="field"><label>Preview Product</label><select onchange="setMappingPreviewProduct(this.value)">${products.map((item) => `<option value="${item.id}" ${item.id === mappingPreviewProductId ? "selected" : ""}>${englishProductName(item.name)}</option>`).join("")}</select></div>
+              <div class="field"><label>Preview Quotation / Order Item</label><select onchange="setMappingPreviewItem(this.value)">
+                <option value="">Sample 1000 x 1000 mm item</option>
+                ${previewItemOptions.map((item) => `<option value="${item.id}" ${item.id === mappingPreviewItemId ? "selected" : ""}>${item.sourceLabel} (${item.widthMm || 0} x ${item.heightMm || 0})</option>`).join("")}
+              </select></div>
+            </div>
+            <p style="color:var(--muted);margin-top:10px">Preview item: ${productDisplayName(previewItem.productId)} - ${previewItem.widthMm || 0} x ${previewItem.heightMm || 0} mm - Qty ${previewItem.quantity || 1}</p>
+            ${previewRows.length ? `<div class="table-wrap"><table><thead><tr><th>Inventory Item</th><th>Role</th><th>Formula</th><th class="right">Required Qty</th><th>Unit</th><th class="right">Unit Cost</th><th class="right">Estimated Cost</th></tr></thead><tbody>
+              ${previewRows.map((row) => `<tr><td>${row.stock.name || "-"}</td><td>${row.mapping.materialRole}</td><td>${row.mapping.formulaType}</td><td class="right">${row.requiredQty}</td><td>${row.mapping.deductUnit}</td><td class="right">${money(row.unitCost)}</td><td class="right">${money(row.estimatedCost)}</td></tr>`).join("")}
+            </tbody></table></div>` : `<div class="alert" style="margin-top:12px">Missing mapping for this product. Add mapping rules before Phase 3C stock deduction.</div>`}
+          </div>
+          <div class="item-card">
+            <div class="item-head"><h3>Mapping Rules</h3><span class="pill">${productMaterialMappings.length}</span></div>
+            ${productMaterialMappings.length ? productMaterialMappings.map((mapping) => `
+              <div class="item-card" style="box-shadow:none;margin-top:10px">
+                <div class="form-grid">
+                  <div class="field"><label>Product</label><select onchange="updateMapping('${mapping.id}','productId',this.value)">${products.map((item) => `<option value="${item.id}" ${item.id === mapping.productId ? "selected" : ""}>${englishProductName(item.name)}</option>`).join("")}</select></div>
+                  <div class="field"><label>Inventory Item</label><select onchange="updateMapping('${mapping.id}','inventoryItemId',this.value)">${inventory.map((item) => `<option value="${item.id}" ${item.id === mapping.inventoryItemId ? "selected" : ""}>${item.name} - ${item.category || "General"}</option>`).join("")}</select></div>
+                  <div class="field"><label>Material Role</label><select onchange="updateMapping('${mapping.id}','materialRole',this.value)">${mappingOption(materialRoles, mapping.materialRole)}</select></div>
+                  <div class="field"><label>Formula Type</label><select onchange="updateMapping('${mapping.id}','formulaType',this.value)">${mappingOption(mappingFormulaTypes, mapping.formulaType)}</select></div>
+                  <div class="field"><label>Base Qty</label><input type="number" step="0.0001" value="${mapping.baseQty}" onchange="updateMapping('${mapping.id}','baseQty',this.value)" /></div>
+                  <div class="field"><label>Wastage %</label><input type="number" step="0.01" value="${mapping.wastagePercent}" onchange="updateMapping('${mapping.id}','wastagePercent',this.value)" /></div>
+                  <div class="field"><label>Deduct Unit</label><select onchange="updateMapping('${mapping.id}','deductUnit',this.value)">${mappingOption(mappingDeductUnits, mapping.deductUnit)}</select></div>
+                  <div class="field"><label>Status</label><select onchange="updateMapping('${mapping.id}','active',this.value)"><option value="true" ${mapping.active !== false ? "selected" : ""}>Active</option><option value="false" ${mapping.active === false ? "selected" : ""}>Inactive</option></select></div>
+                </div>
+                <p style="color:var(--muted);margin-top:8px;font-size:13px">Linked item: ${inventoryName(mapping.inventoryItemId)}</p>
+              </div>
+            `).join("") : `<p style="color:var(--muted)">No mapping rules yet.</p>`}
+          </div>
+        `;
       }
       function renderStaffManagement() {
         const el = document.getElementById("staffManagement");
@@ -5222,9 +5483,18 @@
                   <div class="field"><label>Safety Quantity</label><input type="number" value="${item.safetyQuantity}" oninput="updateInventory('${item.id}','safetyQuantity',this.value)" /></div>
                   <div class="field"><label>Usage Per Production Item</label><input type="number" value="${item.usagePerItem}" oninput="updateInventory('${item.id}','usagePerItem',this.value)" /></div>
                   <div class="field"><label>Unit</label><input value="${item.unit}" readonly /></div>
+                  <div class="field"><label>Item Type</label><select onchange="updateInventory('${item.id}','itemType',this.value)">${mappingOption(inventoryItemTypes, item.itemType || "aluminium")}</select></div>
+                  <div class="field"><label>Stock Unit</label><select onchange="updateInventory('${item.id}','stockUnit',this.value)">${mappingOption(stockUnits, item.stockUnit || "pcs")}</select></div>
+                  <div class="field"><label>Purchase Unit</label><input value="${item.purchaseUnit || item.unit || ""}" onchange="updateInventory('${item.id}','purchaseUnit',this.value)" /></div>
+                  <div class="field"><label>Pcs Per Bundle</label><input type="number" value="${item.pcsPerBundle || 0}" onchange="updateInventory('${item.id}','pcsPerBundle',this.value)" /></div>
+                  <div class="field"><label>Length mm Per Piece</label><input type="number" value="${item.lengthMmPerPiece || 0}" onchange="updateInventory('${item.id}','lengthMmPerPiece',this.value)" /></div>
+                  <div class="field"><label>Meter Per Roll</label><input type="number" value="${item.meterPerRoll || 0}" onchange="updateInventory('${item.id}','meterPerRoll',this.value)" /></div>
                   <div class="field"><label>RMB Unit Cost</label><input type="number" value="${item.rmbUnitCost || 0}" onchange="updateInventory('${item.id}','rmbUnitCost',this.value)" /></div>
                   <div class="field"><label>RM Unit Cost</label><input value="${money(item.unitCost || 0)}" readonly /></div>
+                  <div class="field"><label>Cost Per Stock Unit</label><input type="number" value="${item.costPerStockUnit || item.unitCost || 0}" onchange="updateInventory('${item.id}','costPerStockUnit',this.value)" /></div>
                   <div class="field"><label>Stock Value</label><input value="${money(Number(item.quantity || 0) * Number(item.unitCost || 0))}" readonly /></div>
+                  <div class="field"><label>Exclude Auto Deduct</label><select onchange="updateInventory('${item.id}','excludeFromAutoDeduct',this.value)"><option value="false" ${!item.excludeFromAutoDeduct ? "selected" : ""}>No</option><option value="true" ${item.excludeFromAutoDeduct ? "selected" : ""}>Yes</option></select></div>
+                  <div class="field"><label>Status</label><select onchange="updateInventory('${item.id}','active',this.value)"><option value="true" ${item.active !== false ? "selected" : ""}>Active</option><option value="false" ${item.active === false ? "selected" : ""}>Inactive</option></select></div>
                 </div>
               </div>
             `).join("")}
