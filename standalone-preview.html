@@ -690,12 +690,12 @@
           <div id="pendingBalances"></div>
         </section>
 
-        <section class="panel history no-print" data-page="production" data-roles="admin production">
+        <section class="panel history no-print" data-page="production" data-roles="admin production secretary">
           <div class="panel-head"><h2>Production Sheets</h2></div>
           <div id="productions"></div>
         </section>
 
-        <section class="panel history no-print" data-page="production-status" data-roles="admin production">
+        <section class="panel history no-print" data-page="production-status" data-roles="admin production secretary">
           <div class="panel-head"><h2>Production Status</h2></div>
           <div id="productionStatus"></div>
         </section>
@@ -741,12 +741,12 @@
           <div id="appointments"></div>
         </section>
 
-        <section class="panel history no-print" data-page="facebook-ads" data-roles="admin sales secretary">
+        <section class="panel history no-print" data-page="facebook-ads" data-roles="admin">
           <div class="panel-head"><h2>Facebook Ads Dashboard</h2></div>
           <div id="facebookAds"></div>
         </section>
 
-        <section class="panel history no-print" data-page="financial" data-roles="admin secretary">
+        <section class="panel history no-print" data-page="financial" data-roles="admin">
           <div class="panel-head"><h2>Financial Dashboard</h2></div>
           <div id="financialDashboard"></div>
         </section>
@@ -879,7 +879,6 @@
           ["appointment", "Appointment"],
           ["follow-up", "Follow Up"],
           ["order", "Order"],
-          ["facebook-ads", "Facebook Ads"],
           ["warranty", "Warranty"]
         ],
         secretary: [
@@ -888,10 +887,10 @@
           ["appointment", "Appointment"],
           ["follow-up", "Follow Up"],
           ["order", "Order"],
+          ["production", "Pending Production"],
+          ["production-status", "Production Status"],
           ["installation", "Installation"],
           ["pending-balance", "Pending Balance"],
-          ["financial", "Financial Dashboard"],
-          ["facebook-ads", "Facebook Ads"],
           ["warranty", "Warranty"]
         ],
         production: [
@@ -906,6 +905,41 @@
           ["warranty", "Warranty"]
         ]
       };
+      const PERMISSIONS = {
+        admin: ["*"],
+        sales: [
+          "quote:save", "quote:convert", "quote:edit",
+          "customer:edit", "appointment:save", "appointment:sync", "appointment:cancel",
+          "followup:edit", "order:view", "warranty:view",
+          "production:generate", "installation:generate"
+        ],
+        secretary: [
+          "quote:save", "quote:convert", "quote:edit",
+          "customer:edit", "appointment:save", "appointment:sync", "appointment:cancel",
+          "followup:edit", "order:view", "pending:view", "warranty:view",
+          "production:view", "production:generate",
+          "installation:view", "installation:schedule", "installation:update", "installation:generate",
+          "payment:record"
+        ],
+        production: ["production:view", "production:update"],
+        installer: [
+          "installation:view", "installation:update", "installation:collection",
+          "signature:update", "completion:generate", "review:update", "warranty:view",
+          "payment:record"
+        ]
+      };
+      function can(action) {
+        const allowed = PERMISSIONS[currentRole] || [];
+        return allowed.includes("*") || allowed.includes(action);
+      }
+      function normalizeRoleName(role) {
+        return role === "boss" ? "admin" : role;
+      }
+      function requirePermission(action) {
+        if (can(action)) return true;
+        toast("Permission denied: your role cannot perform this action.");
+        return false;
+      }
       const checklistLabels = [
         ["arrived", "Arrived On Site"],
         ["installed", "Installation Completed"],
@@ -967,7 +1001,7 @@
       let appointments = normalizeAppointments(safeJsonParse(localStorage.getItem(appointmentsKey), []));
       let customerCrm = safeObject(safeJsonParse(localStorage.getItem(customerCrmKey), {}));
       let staffProfiles = [];
-      let currentRole = localStorage.getItem(roleKey) || "admin";
+      let currentRole = normalizeRoleName(localStorage.getItem(roleKey) || "admin");
       let currentLanguage = localStorage.getItem(languageKey) || "en";
       if (!roleMenus[currentRole]) currentRole = "admin";
       let currentPage = roleMenus[currentRole][0][0];
@@ -3222,6 +3256,7 @@
         setTimeout(() => el.classList.remove("show"), 2200);
       }
       function setRole(role) {
+        role = normalizeRoleName(role);
         if (cloudState.session && cloudState.role && cloudState.role !== "admin" && role !== cloudState.role) {
           toast("This login does not have permission for that role.");
           return;
@@ -3289,7 +3324,7 @@
           const visible = rolesAllowed.includes(currentRole) && page === currentPage;
           section.classList.toggle("page-hidden", !visible);
         });
-        const actionVisible = (currentRole === "admin" || currentRole === "sales" || currentRole === "secretary") && currentPage === "quotation";
+        const actionVisible = can("quote:save") && currentPage === "quotation";
         document.querySelector(".bottom-actions").classList.toggle("page-hidden", !actionVisible);
         document.querySelector(".topbar .actions").classList.toggle("page-hidden", !actionVisible);
       }
@@ -3429,7 +3464,7 @@
         }
       }
       async function createStaffAccount() {
-        if (currentRole !== "admin" || cloudState.role !== "admin") return toast("Admin only.");
+        if (!requirePermission("staff:manage") || cloudState.role !== "admin") return;
         const email = document.getElementById("staffEmail").value.trim();
         const password = document.getElementById("staffPassword").value;
         const role = document.getElementById("staffRole").value;
@@ -3459,7 +3494,7 @@
         }
       }
       async function updateStaffProfile(id, field, value) {
-        if (currentRole !== "admin" || cloudState.role !== "admin") return toast("Admin only.");
+        if (!requirePermission("staff:manage") || cloudState.role !== "admin") return;
         const body = { [field]: field === "active" ? value === true || value === "true" : value, updated_at: new Date().toISOString() };
         try {
           await supabaseFetch(`/rest/v1/eco_screen_profiles?id=eq.${id}`, {
@@ -3528,7 +3563,7 @@
         try {
           const rows = await supabaseFetch(`/rest/v1/eco_screen_profiles?id=eq.${cloudState.session.user.id}&select=id,email,role,active`);
           const profile = rows && rows[0] || {};
-          cloudState.role = profile.role || "sales";
+          cloudState.role = normalizeRoleName(profile.role || "sales");
           cloudState.email = profile.email || cloudState.session.user.email || "";
           cloudState.active = profile.active !== false;
           if (!cloudState.active) {
@@ -3547,7 +3582,7 @@
           try {
             const rows = await supabaseFetch(`/rest/v1/eco_screen_profiles?id=eq.${cloudState.session.user.id}&select=id,email,role`);
             const profile = rows && rows[0] || {};
-            cloudState.role = profile.role || "sales";
+            cloudState.role = normalizeRoleName(profile.role || "sales");
             cloudState.email = profile.email || cloudState.session.user.email || "";
             cloudState.active = true;
           } catch (fallbackError) {
@@ -4222,6 +4257,7 @@
         scheduleInputRender();
       }
       function updateProduct(id, field, value) {
+        if (!requirePermission("product:manage")) return;
         products = products.map((item) => {
           if (item.id !== id) return item;
           const nextValue = field === "price" || field === "minimumSqft" ? Number(value || 0) : field === "active" ? value === true || value === "true" : value;
@@ -4236,6 +4272,7 @@
         applyLanguageToDom();
       }
       function addProduct() {
+        if (!requirePermission("product:manage")) return;
         const name = document.getElementById("newProductName").value.trim();
         const category = document.getElementById("newProductCategory").value.trim();
         const price = Number(document.getElementById("newProductPrice").value || 0);
@@ -4282,6 +4319,7 @@
         });
       }
       function saveQuote() {
+        if (!requirePermission("quote:save")) return;
         if (!validateSlidingItems(items)) return;
         const nextQuoteNo = readQuoteNoOrWarn();
         if (!nextQuoteNo) return;
@@ -4333,6 +4371,7 @@
         };
       }
       function convertCurrentQuoteToOrder() {
+        if (!requirePermission("quote:convert")) return;
         const currentStatus = document.getElementById("status").value;
         if (currentStatus !== "won") {
           toast("Change status to Won before converting.");
@@ -4372,6 +4411,7 @@
         render();
       }
       function generateProductionSheet(orderId) {
+        if (!requirePermission("production:generate")) return;
         const order = orders.find((item) => item.id === orderId);
         if (!order) return;
         if (productions.some((item) => item.orderNo === order.orderNo)) {
@@ -4432,6 +4472,7 @@
         render();
       }
       function updateOrderCost(orderId, field, value) {
+        if (!requirePermission("cost:manage")) return;
         orders = orders.map((order) => order.id === orderId ? {
           ...order,
           costs: {
@@ -4458,6 +4499,7 @@
         await copyText(text);
       }
       function generateInstallationSheet(orderId) {
+        if (!requirePermission("installation:generate")) return;
         const order = orders.find((item) => item.id === orderId);
         if (!order) return;
         if (installations.some((item) => item.orderNo === order.orderNo)) {
@@ -4588,6 +4630,7 @@
         return movements;
       }
       function updateProductionStatus(id, value) {
+        if (!requirePermission("production:update")) return;
         const production = productions.find((item) => item.id === id);
         let movements = null;
         if (production && value === "completed" && !production.inventoryDeducted) {
@@ -4606,10 +4649,12 @@
         render();
       }
       function updateProductionField(id, field, value) {
+        if (!requirePermission("production:update")) return;
         productions = productions.map((item) => item.id === id ? { ...item, [field]: value } : item);
         localStorage.setItem(productionsKey, JSON.stringify(productions));
       }
       function updateInventory(id, field, value) {
+        if (!requirePermission("inventory:manage")) return;
         inventory = inventory.map((item) => {
           if (item.id !== id) return item;
           const numericFields = ["quantity", "safetyQuantity", "usagePerItem", "rmbUnitCost", "unitCost", "pcsPerBundle", "lengthMmPerPiece", "meterPerRoll", "costPerStockUnit"];
@@ -4631,6 +4676,7 @@
         return item ? `${item.name} (${item.category || "General"})` : "-";
       }
       function updateMapping(id, field, value) {
+        if (!requirePermission("mapping:manage")) return;
         productMaterialMappings = productMaterialMappings.map((mapping) => {
           if (mapping.id !== id) return mapping;
           const numericFields = ["baseQty", "wastagePercent"];
@@ -4641,6 +4687,7 @@
         render();
       }
       function addProductMaterialMapping() {
+        if (!requirePermission("mapping:manage")) return;
         const productId = document.getElementById("mappingProductId").value;
         const inventoryItemId = document.getElementById("mappingInventoryItemId").value;
         if (!productId || !inventoryItemId) {
@@ -4687,6 +4734,7 @@
         applyLanguageToDom();
       }
       function saveAllMappingRows() {
+        if (!requirePermission("mapping:manage")) return;
         const productId = document.getElementById("bulkMappingProductId").value;
         const rows = [];
         for (let index = 0; index < mappingBulkRowCount; index += 1) {
@@ -4703,6 +4751,7 @@
         render();
       }
       function duplicateMapping(id) {
+        if (!requirePermission("mapping:manage")) return;
         const source = productMaterialMappings.find((mapping) => mapping.id === id);
         if (!source) return;
         productMaterialMappings = [{
@@ -4716,6 +4765,7 @@
         render();
       }
       function copyMappingFromProduct() {
+        if (!requirePermission("mapping:manage")) return;
         const sourceProductId = document.getElementById("copyMappingSourceProductId").value;
         const targetProductId = document.getElementById("copyMappingTargetProductId").value;
         if (!sourceProductId || !targetProductId || sourceProductId === targetProductId) {
@@ -4774,6 +4824,7 @@
         };
       }
       function applyMappingTemplate() {
+        if (!requirePermission("mapping:manage")) return;
         const productId = document.getElementById("templateProductId").value;
         const templateId = document.getElementById("mappingTemplateId").value;
         const templateRows = mappingTemplates()[templateId] || [];
@@ -4855,6 +4906,7 @@
         });
       }
       function updateExchangeRate(value) {
+        if (!requirePermission("inventory:manage")) return;
         rmbToMyrRate = Number(value || 0);
         localStorage.setItem(exchangeRateKey, rmbToMyrRate);
         inventory = normalizeInventory(inventory);
@@ -4862,16 +4914,19 @@
         render();
       }
       function updateGoogleReviewLink(value) {
+        if (!requirePermission("settings:manage")) return;
         googleReviewLink = value || "";
         localStorage.setItem(googleReviewLinkKey, googleReviewLink);
         render();
       }
       function updateGoogleCalendarWebhook(value) {
+        if (!requirePermission("settings:manage")) return;
         googleCalendarWebhook = value || "";
         localStorage.setItem(googleCalendarWebhookKey, googleCalendarWebhook);
         render();
       }
       function updateSiteUrl(value) {
+        if (!requirePermission("settings:manage")) return;
         siteUrl = (value || "").replace(/\/$/, "");
         localStorage.setItem(siteUrlKey, siteUrl);
         render();
@@ -4944,6 +4999,7 @@
         localStorage.setItem(appointmentsKey, JSON.stringify(appointments));
       }
       async function syncAppointmentToGoogle(id, action = "upsert") {
+        if (!requirePermission("appointment:sync")) return;
         const appointment = appointments.find((item) => item.id === id);
         if (!appointment) return;
         if (!googleCalendarWebhook) {
@@ -4993,6 +5049,7 @@
         }
       }
       async function syncAppointmentsFromGoogle() {
+        if (!requirePermission("appointment:sync")) return;
         if (!googleCalendarWebhook) {
           toast("Add Google Calendar Webhook URL in Settings first.");
           return;
@@ -5016,6 +5073,7 @@
         }
       }
       function saveAppointment(id = "") {
+        if (!requirePermission("appointment:save")) return;
         const existing = appointments.find((item) => item.id === id);
         const appointment = {
           id: id || uid(),
@@ -5068,6 +5126,7 @@
         window.scrollTo({ top: 0, behavior: "smooth" });
       }
       function deleteAppointment(id) {
+        if (!requirePermission("appointment:cancel")) return;
         const appointment = appointments.find((item) => item.id === id);
         if (!appointment || !confirm(`Cancel appointment for ${appointment.customerName}?`)) return;
         const now = new Date().toISOString();
@@ -5103,6 +5162,7 @@
         render();
       }
       function updateProductionArea(id, value) {
+        if (!requirePermission("production:update")) return;
         productions = productions.map((item) => item.id === id ? {
           ...item,
           customer: { ...item.customer, area: value }
@@ -5110,6 +5170,7 @@
         localStorage.setItem(productionsKey, JSON.stringify(productions));
       }
       function updateProductionItem(productionId, itemId, field, value) {
+        if (!requirePermission("production:update")) return;
         const nextValue = ["trackWidthMm","handleHeightMm"].includes(field) ? Number(String(value).replace(/[^\d.]/g, "") || 0) : value;
         productions = productions.map((production) => production.id === productionId ? {
           ...production,
@@ -5118,6 +5179,7 @@
         localStorage.setItem(productionsKey, JSON.stringify(productions));
       }
       function updateInstallationStatus(id, value) {
+        if (!requirePermission("installation:update")) return;
         installations = installations.map((item) => item.id === id ? {
           ...item,
           status: value,
@@ -5127,6 +5189,7 @@
         render();
       }
       function updateInstallationField(id, field, value) {
+        if (!requirePermission("installation:update")) return;
         installations = installations.map((item) => item.id === id ? {
           ...item,
           [field]: field === "customerRating" || field === "amountCollected" ? Number(value || 0) : value
@@ -5139,6 +5202,7 @@
         render();
       }
       function updateCustomerConfirmation(id, field, checked) {
+        if (!requirePermission("installation:update")) return;
         installations = installations.map((item) => item.id === id ? {
           ...item,
           customerConfirmation: { ...(item.customerConfirmation || {}), [field]: checked }
@@ -5147,6 +5211,7 @@
         render();
       }
       function updateInstallationChecklist(id, field, checked) {
+        if (!requirePermission(field === "balanceCollected" ? "payment:record" : "installation:update")) return;
         if (field === "balanceCollected") {
           syncInstallationCollection(id, checked);
           render();
@@ -5279,6 +5344,7 @@
         upsertInstallerCollectionToSupabase(payment, nextOrder, installation);
       }
       function saveSignature(id, dataUrl) {
+        if (!requirePermission("signature:update")) return;
         installations = installations.map((item) => item.id === id ? { ...item, signature: dataUrl } : item);
         localStorage.setItem(installationsKey, JSON.stringify(installations));
       }
@@ -5287,6 +5353,7 @@
         render();
       }
       function generateCompletionRecord(id) {
+        if (!requirePermission("completion:generate")) return;
         const installation = installations.find((item) => item.id === id);
         if (!installation) return;
         if (completionRecords.some((record) => record.installationNo === installation.installationNo)) {
@@ -5357,6 +5424,7 @@
         render();
       }
       function editQuote(id) {
+        if (!requirePermission("quote:edit")) return;
         const quote = quotes.find((item) => item.id === id);
         if (!quote) return;
         editingId = quote.id;
@@ -5371,6 +5439,7 @@
         render();
       }
       function deleteQuote(id) {
+        if (!requirePermission("records:delete")) return;
         const quote = quotes.find((item) => item.id === id);
         if (!quote || !confirm(`Delete quotation ${quote.quoteNo}?`)) return;
         quotes = quotes.filter((item) => item.id !== id);
@@ -5380,6 +5449,7 @@
         render();
       }
       function deleteOrder(id) {
+        if (!requirePermission("records:delete")) return;
         const order = orders.find((item) => item.id === id);
         if (!order || !confirm(`Delete order ${order.orderNo}? Related production, installation, completion and warranty records will also be deleted.`)) return;
         const relatedInstallations = installations.filter((item) => item.orderNo === order.orderNo).map((item) => item.installationNo);
@@ -5841,7 +5911,7 @@
         document.getElementById("history").innerHTML = banner + (rows.length ? rows.map((quote) => `
           <div class="history-card">
             <div><strong>${quote.quoteNo}</strong> <span class="pill">${statusLabel(quote.status)}</span><p style="color:var(--muted);margin-top:5px">${quote.customer.name || "Unnamed Customer"} - ${quote.customer.area || "No area"} - ${money(quote.total)}</p>${quote.remarks ? `<p style="white-space:pre-wrap;color:var(--muted);margin-top:6px">${quote.remarks}</p>` : ""}</div>
-            <div class="history-actions"><button class="btn" onclick="editQuote('${quote.id}')">Edit</button><button class="btn danger" onclick="deleteQuote('${quote.id}')">Delete</button></div>
+            <div class="history-actions"><button class="btn" onclick="editQuote('${quote.id}')">Edit</button>${can("records:delete") ? `<button class="btn danger" onclick="deleteQuote('${quote.id}')">Delete</button>` : ""}</div>
           </div>
         `).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No saved quotations yet.</p>`);
       }
@@ -5976,9 +6046,9 @@
             </div>
             <div style="display:grid;gap:8px;text-align:right">
               <div><strong>${money(unpaidTotal(order))}</strong><p style="color:var(--muted);font-size:13px">Unpaid</p></div>
-              <button class="btn primary" onclick="generateProductionSheet('${order.id}')">Generate Production</button>
-              <button class="btn" onclick="generateInstallationSheet('${order.id}')">Generate Installation</button>
-              <button class="btn danger" onclick="deleteOrder('${order.id}')">Delete Order</button>
+              ${can("production:generate") ? `<button class="btn primary" onclick="generateProductionSheet('${order.id}')">Generate Production</button>` : ""}
+              ${can("installation:generate") ? `<button class="btn" onclick="generateInstallationSheet('${order.id}')">Generate Installation</button>` : ""}
+              ${can("records:delete") ? `<button class="btn danger" onclick="deleteOrder('${order.id}')">Delete Order</button>` : ""}
             </div>
           </div>
         `;
@@ -6159,8 +6229,8 @@
                 <div class="history-actions">
                   ${appointment.googleEventLink ? `<button class="btn" onclick="window.open('${appointment.googleEventLink}', '_blank')">Open Calendar</button>` : `<button class="btn" onclick="window.open('${googleCalendarUrl(appointment)}', '_blank')">Add Calendar</button>`}
                   <button class="btn" onclick="editAppointment('${appointment.id}')">Edit</button>
-                  <button class="btn" onclick="syncAppointmentToGoogle('${appointment.id}', '${appointment.status === "cancelled" ? "delete" : "upsert"}')">${appointment.googleStatus === "Failed" ? "Retry Sync" : "Sync"}</button>
-                  <button class="btn danger" onclick="deleteAppointment('${appointment.id}')">Cancel Appointment</button>
+                  ${can("appointment:sync") ? `<button class="btn" onclick="syncAppointmentToGoogle('${appointment.id}', '${appointment.status === "cancelled" ? "delete" : "upsert"}')">${appointment.googleStatus === "Failed" ? "Retry Sync" : "Sync"}</button>` : ""}
+                  ${can("appointment:cancel") ? `<button class="btn danger" onclick="deleteAppointment('${appointment.id}')">Cancel Appointment</button>` : ""}
                 </div>
               </div>
             `).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No appointments yet.</p>`}
@@ -6228,6 +6298,7 @@
         })).sort((a, b) => b.spend - a.spend);
       }
       function saveFacebookAd() {
+        if (!requirePermission("facebook:manage")) return;
         const row = {
           id: uid(),
           date: document.getElementById("adDate").value || today(),
@@ -6249,6 +6320,7 @@
         render();
       }
       function deleteFacebookAd(id) {
+        if (!requirePermission("facebook:manage")) return;
         facebookAds = facebookAds.filter((row) => row.id !== id);
         localStorage.setItem(facebookAdsKey, JSON.stringify(facebookAds));
         render();
@@ -6350,6 +6422,7 @@
         `;
       }
       function renderProductions() {
+        const productionCanEdit = can("production:update");
         const productionCard = (production) => `
           <div class="ops-card">
             <div class="ops-head">
@@ -6358,13 +6431,13 @@
                 <p style="color:var(--muted);margin-top:5px">${production.customer.name || "Unnamed Customer"} - ${production.customer.phone || "-"} - ${production.customer.address || "-"}</p>
                 <p style="color:var(--muted);margin-top:5px">Created: ${String(production.createdAt || "").slice(0, 10) || "-"} ${production.startedAt ? ` | Started: ${String(production.startedAt).slice(0, 10)}` : ""} ${production.completedAt ? ` | Completed: ${String(production.completedAt).slice(0, 10)}` : ""}</p>
                 ${productionAlertText(production) ? `<p style="color:#991b1b;font-weight:900;margin-top:5px">${productionAlertText(production)}</p>` : ""}
-                <div class="field" style="margin-top:10px;max-width:320px"><label>Area</label><input value="${production.customer.area || ""}" onchange="updateProductionArea('${production.id}',this.value)" /></div>
+                <div class="field" style="margin-top:10px;max-width:320px"><label>Area</label><input value="${production.customer.area || ""}" onchange="updateProductionArea('${production.id}',this.value)" ${productionCanEdit ? "" : "readonly"} /></div>
               </div>
-              <select style="max-width:220px" onchange="updateProductionStatus('${production.id}',this.value)">
+              <select style="max-width:220px" onchange="updateProductionStatus('${production.id}',this.value)" ${productionCanEdit ? "" : "disabled"}>
                 ${productionStatuses.map(([value, label]) => `<option value="${value}" ${production.status === value ? "selected" : ""}>${label}</option>`).join("")}
               </select>
             </div>
-            <div class="field" style="margin-bottom:12px"><label>Not Ready Reason / Delay Reason</label><textarea rows="2" placeholder="Example: waiting material, colour not confirmed, customer measurement pending" onchange="updateProductionField('${production.id}','delayReason',this.value)">${production.delayReason || ""}</textarea></div>
+            <div class="field" style="margin-bottom:12px"><label>Not Ready Reason / Delay Reason</label><textarea rows="2" placeholder="Example: waiting material, colour not confirmed, customer measurement pending" onchange="updateProductionField('${production.id}','delayReason',this.value)" ${productionCanEdit ? "" : "readonly"}>${production.delayReason || ""}</textarea></div>
             ${production.stockMovements && production.stockMovements.length ? `
               <div class="order-items">
                 <strong>Stock Deduction Tracking</strong>
@@ -6375,17 +6448,17 @@
             ${(production.items || []).map((item) => `
               <div class="ops-line-grid">
                 <div class="field"><label>Product</label><input value="${productDisplayName(item.productId)}" readonly /></div>
-                <div class="field"><label>Location</label><input value="${item.label || ""}" onchange="updateProductionItem('${production.id}','${item.id}','label',this.value)" /></div>
+                <div class="field"><label>Location</label><input value="${item.label || ""}" onchange="updateProductionItem('${production.id}','${item.id}','label',this.value)" ${productionCanEdit ? "" : "readonly"} /></div>
                 <div class="field"><label>Width mm</label><input value="${item.widthMm || 0}" readonly /></div>
                 <div class="field"><label>Height mm</label><input value="${item.heightMm || 0}" readonly /></div>
                 <div class="field"><label>Qty</label><input value="${item.quantity || 0}" readonly /></div>
-                <div class="field"><label>Track Type</label><input value="${item.trackType || ""}" onchange="updateProductionItem('${production.id}','${item.id}','trackType',this.value)" /></div>
-                <div class="field"><label>Track Width mm</label><input value="${item.trackWidthMm || 0}" onchange="updateProductionItem('${production.id}','${item.id}','trackWidthMm',this.value)" /></div>
-                <div class="field"><label>Handle Height mm</label><input value="${item.handleHeightMm || item.trackHeightMm || 0}" onchange="updateProductionItem('${production.id}','${item.id}','handleHeightMm',this.value)" /></div>
-                <div class="field"><label>Installation Type</label><input value="${item.installationType || ""}" onchange="updateProductionItem('${production.id}','${item.id}','installationType',this.value)" /></div>
-                <div class="field"><label>Opening Direction</label><input value="${item.openingDirection || ""}" onchange="updateProductionItem('${production.id}','${item.id}','openingDirection',this.value)" /></div>
-                <div class="field"><label>Colour</label><input value="${item.color || ""}" onchange="updateProductionItem('${production.id}','${item.id}','color',this.value)" /></div>
-                <div class="field"><label>Remark</label><input value="${item.remark || ""}" onchange="updateProductionItem('${production.id}','${item.id}','remark',this.value)" /></div>
+                <div class="field"><label>Track Type</label><input value="${item.trackType || ""}" onchange="updateProductionItem('${production.id}','${item.id}','trackType',this.value)" ${productionCanEdit ? "" : "readonly"} /></div>
+                <div class="field"><label>Track Width mm</label><input value="${item.trackWidthMm || 0}" onchange="updateProductionItem('${production.id}','${item.id}','trackWidthMm',this.value)" ${productionCanEdit ? "" : "readonly"} /></div>
+                <div class="field"><label>Handle Height mm</label><input value="${item.handleHeightMm || item.trackHeightMm || 0}" onchange="updateProductionItem('${production.id}','${item.id}','handleHeightMm',this.value)" ${productionCanEdit ? "" : "readonly"} /></div>
+                <div class="field"><label>Installation Type</label><input value="${item.installationType || ""}" onchange="updateProductionItem('${production.id}','${item.id}','installationType',this.value)" ${productionCanEdit ? "" : "readonly"} /></div>
+                <div class="field"><label>Opening Direction</label><input value="${item.openingDirection || ""}" onchange="updateProductionItem('${production.id}','${item.id}','openingDirection',this.value)" ${productionCanEdit ? "" : "readonly"} /></div>
+                <div class="field"><label>Colour</label><input value="${item.color || ""}" onchange="updateProductionItem('${production.id}','${item.id}','color',this.value)" ${productionCanEdit ? "" : "readonly"} /></div>
+                <div class="field"><label>Remark</label><input value="${item.remark || ""}" onchange="updateProductionItem('${production.id}','${item.id}','remark',this.value)" ${productionCanEdit ? "" : "readonly"} /></div>
               </div>
             `).join("")}
           </div>
@@ -6419,6 +6492,7 @@
         }).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No production sheets found for this view.</p>`);
       }
       function renderProductionStatus() {
+        const productionCanEdit = can("production:update");
         const groups = [
           ["pending-production", "Not Yet Produced"],
           ["in-production", "In Production"],
@@ -6437,7 +6511,7 @@
                     ${productionAlertText(production) ? `<p style="color:#991b1b;font-weight:900;margin-top:5px">${productionAlertText(production)}</p>` : ""}
                     ${production.delayReason ? `<p style="color:var(--muted);margin-top:5px"><strong>Reason:</strong> ${production.delayReason}</p>` : ""}
                   </div>
-                  <select onchange="updateProductionStatus('${production.id}',this.value)">
+                  <select onchange="updateProductionStatus('${production.id}',this.value)" ${productionCanEdit ? "" : "disabled"}>
                     ${productionStatuses.map(([value, label]) => `<option value="${value}" ${production.status === value ? "selected" : ""}>${label}</option>`).join("")}
                   </select>
                 </div>

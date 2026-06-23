@@ -15,6 +15,10 @@ create table if not exists public.appointments (
   google_event_id text,
   google_event_link text,
   google_status text,
+  google_sync_error text,
+  google_last_synced_at timestamptz,
+  status text not null default 'scheduled',
+  cancelled_at timestamptz,
   reminder_sent_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -32,6 +36,10 @@ add column if not exists remarks text,
 add column if not exists google_event_id text,
 add column if not exists google_event_link text,
 add column if not exists google_status text,
+add column if not exists google_sync_error text,
+add column if not exists google_last_synced_at timestamptz,
+add column if not exists status text not null default 'scheduled',
+add column if not exists cancelled_at timestamptz,
 add column if not exists reminder_sent_at timestamptz,
 add column if not exists created_at timestamptz not null default now(),
 add column if not exists updated_at timestamptz not null default now();
@@ -41,6 +49,12 @@ on public.appointments(appointment_date, assigned_staff);
 
 create index if not exists appointments_google_event_id_idx
 on public.appointments(google_event_id);
+
+create index if not exists appointments_status_idx
+on public.appointments(status);
+
+create index if not exists appointments_google_status_idx
+on public.appointments(google_status);
 
 alter table public.appointments enable row level security;
 

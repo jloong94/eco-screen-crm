@@ -711,12 +711,12 @@
           <div id="pendingBalances"></div>
         </section>
 
-        <section class="panel history no-print" data-page="production" data-roles="admin production">
+        <section class="panel history no-print" data-page="production" data-roles="admin production secretary">
           <div class="panel-head"><h2>Production Sheets</h2></div>
           <div id="productions"></div>
         </section>
 
-        <section class="panel history no-print" data-page="production-status" data-roles="admin production">
+        <section class="panel history no-print" data-page="production-status" data-roles="admin production secretary">
           <div class="panel-head"><h2>Production Status</h2></div>
           <div id="productionStatus"></div>
         </section>
@@ -762,12 +762,12 @@
           <div id="appointments"></div>
         </section>
 
-        <section class="panel history no-print" data-page="facebook-ads" data-roles="admin sales secretary">
+        <section class="panel history no-print" data-page="facebook-ads" data-roles="admin">
           <div class="panel-head"><h2>Facebook Ads Dashboard</h2></div>
           <div id="facebookAds"></div>
         </section>
 
-        <section class="panel history no-print" data-page="financial" data-roles="admin secretary">
+        <section class="panel history no-print" data-page="financial" data-roles="admin">
           <div class="panel-head"><h2>Financial Dashboard</h2></div>
           <div id="financialDashboard"></div>
         </section>
@@ -804,6 +804,7 @@
       const completionRecordsKey = "eco-screen-completion-records";
       const warrantiesKey = "eco-screen-warranties";
       const inventoryKey = "eco-screen-inventory";
+      const productMaterialMappingsKey = "eco-screen-product-material-mappings";
       const facebookAdsKey = "eco-screen-facebook-ads";
       const appointmentsKey = "eco-screen-appointments";
       const exchangeRateKey = "eco-screen-rmb-myr-rate";
@@ -899,7 +900,6 @@
           ["appointment", "Appointment"],
           ["follow-up", "Follow Up"],
           ["order", "Order"],
-          ["facebook-ads", "Facebook Ads"],
           ["warranty", "Warranty"]
         ],
         secretary: [
@@ -908,10 +908,10 @@
           ["appointment", "Appointment"],
           ["follow-up", "Follow Up"],
           ["order", "Order"],
+          ["production", "Pending Production"],
+          ["production-status", "Production Status"],
           ["installation", "Installation"],
           ["pending-balance", "Pending Balance"],
-          ["financial", "Financial Dashboard"],
-          ["facebook-ads", "Facebook Ads"],
           ["warranty", "Warranty"]
         ],
         production: [
@@ -926,6 +926,41 @@
           ["warranty", "Warranty"]
         ]
       };
+      const PERMISSIONS = {
+        admin: ["*"],
+        sales: [
+          "quote:save", "quote:convert", "quote:edit",
+          "customer:edit", "appointment:save", "appointment:sync", "appointment:cancel",
+          "followup:edit", "order:view", "warranty:view",
+          "production:generate", "installation:generate"
+        ],
+        secretary: [
+          "quote:save", "quote:convert", "quote:edit",
+          "customer:edit", "appointment:save", "appointment:sync", "appointment:cancel",
+          "followup:edit", "order:view", "pending:view", "warranty:view",
+          "production:view", "production:generate",
+          "installation:view", "installation:schedule", "installation:update", "installation:generate",
+          "payment:record"
+        ],
+        production: ["production:view", "production:update"],
+        installer: [
+          "installation:view", "installation:update", "installation:collection",
+          "signature:update", "completion:generate", "review:update", "warranty:view",
+          "payment:record"
+        ]
+      };
+      function can(action) {
+        const allowed = PERMISSIONS[currentRole] || [];
+        return allowed.includes("*") || allowed.includes(action);
+      }
+      function normalizeRoleName(role) {
+        return role === "boss" ? "admin" : role;
+      }
+      function requirePermission(action) {
+        if (can(action)) return true;
+        toast("Permission denied: your role cannot perform this action.");
+        return false;
+      }
       const checklistLabels = [
         ["arrived", "Arrived On Site"],
         ["installed", "Installation Completed"],
@@ -945,6 +980,11 @@
         ["warrantyInformationReceived", "Customer Received Warranty Information"]
       ];
       const installationPaymentMethods = ["Cash", "Bank Transfer", "DuitNow QR"];
+      const inventoryItemTypes = ["aluminium", "mesh", "hardware", "accessory", "consumable"];
+      const stockUnits = ["pcs", "length", "m", "roll", "set", "pack"];
+      const materialRoles = ["frame", "mesh", "track", "lock", "handle", "wheel", "screw", "accessory"];
+      const mappingFormulaTypes = ["fixed", "per_qty", "perimeter", "area", "track_count"];
+      const mappingDeductUnits = ["pcs", "length", "m", "sqm", "set", "pack"];
       const defaultProducts = [
         { id: "roller", name: "Roller", category: "Roller", price: 33, minimumSqft: 11, active: true },
         { id: "removeable-screen", name: "Removeable Screen", category: "Window", price: 36, minimumSqft: 11, active: true },
@@ -977,16 +1017,20 @@
       let siteUrl = localStorage.getItem(siteUrlKey) || "";
       let calendarView = localStorage.getItem(calendarViewKey) || "week";
       let inventory = normalizeInventory(safeJsonParse(localStorage.getItem(inventoryKey), []));
+      let productMaterialMappings = normalizeProductMaterialMappings(safeJsonParse(localStorage.getItem(productMaterialMappingsKey), []));
       let facebookAds = safeArray(safeJsonParse(localStorage.getItem(facebookAdsKey), []));
       let appointments = normalizeAppointments(safeJsonParse(localStorage.getItem(appointmentsKey), []));
       let customerCrm = safeObject(safeJsonParse(localStorage.getItem(customerCrmKey), {}));
       let staffProfiles = [];
-      let currentRole = localStorage.getItem(roleKey) || "admin";
+      let currentRole = normalizeRoleName(localStorage.getItem(roleKey) || "admin");
       let currentLanguage = localStorage.getItem(languageKey) || "en";
       if (!roleMenus[currentRole]) currentRole = "admin";
       let currentPage = roleMenus[currentRole][0][0];
       let dashboardFilter = null;
       let productStatusFilter = "active";
+      let mappingPreviewProductId = defaultProductId();
+      let mappingPreviewItemId = "";
+      let mappingBulkRowCount = 5;
       let editingId = null;
       let quoteNo = makeQuoteNo();
       let inputRenderTimer = null;
@@ -1000,6 +1044,7 @@
         completionRecordsKey,
         warrantiesKey,
         inventoryKey,
+        productMaterialMappingsKey,
         facebookAdsKey,
         appointmentsKey,
         customerCrmKey,
@@ -1163,6 +1208,48 @@
         "Stock Value": "库存价值",
         "Price Settings": "价格设置",
         "Product Management": "产品管理",
+        "Product Material Mapping": "产品材料对应规则",
+        "Mapping Preview": "对应规则预览",
+        "Mapping Rules": "对应规则列表",
+        "Add Mapping": "新增对应规则",
+        "Add Multiple Mapping Rows": "批量新增对应规则",
+        "Save All": "全部保存",
+        "Add Row": "新增一行",
+        "Target Product": "目标产品",
+        "Skip this row": "跳过这一行",
+        "Copy Mapping From Product": "从产品复制对应规则",
+        "Copy From": "复制来源",
+        "Copy To": "复制到",
+        "Copy Mapping": "复制对应规则",
+        "Append Only": "只新增不覆盖",
+        "Mapping Template": "对应规则模板",
+        "Template": "模板",
+        "Sliding Screen Template": "推拉纱窗模板",
+        "Roller Screen Template": "卷纱模板",
+        "Security Mesh Template": "防盗网模板",
+        "Apply Template": "套用模板",
+        "Editable After Apply": "套用后可编辑",
+        "Duplicate Row": "复制这一行",
+        "Inventory Item": "库存项目",
+        "Material Role": "材料角色",
+        "Formula Type": "公式类型",
+        "Base Qty": "基础数量",
+        "Wastage %": "损耗 %",
+        "Deduct Unit": "扣料单位",
+        "Preview Product": "预览产品",
+        "Preview Quotation / Order Item": "预览报价 / 订单项目",
+        "No Stock Deduction": "不会扣库存",
+        "Missing mapping for this product. Add mapping rules before Phase 3C stock deduction.": "这个产品还没有对应规则。Phase 3C 扣库存前请先新增规则。",
+        "Item Type": "项目类型",
+        "Stock Unit": "库存单位",
+        "Purchase Unit": "采购单位",
+        "Pcs Per Bundle": "每扎支数",
+        "Length mm Per Piece": "每支长度 mm",
+        "Meter Per Roll": "每卷米数",
+        "Cost Per Stock Unit": "每库存单位成本",
+        "Exclude Auto Deduct": "排除自动扣料",
+        "No": "否",
+        "Yes": "是",
         "Product Name": "产品名称",
         "Category": "分类",
         "Unit Price": "单价",
@@ -1240,6 +1327,18 @@
         "Appointment Records": "预约记录",
         "No appointment": "没有预约",
         "No appointments yet.": "还没有预约。",
+        "Status": "状态",
+        "Scheduled": "已预约",
+        "Cancelled": "已取消",
+        "Google Status": "Google 状态",
+        "Pending": "同步中",
+        "Synced": "已同步",
+        "Failed": "同步失败",
+        "Last Synced": "最后同步",
+        "Cancelled At": "取消时间",
+        "Sync Error": "同步错误",
+        "Retry Sync": "重试同步",
+        "Cancel Appointment": "取消预约",
         "Google Event ID": "Google 事件 ID",
         "Warranty Period": "保固期",
         "Coverage": "保固年限",
@@ -1699,7 +1798,11 @@
           remarks: appointment.remarks || "",
           googleEventId: appointment.googleEventId || "",
           googleEventLink: appointment.googleEventLink || "",
-          googleStatus: appointment.googleStatus || "Not Synced",
+          googleStatus: appointment.googleStatus || "Pending",
+          googleSyncError: appointment.googleSyncError || "",
+          googleLastSyncedAt: appointment.googleLastSyncedAt || "",
+          status: appointment.status || "scheduled",
+          cancelledAt: appointment.cancelledAt || "",
           reminderSentAt: appointment.reminderSentAt || "",
           updatedAt: appointment.updatedAt || appointment.createdAt || new Date().toISOString(),
           createdAt: appointment.createdAt || new Date().toISOString()
@@ -2647,15 +2750,41 @@
           const sameName = saved.filter((savedItem) => savedItem.name === item.name);
           const existing = sameCategory || (sameName.length === 1 ? sameName[0] : {});
           const rmbUnitCost = Number(existing.rmbUnitCost ?? existing.unitCost ?? item.rmbUnitCost ?? 0);
+          const unitText = String(existing.unit || item.unit || "").toLowerCase();
+          const stockUnit = existing.stockUnit || (unitText.includes("米") || unitText.includes("meter") ? "m" : unitText.includes("卷") ? "roll" : unitText.includes("套") ? "set" : "pcs");
           return {
             ...item,
             quantity: Number(existing.quantity ?? item.quantity),
             safetyQuantity: Number(existing.safetyQuantity ?? item.safetyQuantity),
             usagePerItem: Number(existing.usagePerItem ?? item.usagePerItem),
             rmbUnitCost,
-            unitCost: Number((rmbUnitCost * rmbToMyrRate).toFixed(2))
+            unitCost: Number((rmbUnitCost * rmbToMyrRate).toFixed(2)),
+            itemType: existing.itemType || existing.item_type || (isHardwareStock(existing.name ? existing : item) ? "hardware" : unitText.includes("网") || String(item.name || "").includes("网") ? "mesh" : "aluminium"),
+            stockUnit,
+            purchaseUnit: existing.purchaseUnit || existing.purchase_unit || item.unit || "",
+            pcsPerBundle: Number(existing.pcsPerBundle ?? existing.pcs_per_bundle ?? 0),
+            lengthMmPerPiece: Number(existing.lengthMmPerPiece ?? existing.length_mm_per_piece ?? 0),
+            meterPerRoll: Number(existing.meterPerRoll ?? existing.meter_per_roll ?? 0),
+            costPerStockUnit: Number(existing.costPerStockUnit ?? existing.cost_per_stock_unit ?? ((rmbUnitCost * rmbToMyrRate) || 0)),
+            excludeFromAutoDeduct: Boolean(existing.excludeFromAutoDeduct ?? existing.exclude_from_auto_deduct ?? false),
+            active: existing.active === undefined ? true : Boolean(existing.active)
           };
         });
+      }
+      function normalizeProductMaterialMappings(rawMappings) {
+        return safeArray(rawMappings).map((mapping) => ({
+          id: mapping.id || `mapping-${uid()}`,
+          productId: mapping.productId || mapping.product_id || defaultProductId(),
+          inventoryItemId: mapping.inventoryItemId || mapping.inventory_item_id || "",
+          materialRole: mapping.materialRole || mapping.material_role || "frame",
+          formulaType: mapping.formulaType || mapping.formula_type || "per_qty",
+          baseQty: Number(mapping.baseQty ?? mapping.base_qty ?? 1),
+          wastagePercent: Number(mapping.wastagePercent ?? mapping.wastage_percent ?? 0),
+          deductUnit: mapping.deductUnit || mapping.deduct_unit || "pcs",
+          active: mapping.active === undefined ? true : Boolean(mapping.active),
+          createdAt: mapping.createdAt || mapping.created_at || new Date().toISOString(),
+          updatedAt: mapping.updatedAt || mapping.updated_at || new Date().toISOString()
+        }));
       }
       function makeOrderNo() {
         const year = new Date().getFullYear();
@@ -3148,6 +3277,7 @@
         setTimeout(() => el.classList.remove("show"), 2200);
       }
       function setRole(role) {
+        role = normalizeRoleName(role);
         if (cloudState.session && cloudState.role && cloudState.role !== "admin" && role !== cloudState.role) {
           toast("This login does not have permission for that role.");
           return;
@@ -3215,7 +3345,7 @@
           const visible = rolesAllowed.includes(currentRole) && page === currentPage;
           section.classList.toggle("page-hidden", !visible);
         });
-        const actionVisible = (currentRole === "admin" || currentRole === "sales" || currentRole === "secretary") && currentPage === "quotation";
+        const actionVisible = can("quote:save") && currentPage === "quotation";
         document.querySelector(".bottom-actions").classList.toggle("page-hidden", !actionVisible);
         document.querySelector(".topbar .actions").classList.toggle("page-hidden", !actionVisible);
       }
@@ -3355,7 +3485,7 @@
         }
       }
       async function createStaffAccount() {
-        if (currentRole !== "admin" || cloudState.role !== "admin") return toast("Admin only.");
+        if (!requirePermission("staff:manage") || cloudState.role !== "admin") return;
         const email = document.getElementById("staffEmail").value.trim();
         const password = document.getElementById("staffPassword").value;
         const role = document.getElementById("staffRole").value;
@@ -3385,7 +3515,7 @@
         }
       }
       async function updateStaffProfile(id, field, value) {
-        if (currentRole !== "admin" || cloudState.role !== "admin") return toast("Admin only.");
+        if (!requirePermission("staff:manage") || cloudState.role !== "admin") return;
         const body = { [field]: field === "active" ? value === true || value === "true" : value, updated_at: new Date().toISOString() };
         try {
           await supabaseFetch(`/rest/v1/eco_screen_profiles?id=eq.${id}`, {
@@ -3454,7 +3584,7 @@
         try {
           const rows = await supabaseFetch(`/rest/v1/eco_screen_profiles?id=eq.${cloudState.session.user.id}&select=id,email,role,active`);
           const profile = rows && rows[0] || {};
-          cloudState.role = profile.role || "sales";
+          cloudState.role = normalizeRoleName(profile.role || "sales");
           cloudState.email = profile.email || cloudState.session.user.email || "";
           cloudState.active = profile.active !== false;
           if (!cloudState.active) {
@@ -3473,7 +3603,7 @@
           try {
             const rows = await supabaseFetch(`/rest/v1/eco_screen_profiles?id=eq.${cloudState.session.user.id}&select=id,email,role`);
             const profile = rows && rows[0] || {};
-            cloudState.role = profile.role || "sales";
+            cloudState.role = normalizeRoleName(profile.role || "sales");
             cloudState.email = profile.email || cloudState.session.user.email || "";
             cloudState.active = true;
           } catch (fallbackError) {
@@ -3700,6 +3830,28 @@
           usage_per_item: Number(item.usagePerItem || 0),
           rmb_unit_cost: Number(item.rmbUnitCost || 0),
           unit_cost: Number(item.unitCost || 0),
+          item_type: item.itemType || "",
+          stock_unit: item.stockUnit || "",
+          purchase_unit: item.purchaseUnit || item.unit || "",
+          pcs_per_bundle: Number(item.pcsPerBundle || 0),
+          length_mm_per_piece: Number(item.lengthMmPerPiece || 0),
+          meter_per_roll: Number(item.meterPerRoll || 0),
+          cost_per_stock_unit: Number(item.costPerStockUnit || item.unitCost || 0),
+          exclude_from_auto_deduct: Boolean(item.excludeFromAutoDeduct),
+          active: item.active === undefined ? true : Boolean(item.active),
+          updated_at: new Date().toISOString()
+        }));
+        const mappingRows = (safeArray(data[productMaterialMappingsKey]).length ? safeArray(data[productMaterialMappingsKey]) : productMaterialMappings).map((mapping) => ({
+          id: mapping.id,
+          product_id: mapping.productId,
+          inventory_item_id: mapping.inventoryItemId,
+          material_role: mapping.materialRole || "frame",
+          formula_type: mapping.formulaType || "per_qty",
+          base_qty: Number(mapping.baseQty || 0),
+          wastage_percent: Number(mapping.wastagePercent || 0),
+          deduct_unit: mapping.deductUnit || "pcs",
+          active: mapping.active === undefined ? true : Boolean(mapping.active),
+          created_at: mapping.createdAt || new Date().toISOString(),
           updated_at: new Date().toISOString()
         }));
         const staffMap = {};
@@ -3733,11 +3885,15 @@
           google_event_id: appointment.googleEventId || "",
           google_event_link: appointment.googleEventLink || "",
           google_status: appointment.googleStatus || "",
+          google_sync_error: appointment.googleSyncError || null,
+          google_last_synced_at: appointment.googleLastSyncedAt || null,
+          status: appointment.status || "scheduled",
+          cancelled_at: appointment.cancelledAt || null,
           reminder_sent_at: appointment.reminderSentAt || null,
           created_at: appointment.createdAt || new Date().toISOString(),
           updated_at: appointment.updatedAt || appointment.createdAt || new Date().toISOString()
         }));
-        return { customers: uniqueCustomersFrom(data), products: productRows, quotations: quoteRows, quotation_items: itemRows, orders: orderRows, production_orders: productionRows, installations: installationRows, collections: collectionRows, appointments: appointmentRows, inventory_items: inventoryRows, staff: staffRows, app_settings: settingsRows };
+        return { customers: uniqueCustomersFrom(data), products: productRows, quotations: quoteRows, quotation_items: itemRows, orders: orderRows, production_orders: productionRows, installations: installationRows, collections: collectionRows, appointments: appointmentRows, inventory_items: inventoryRows, product_material_mappings: mappingRows, staff: staffRows, app_settings: settingsRows };
       }
       async function upsertRows(table, rows) {
         if (!rows.length) return;
@@ -3772,6 +3928,7 @@
           collectionRows,
           appointmentRows,
           inventoryRows,
+          mappingRows,
           settingsRows
         ] = await Promise.all([
           fetchTable("customers", "select=*"),
@@ -3784,9 +3941,10 @@
           fetchTable("collections", "select=*&order=created_at.desc"),
           fetchTable("appointments", "select=*&order=appointment_date.asc,appointment_time.asc"),
           fetchTable("inventory_items", "select=*&order=category.asc,name.asc"),
+          fetchTable("product_material_mappings", "select=*&order=created_at.desc"),
           fetchTable("app_settings", "select=*")
         ]);
-        const hasBusinessData = [quoteRows, orderRows, productionRows, installationRows, collectionRows, appointmentRows, inventoryRows, productRows].some((rows) => rows && rows.length);
+        const hasBusinessData = [quoteRows, orderRows, productionRows, installationRows, collectionRows, appointmentRows, inventoryRows, productRows, mappingRows].some((rows) => rows && rows.length);
         if (!hasBusinessData) return false;
         const customersById = rowsById(customerRows);
         const itemsByQuote = {};
@@ -3809,6 +3967,7 @@
           createdAt: item.created_at || new Date().toISOString(),
           updatedAt: item.updated_at || new Date().toISOString()
         }))) : products;
+        const productMap = new Map(loadedProducts.map((item) => [item.id, item]));
         const loadedQuotes = (quoteRows || []).map((quote) => {
           const customer = customersById[quote.customer_id] || {};
           return {
@@ -3942,6 +4101,10 @@
           googleEventId: row.google_event_id || "",
           googleEventLink: row.google_event_link || "",
           googleStatus: row.google_status || "Not Synced",
+          googleSyncError: row.google_sync_error || "",
+          googleLastSyncedAt: row.google_last_synced_at || "",
+          status: row.status || "scheduled",
+          cancelledAt: row.cancelled_at || "",
           reminderSentAt: row.reminder_sent_at || "",
           createdAt: row.created_at,
           updatedAt: row.updated_at
@@ -3955,8 +4118,18 @@
           safetyQuantity: Number(row.safety_quantity || 0),
           usagePerItem: Number(row.usage_per_item || 0),
           rmbUnitCost: Number(row.rmb_unit_cost || 0),
-          unitCost: Number(row.unit_cost || 0)
+          unitCost: Number(row.unit_cost || 0),
+          itemType: row.item_type || "",
+          stockUnit: row.stock_unit || "",
+          purchaseUnit: row.purchase_unit || "",
+          pcsPerBundle: Number(row.pcs_per_bundle || 0),
+          lengthMmPerPiece: Number(row.length_mm_per_piece || 0),
+          meterPerRoll: Number(row.meter_per_roll || 0),
+          costPerStockUnit: Number(row.cost_per_stock_unit || 0),
+          excludeFromAutoDeduct: Boolean(row.exclude_from_auto_deduct),
+          active: row.active === undefined ? true : Boolean(row.active)
         }))) : inventory;
+        const loadedMappings = mappingRows && mappingRows.length ? normalizeProductMaterialMappings(mappingRows) : productMaterialMappings;
         const settingsById = rowsById(settingsRows);
         cloudState.applying = true;
         nativeSetItem(productsKey, JSON.stringify(loadedProducts));
@@ -3966,11 +4139,20 @@
         nativeSetItem(installationsKey, JSON.stringify(loadedInstallations));
         nativeSetItem(appointmentsKey, JSON.stringify(loadedAppointments));
         nativeSetItem(inventoryKey, JSON.stringify(loadedInventory));
+        nativeSetItem(productMaterialMappingsKey, JSON.stringify(loadedMappings));
         if (settingsById.google_review && settingsById.google_review.value && settingsById.google_review.value.url) nativeSetItem(googleReviewLinkKey, settingsById.google_review.value.url);
         if (settingsById.google_calendar && settingsById.google_calendar.value && settingsById.google_calendar.value.webhookUrl) nativeSetItem(googleCalendarWebhookKey, settingsById.google_calendar.value.webhookUrl);
         if (settingsById.site && settingsById.site.value && settingsById.site.value.url) nativeSetItem(siteUrlKey, settingsById.site.value.url);
         if (settingsById.currency && settingsById.currency.value && settingsById.currency.value.rmbToMyrRate) nativeSetItem(exchangeRateKey, settingsById.currency.value.rmbToMyrRate);
         cloudState.applying = false;
+        products = loadedProducts;
+        quotes = normalizeQuotes(loadedQuotes);
+        orders = normalizeOrders(loadedOrders);
+        productions = normalizeProductions(loadedProductions);
+        installations = normalizeInstallations(loadedInstallations);
+        appointments = normalizeAppointments(loadedAppointments);
+        inventory = loadedInventory;
+        productMaterialMappings = loadedMappings;
         cloudState.source = "Supabase business tables";
         return true;
       }
@@ -3990,6 +4172,7 @@
         await upsertRows("collections", rows.collections);
         await upsertRows("appointments", rows.appointments);
         await upsertRows("inventory_items", rows.inventory_items);
+        await upsertRows("product_material_mappings", rows.product_material_mappings);
         await upsertRows("staff", rows.staff);
         await upsertRows("app_settings", rows.app_settings);
       }
@@ -4095,6 +4278,7 @@
         scheduleInputRender();
       }
       function updateProduct(id, field, value) {
+        if (!requirePermission("product:manage")) return;
         products = products.map((item) => {
           if (item.id !== id) return item;
           const nextValue = field === "price" || field === "minimumSqft" ? Number(value || 0) : field === "active" ? value === true || value === "true" : value;
@@ -4109,6 +4293,7 @@
         applyLanguageToDom();
       }
       function addProduct() {
+        if (!requirePermission("product:manage")) return;
         const name = document.getElementById("newProductName").value.trim();
         const category = document.getElementById("newProductCategory").value.trim();
         const price = Number(document.getElementById("newProductPrice").value || 0);
@@ -4155,6 +4340,7 @@
         });
       }
       function saveQuote() {
+        if (!requirePermission("quote:save")) return;
         if (!validateSlidingItems(items)) return;
         const nextQuoteNo = readQuoteNoOrWarn();
         if (!nextQuoteNo) return;
@@ -4206,6 +4392,7 @@
         };
       }
       function convertCurrentQuoteToOrder() {
+        if (!requirePermission("quote:convert")) return;
         const currentStatus = document.getElementById("status").value;
         if (currentStatus !== "won") {
           toast("Change status to Won before converting.");
@@ -4245,6 +4432,7 @@
         render();
       }
       function generateProductionSheet(orderId) {
+        if (!requirePermission("production:generate")) return;
         const order = orders.find((item) => item.id === orderId);
         if (!order) return;
         if (productions.some((item) => item.orderNo === order.orderNo)) {
@@ -4305,6 +4493,7 @@
         render();
       }
       function updateOrderCost(orderId, field, value) {
+        if (!requirePermission("cost:manage")) return;
         orders = orders.map((order) => order.id === orderId ? {
           ...order,
           costs: {
@@ -4331,6 +4520,7 @@
         await copyText(text);
       }
       function generateInstallationSheet(orderId) {
+        if (!requirePermission("installation:generate")) return;
         const order = orders.find((item) => item.id === orderId);
         if (!order) return;
         if (installations.some((item) => item.orderNo === order.orderNo)) {
@@ -4461,6 +4651,7 @@
         return movements;
       }
       function updateProductionStatus(id, value) {
+        if (!requirePermission("production:update")) return;
         const production = productions.find((item) => item.id === id);
         let movements = null;
         if (production && value === "completed" && !production.inventoryDeducted) {
@@ -4479,20 +4670,264 @@
         render();
       }
       function updateProductionField(id, field, value) {
+        if (!requirePermission("production:update")) return;
         productions = productions.map((item) => item.id === id ? { ...item, [field]: value } : item);
         localStorage.setItem(productionsKey, JSON.stringify(productions));
       }
       function updateInventory(id, field, value) {
+        if (!requirePermission("inventory:manage")) return;
         inventory = inventory.map((item) => {
           if (item.id !== id) return item;
-          const next = { ...item, [field]: Number(value || 0) };
+          const numericFields = ["quantity", "safetyQuantity", "usagePerItem", "rmbUnitCost", "unitCost", "pcsPerBundle", "lengthMmPerPiece", "meterPerRoll", "costPerStockUnit"];
+          const booleanFields = ["excludeFromAutoDeduct", "active"];
+          const nextValue = numericFields.includes(field) ? Number(value || 0) : booleanFields.includes(field) ? (value === true || value === "true") : value;
+          const next = { ...item, [field]: nextValue };
           const rmbUnitCost = Number(next.rmbUnitCost || 0);
-          return { ...next, unitCost: Number((rmbUnitCost * rmbToMyrRate).toFixed(2)) };
+          const convertedUnitCost = Number((rmbUnitCost * rmbToMyrRate).toFixed(2));
+          return { ...next, unitCost: convertedUnitCost, costPerStockUnit: field === "costPerStockUnit" ? Number(value || 0) : Number(next.costPerStockUnit || convertedUnitCost) };
         });
         localStorage.setItem(inventoryKey, JSON.stringify(inventory));
         render();
       }
+      function mappingOption(options, selected) {
+        return options.map((option) => `<option value="${option}" ${option === selected ? "selected" : ""}>${option}</option>`).join("");
+      }
+      function inventoryName(id) {
+        const item = inventory.find((stock) => stock.id === id);
+        return item ? `${item.name} (${item.category || "General"})` : "-";
+      }
+      function updateMapping(id, field, value) {
+        if (!requirePermission("mapping:manage")) return;
+        productMaterialMappings = productMaterialMappings.map((mapping) => {
+          if (mapping.id !== id) return mapping;
+          const numericFields = ["baseQty", "wastagePercent"];
+          const nextValue = numericFields.includes(field) ? Number(value || 0) : field === "active" ? (value === true || value === "true") : value;
+          return { ...mapping, [field]: nextValue, updatedAt: new Date().toISOString() };
+        });
+        localStorage.setItem(productMaterialMappingsKey, JSON.stringify(productMaterialMappings));
+        render();
+      }
+      function addProductMaterialMapping() {
+        if (!requirePermission("mapping:manage")) return;
+        const productId = document.getElementById("mappingProductId").value;
+        const inventoryItemId = document.getElementById("mappingInventoryItemId").value;
+        if (!productId || !inventoryItemId) {
+          toast("Product and Inventory Item are required.");
+          return;
+        }
+        productMaterialMappings = [{
+          id: `mapping-${uid()}`,
+          productId,
+          inventoryItemId,
+          materialRole: document.getElementById("mappingMaterialRole").value || "frame",
+          formulaType: document.getElementById("mappingFormulaType").value || "per_qty",
+          baseQty: Number(document.getElementById("mappingBaseQty").value || 1),
+          wastagePercent: Number(document.getElementById("mappingWastagePercent").value || 0),
+          deductUnit: document.getElementById("mappingDeductUnit").value || "pcs",
+          active: document.getElementById("mappingActive").value === "true",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }, ...productMaterialMappings];
+        localStorage.setItem(productMaterialMappingsKey, JSON.stringify(productMaterialMappings));
+        toast("Mapping added.");
+        render();
+      }
+      function mappingFromInputs(prefix, productId) {
+        const inventoryItemId = document.getElementById(`${prefix}InventoryItemId`).value;
+        if (!productId || !inventoryItemId) return null;
+        return {
+          id: `mapping-${uid()}`,
+          productId,
+          inventoryItemId,
+          materialRole: document.getElementById(`${prefix}MaterialRole`).value || "frame",
+          formulaType: document.getElementById(`${prefix}FormulaType`).value || "per_qty",
+          baseQty: Number(document.getElementById(`${prefix}BaseQty`).value || 1),
+          wastagePercent: Number(document.getElementById(`${prefix}WastagePercent`).value || 0),
+          deductUnit: document.getElementById(`${prefix}DeductUnit`).value || "pcs",
+          active: document.getElementById(`${prefix}Active`).value === "true",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+      }
+      function addBulkMappingRow() {
+        mappingBulkRowCount += 1;
+        renderSettings();
+        applyLanguageToDom();
+      }
+      function saveAllMappingRows() {
+        if (!requirePermission("mapping:manage")) return;
+        const productId = document.getElementById("bulkMappingProductId").value;
+        const rows = [];
+        for (let index = 0; index < mappingBulkRowCount; index += 1) {
+          const row = mappingFromInputs(`bulkMapping${index}`, productId);
+          if (row) rows.push(row);
+        }
+        if (!rows.length) {
+          toast("Please select at least one inventory item.");
+          return;
+        }
+        productMaterialMappings = [...rows, ...productMaterialMappings];
+        localStorage.setItem(productMaterialMappingsKey, JSON.stringify(productMaterialMappings));
+        toast(`${rows.length} mapping rows saved.`);
+        render();
+      }
+      function duplicateMapping(id) {
+        if (!requirePermission("mapping:manage")) return;
+        const source = productMaterialMappings.find((mapping) => mapping.id === id);
+        if (!source) return;
+        productMaterialMappings = [{
+          ...source,
+          id: `mapping-${uid()}`,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }, ...productMaterialMappings];
+        localStorage.setItem(productMaterialMappingsKey, JSON.stringify(productMaterialMappings));
+        toast("Mapping duplicated.");
+        render();
+      }
+      function copyMappingFromProduct() {
+        if (!requirePermission("mapping:manage")) return;
+        const sourceProductId = document.getElementById("copyMappingSourceProductId").value;
+        const targetProductId = document.getElementById("copyMappingTargetProductId").value;
+        if (!sourceProductId || !targetProductId || sourceProductId === targetProductId) {
+          toast("Choose two different products.");
+          return;
+        }
+        const sourceRows = productMaterialMappings.filter((mapping) => mapping.productId === sourceProductId);
+        if (!sourceRows.length) {
+          toast("Source product has no mapping.");
+          return;
+        }
+        const targetRows = productMaterialMappings.filter((mapping) => mapping.productId === targetProductId);
+        if (targetRows.length && !confirm("Target product already has mapping. Copy will add new rows without deleting existing rows. Continue?")) return;
+        const copiedRows = sourceRows.map((mapping) => ({
+          ...mapping,
+          id: `mapping-${uid()}`,
+          productId: targetProductId,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }));
+        productMaterialMappings = [...copiedRows, ...productMaterialMappings];
+        localStorage.setItem(productMaterialMappingsKey, JSON.stringify(productMaterialMappings));
+        toast(`${copiedRows.length} mappings copied.`);
+        render();
+      }
+      function inventoryForTemplateRole(role) {
+        const activeInventory = inventory.filter((item) => item.active !== false);
+        const byType = activeInventory.find((item) => String(item.itemType || "").toLowerCase() === role);
+        if (byType) return byType.id;
+        const textMatch = activeInventory.find((item) => String(`${item.name} ${item.category}`).toLowerCase().includes(role));
+        return (textMatch || activeInventory[0] || {}).id || "";
+      }
+      function mappingTemplates() {
+        return {
+          sliding: [
+            ["frame", "perimeter", 1, "m"],
+            ["mesh", "area", 1, "sqm"],
+            ["track", "track_count", 1, "length"],
+            ["wheel", "per_qty", 2, "pcs"],
+            ["lock", "per_qty", 1, "set"],
+            ["screw", "per_qty", 8, "pcs"]
+          ],
+          roller: [
+            ["frame", "perimeter", 1, "m"],
+            ["mesh", "area", 1, "sqm"],
+            ["handle", "per_qty", 1, "pcs"],
+            ["accessory", "per_qty", 1, "set"]
+          ],
+          security: [
+            ["frame", "perimeter", 1, "m"],
+            ["mesh", "area", 1, "sqm"],
+            ["lock", "per_qty", 1, "set"],
+            ["screw", "per_qty", 10, "pcs"],
+            ["accessory", "per_qty", 1, "set"]
+          ]
+        };
+      }
+      function applyMappingTemplate() {
+        if (!requirePermission("mapping:manage")) return;
+        const productId = document.getElementById("templateProductId").value;
+        const templateId = document.getElementById("mappingTemplateId").value;
+        const templateRows = mappingTemplates()[templateId] || [];
+        if (!productId || !templateRows.length) {
+          toast("Choose product and template.");
+          return;
+        }
+        const existing = productMaterialMappings.filter((mapping) => mapping.productId === productId);
+        if (existing.length && !confirm("This product already has mapping. Template will add new rows without deleting existing rows. Continue?")) return;
+        const rows = templateRows.map(([materialRole, formulaType, baseQty, deductUnit]) => ({
+          id: `mapping-${uid()}`,
+          productId,
+          inventoryItemId: inventoryForTemplateRole(materialRole),
+          materialRole,
+          formulaType,
+          baseQty,
+          wastagePercent: 5,
+          deductUnit,
+          active: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        })).filter((row) => row.inventoryItemId);
+        if (!rows.length) {
+          toast("No inventory item available for this template.");
+          return;
+        }
+        productMaterialMappings = [...rows, ...productMaterialMappings];
+        localStorage.setItem(productMaterialMappingsKey, JSON.stringify(productMaterialMappings));
+        toast(`${rows.length} template rows added.`);
+        render();
+      }
+      function setMappingPreviewProduct(value) {
+        mappingPreviewProductId = value;
+        mappingPreviewItemId = "";
+        renderSettings();
+        applyLanguageToDom();
+      }
+      function setMappingPreviewItem(value) {
+        mappingPreviewItemId = value;
+        renderSettings();
+        applyLanguageToDom();
+      }
+      function trackCountFromItem(item) {
+        const match = String(item.trackType || "").match(/\d+/);
+        return match ? Number(match[0]) : 1;
+      }
+      function previewItemsForMapping() {
+        const rows = [];
+        orders.forEach((order) => safeArray(order.items).forEach((item) => rows.push({ ...item, sourceLabel: `${order.orderNo} - ${item.label || productDisplayName(item.productId)}` })));
+        quotes.forEach((quote) => safeArray(quote.items).forEach((item) => rows.push({ ...item, sourceLabel: `${quote.quoteNo} - ${item.label || productDisplayName(item.productId)}` })));
+        return rows;
+      }
+      function selectedMappingPreviewItem() {
+        const found = previewItemsForMapping().find((item) => item.id === mappingPreviewItemId);
+        if (found) return found;
+        return { id: "sample", productId: mappingPreviewProductId || defaultProductId(), widthMm: 1000, heightMm: 1000, quantity: 1, trackType: "2 Track" };
+      }
+      function estimateMappingQuantity(mapping, item) {
+        const base = Number(mapping.baseQty || 0);
+        const qty = Number(item.quantity || 1);
+        const widthM = Number(item.widthMm || 0) / 1000;
+        const heightM = Number(item.heightMm || 0) / 1000;
+        let required = base;
+        if (mapping.formulaType === "per_qty") required = base * qty;
+        if (mapping.formulaType === "perimeter") required = base * ((widthM + heightM) * 2) * qty;
+        if (mapping.formulaType === "area") required = base * widthM * heightM * qty;
+        if (mapping.formulaType === "track_count") required = base * trackCountFromItem(item) * qty;
+        required = required * (1 + Number(mapping.wastagePercent || 0) / 100);
+        return Number(required.toFixed(4));
+      }
+      function mappingPreviewRows() {
+        const previewItem = selectedMappingPreviewItem();
+        const rows = productMaterialMappings.filter((mapping) => mapping.active !== false && mapping.productId === previewItem.productId);
+        return rows.map((mapping) => {
+          const stock = inventory.find((item) => item.id === mapping.inventoryItemId) || {};
+          const requiredQty = estimateMappingQuantity(mapping, previewItem);
+          const unitCost = Number(stock.costPerStockUnit || stock.unitCost || 0);
+          return { mapping, stock, requiredQty, unitCost, estimatedCost: requiredQty * unitCost };
+        });
+      }
       function updateExchangeRate(value) {
+        if (!requirePermission("inventory:manage")) return;
         rmbToMyrRate = Number(value || 0);
         localStorage.setItem(exchangeRateKey, rmbToMyrRate);
         inventory = normalizeInventory(inventory);
@@ -4500,16 +4935,19 @@
         render();
       }
       function updateGoogleReviewLink(value) {
+        if (!requirePermission("settings:manage")) return;
         googleReviewLink = value || "";
         localStorage.setItem(googleReviewLinkKey, googleReviewLink);
         render();
       }
       function updateGoogleCalendarWebhook(value) {
+        if (!requirePermission("settings:manage")) return;
         googleCalendarWebhook = value || "";
         localStorage.setItem(googleCalendarWebhookKey, googleCalendarWebhook);
         render();
       }
       function updateSiteUrl(value) {
+        if (!requirePermission("settings:manage")) return;
         siteUrl = (value || "").replace(/\/$/, "");
         localStorage.setItem(siteUrlKey, siteUrl);
         render();
@@ -4542,6 +4980,7 @@
       function hasAppointmentConflict(nextAppointment) {
         return appointments.some((appointment) =>
           appointment.id !== nextAppointment.id &&
+          appointment.status !== "cancelled" &&
           appointment.assignedStaff &&
           nextAppointment.assignedStaff &&
           appointment.assignedStaff.trim().toLowerCase() === nextAppointment.assignedStaff.trim().toLowerCase() &&
@@ -4549,45 +4988,89 @@
           appointment.appointmentTime === nextAppointment.appointmentTime
         );
       }
-      async function syncAppointmentToGoogle(id) {
+      function googleSyncErrorMessage(error) {
+        return error && error.message ? error.message : String(error || "Google Calendar sync failed.");
+      }
+      function googleAppointmentPayload(appointment, action = "upsert") {
+        return {
+          action,
+          id: appointment.id,
+          googleEventId: appointment.googleEventId || "",
+          customer_name: appointment.customerName || "",
+          customerName: appointment.customerName || "",
+          phone: appointment.phone || "",
+          address: appointment.address || "",
+          product: appointment.product || "",
+          appointment_date: appointment.appointmentDate || "",
+          appointmentDate: appointment.appointmentDate || "",
+          appointment_time: appointment.appointmentTime || "",
+          appointmentTime: appointment.appointmentTime || "",
+          assigned_staff: appointment.assignedStaff || "",
+          assignedStaff: appointment.assignedStaff || "",
+          remarks: appointment.remarks || "",
+          status: appointment.status || "scheduled"
+        };
+      }
+      function setAppointmentGoogleState(id, patch) {
+        appointments = appointments.map((item) => item.id === id ? {
+          ...item,
+          ...patch,
+          updatedAt: new Date().toISOString()
+        } : item);
+        localStorage.setItem(appointmentsKey, JSON.stringify(appointments));
+      }
+      async function syncAppointmentToGoogle(id, action = "upsert") {
+        if (!requirePermission("appointment:sync")) return;
         const appointment = appointments.find((item) => item.id === id);
         if (!appointment) return;
         if (!googleCalendarWebhook) {
           appointments = appointments.map((item) => item.id === id ? {
             ...item,
             googleStatus: "Calendar Link Ready",
-            googleEventLink: item.googleEventLink || googleCalendarUrl(item)
+            googleEventLink: item.googleEventLink || googleCalendarUrl(item),
+            googleSyncError: "",
+            googleLastSyncedAt: ""
           } : item);
           localStorage.setItem(appointmentsKey, JSON.stringify(appointments));
           render();
           return;
         }
+        setAppointmentGoogleState(id, { googleStatus: "Pending", googleSyncError: "" });
+        render();
         try {
           const response = await fetch(googleCalendarWebhook, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: "upsert", appointment })
+            body: JSON.stringify({
+              action,
+              appointment: googleAppointmentPayload(appointment, action)
+            })
           });
-          if (!response.ok) throw new Error("Google Calendar webhook failed.");
+          if (!response.ok) throw new Error(`Google Calendar webhook failed (${response.status}).`);
           const result = await response.json();
+          if (result && result.error) throw new Error(result.error);
+          const now = new Date().toISOString();
           appointments = appointments.map((item) => item.id === id ? {
             ...item,
-            googleEventId: result.eventId || item.googleEventId,
-            googleEventLink: result.htmlLink || result.googleEventLink || item.googleEventLink || googleCalendarUrl(item),
+            googleEventId: result.eventId || result.googleEventId || item.googleEventId,
+            googleEventLink: result.eventLink || result.htmlLink || result.googleEventLink || item.googleEventLink || googleCalendarUrl(item),
             googleStatus: "Synced",
-            updatedAt: new Date().toISOString()
+            googleSyncError: "",
+            googleLastSyncedAt: now,
+            updatedAt: now
           } : item);
           localStorage.setItem(appointmentsKey, JSON.stringify(appointments));
-          toast("Google Calendar event synced.");
+          toast(action === "delete" ? "Google Calendar event cancelled." : "Google Calendar event synced.");
           render();
         } catch (error) {
-          appointments = appointments.map((item) => item.id === id ? { ...item, googleStatus: "Sync Failed" } : item);
-          localStorage.setItem(appointmentsKey, JSON.stringify(appointments));
-          toast("Google Calendar sync failed. Check webhook setup.");
+          const message = googleSyncErrorMessage(error);
+          setAppointmentGoogleState(id, { googleStatus: "Failed", googleSyncError: message });
+          toast(`Google Calendar sync failed: ${message}`);
           render();
         }
       }
       async function syncAppointmentsFromGoogle() {
+        if (!requirePermission("appointment:sync")) return;
         if (!googleCalendarWebhook) {
           toast("Add Google Calendar Webhook URL in Settings first.");
           return;
@@ -4611,6 +5094,7 @@
         }
       }
       function saveAppointment(id = "") {
+        if (!requirePermission("appointment:save")) return;
         const existing = appointments.find((item) => item.id === id);
         const appointment = {
           id: id || uid(),
@@ -4626,7 +5110,11 @@
           remarks: document.getElementById("appointmentRemarks").value.trim(),
           googleEventId: existing ? existing.googleEventId : "",
           googleEventLink: existing ? existing.googleEventLink : "",
-          googleStatus: existing ? existing.googleStatus : "Not Synced",
+          googleStatus: "Pending",
+          googleSyncError: "",
+          googleLastSyncedAt: existing ? existing.googleLastSyncedAt || "" : "",
+          status: "scheduled",
+          cancelledAt: "",
           reminderSentAt: existing ? existing.reminderSentAt : ""
         };
         if (!appointment.customerName || !appointment.phone || !appointment.appointmentDate || !appointment.appointmentTime || !appointment.assignedStaff) {
@@ -4659,10 +5147,21 @@
         window.scrollTo({ top: 0, behavior: "smooth" });
       }
       function deleteAppointment(id) {
+        if (!requirePermission("appointment:cancel")) return;
         const appointment = appointments.find((item) => item.id === id);
-        if (!appointment || !confirm(`Delete appointment for ${appointment.customerName}?`)) return;
-        appointments = appointments.filter((item) => item.id !== id);
+        if (!appointment || !confirm(`Cancel appointment for ${appointment.customerName}?`)) return;
+        const now = new Date().toISOString();
+        appointments = appointments.map((item) => item.id === id ? {
+          ...item,
+          status: "cancelled",
+          cancelledAt: now,
+          googleStatus: item.googleEventId ? "Pending" : "Calendar Link Ready",
+          googleSyncError: "",
+          updatedAt: now
+        } : item);
         localStorage.setItem(appointmentsKey, JSON.stringify(appointments));
+        if (appointment.googleEventId && googleCalendarWebhook) syncAppointmentToGoogle(id, "delete");
+        else toast("Appointment cancelled in CRM.");
         render();
       }
       function setCalendarView(view) {
@@ -4684,6 +5183,7 @@
         render();
       }
       function updateProductionArea(id, value) {
+        if (!requirePermission("production:update")) return;
         productions = productions.map((item) => item.id === id ? {
           ...item,
           customer: { ...item.customer, area: value }
@@ -4691,6 +5191,7 @@
         localStorage.setItem(productionsKey, JSON.stringify(productions));
       }
       function updateProductionItem(productionId, itemId, field, value) {
+        if (!requirePermission("production:update")) return;
         const nextValue = ["trackWidthMm","handleHeightMm"].includes(field) ? Number(String(value).replace(/[^\d.]/g, "") || 0) : value;
         productions = productions.map((production) => production.id === productionId ? {
           ...production,
@@ -4699,6 +5200,7 @@
         localStorage.setItem(productionsKey, JSON.stringify(productions));
       }
       function updateInstallationStatus(id, value) {
+        if (!requirePermission("installation:update")) return;
         installations = installations.map((item) => item.id === id ? {
           ...item,
           status: value,
@@ -4708,6 +5210,7 @@
         render();
       }
       function updateInstallationField(id, field, value) {
+        if (!requirePermission("installation:update")) return;
         installations = installations.map((item) => item.id === id ? {
           ...item,
           [field]: field === "customerRating" || field === "amountCollected" ? Number(value || 0) : value
@@ -4720,6 +5223,7 @@
         render();
       }
       function updateCustomerConfirmation(id, field, checked) {
+        if (!requirePermission("installation:update")) return;
         installations = installations.map((item) => item.id === id ? {
           ...item,
           customerConfirmation: { ...(item.customerConfirmation || {}), [field]: checked }
@@ -4728,6 +5232,7 @@
         render();
       }
       function updateInstallationChecklist(id, field, checked) {
+        if (!requirePermission(field === "balanceCollected" ? "payment:record" : "installation:update")) return;
         if (field === "balanceCollected") {
           syncInstallationCollection(id, checked);
           render();
@@ -4860,6 +5365,7 @@
         upsertInstallerCollectionToSupabase(payment, nextOrder, installation);
       }
       function saveSignature(id, dataUrl) {
+        if (!requirePermission("signature:update")) return;
         installations = installations.map((item) => item.id === id ? { ...item, signature: dataUrl } : item);
         localStorage.setItem(installationsKey, JSON.stringify(installations));
       }
@@ -4868,6 +5374,7 @@
         render();
       }
       function generateCompletionRecord(id) {
+        if (!requirePermission("completion:generate")) return;
         const installation = installations.find((item) => item.id === id);
         if (!installation) return;
         if (completionRecords.some((record) => record.installationNo === installation.installationNo)) {
@@ -4938,6 +5445,7 @@
         render();
       }
       function editQuote(id) {
+        if (!requirePermission("quote:edit")) return;
         const quote = quotes.find((item) => item.id === id);
         if (!quote) return;
         editingId = quote.id;
@@ -4952,6 +5460,7 @@
         render();
       }
       function deleteQuote(id) {
+        if (!requirePermission("records:delete")) return;
         const quote = quotes.find((item) => item.id === id);
         if (!quote || !confirm(`Delete quotation ${quote.quoteNo}?`)) return;
         quotes = quotes.filter((item) => item.id !== id);
@@ -4961,6 +5470,7 @@
         render();
       }
       function deleteOrder(id) {
+        if (!requirePermission("records:delete")) return;
         const order = orders.find((item) => item.id === id);
         if (!order || !confirm(`Delete order ${order.orderNo}? Related production, installation, completion and warranty records will also be deleted.`)) return;
         const relatedInstallations = installations.filter((item) => item.orderNo === order.orderNo).map((item) => item.installationNo);
@@ -5145,7 +5655,116 @@
               <div class="field wide"><label>Description</label><textarea rows="2" onchange="updateProduct('${item.id}','description',this.value)">${item.description || ""}</textarea></div>
             </div>
           </div>
-        `).join("") : `<div class="item-card"><p style="color:var(--muted)">No products in this filter.</p></div>`);
+        `).join("") : `<div class="item-card"><p style="color:var(--muted)">No products in this filter.</p></div>`) + renderProductMaterialMappingSection();
+      }
+      function renderProductMaterialMappingSection() {
+        const previewItemOptions = previewItemsForMapping().slice(0, 80);
+        const previewItem = selectedMappingPreviewItem();
+        const previewRows = mappingPreviewRows();
+        return `
+          <div class="item-card">
+            <div class="item-head">
+              <div>
+                <h3>Product Material Mapping</h3>
+                <p style="color:var(--muted);margin-top:5px;font-size:13px">Build product-to-material rules for future stock deduction and costing. Phase 3B preview does not deduct inventory.</p>
+              </div>
+              <span class="pill">${productMaterialMappings.length} Rules</span>
+            </div>
+            <div class="form-grid" style="margin-top:12px">
+              <div class="field"><label>Product</label><select id="mappingProductId">${products.map((item) => `<option value="${item.id}">${englishProductName(item.name)}</option>`).join("")}</select></div>
+              <div class="field"><label>Inventory Item</label><select id="mappingInventoryItemId">${inventory.filter((item) => item.active !== false).map((item) => `<option value="${item.id}">${item.name} - ${item.category || "General"}</option>`).join("")}</select></div>
+              <div class="field"><label>Material Role</label><select id="mappingMaterialRole">${mappingOption(materialRoles, "frame")}</select></div>
+              <div class="field"><label>Formula Type</label><select id="mappingFormulaType">${mappingOption(mappingFormulaTypes, "per_qty")}</select></div>
+              <div class="field"><label>Base Qty</label><input id="mappingBaseQty" type="number" step="0.0001" value="1" /></div>
+              <div class="field"><label>Wastage %</label><input id="mappingWastagePercent" type="number" step="0.01" value="0" /></div>
+              <div class="field"><label>Deduct Unit</label><select id="mappingDeductUnit">${mappingOption(mappingDeductUnits, "pcs")}</select></div>
+              <div class="field"><label>Status</label><select id="mappingActive"><option value="true">Active</option><option value="false">Inactive</option></select></div>
+            </div>
+            <button class="btn primary" style="margin-top:12px" onclick="addProductMaterialMapping()">Add Mapping</button>
+          </div>
+          <div class="item-card">
+            <div class="item-head">
+              <div>
+                <h3>Add Multiple Mapping Rows</h3>
+                <p style="color:var(--muted);margin-top:5px;font-size:13px">Fill several rows first, then save all together.</p>
+              </div>
+              <button class="btn" onclick="addBulkMappingRow()">Add Row</button>
+            </div>
+            <div class="field" style="max-width:360px"><label>Target Product</label><select id="bulkMappingProductId">${products.map((item) => `<option value="${item.id}">${englishProductName(item.name)}</option>`).join("")}</select></div>
+            ${Array.from({ length: mappingBulkRowCount }).map((_, index) => `
+              <div class="item-card" style="box-shadow:none;margin-top:10px">
+                <div class="form-grid">
+                  <div class="field"><label>Inventory Item</label><select id="bulkMapping${index}InventoryItemId"><option value="">Skip this row</option>${inventory.filter((item) => item.active !== false).map((item) => `<option value="${item.id}">${item.name} - ${item.category || "General"}</option>`).join("")}</select></div>
+                  <div class="field"><label>Material Role</label><select id="bulkMapping${index}MaterialRole">${mappingOption(materialRoles, "frame")}</select></div>
+                  <div class="field"><label>Formula Type</label><select id="bulkMapping${index}FormulaType">${mappingOption(mappingFormulaTypes, "per_qty")}</select></div>
+                  <div class="field"><label>Base Qty</label><input id="bulkMapping${index}BaseQty" type="number" step="0.0001" value="1" /></div>
+                  <div class="field"><label>Wastage %</label><input id="bulkMapping${index}WastagePercent" type="number" step="0.01" value="0" /></div>
+                  <div class="field"><label>Deduct Unit</label><select id="bulkMapping${index}DeductUnit">${mappingOption(mappingDeductUnits, "pcs")}</select></div>
+                  <div class="field"><label>Status</label><select id="bulkMapping${index}Active"><option value="true">Active</option><option value="false">Inactive</option></select></div>
+                </div>
+              </div>
+            `).join("")}
+            <button class="btn primary" style="margin-top:12px" onclick="saveAllMappingRows()">Save All</button>
+          </div>
+          <div class="item-card">
+            <div class="item-head"><h3>Copy Mapping From Product</h3><span class="pill">Append Only</span></div>
+            <div class="form-grid">
+              <div class="field"><label>Copy From</label><select id="copyMappingSourceProductId">${products.map((item) => `<option value="${item.id}">${englishProductName(item.name)}</option>`).join("")}</select></div>
+              <div class="field"><label>Copy To</label><select id="copyMappingTargetProductId">${products.map((item) => `<option value="${item.id}">${englishProductName(item.name)}</option>`).join("")}</select></div>
+            </div>
+            <button class="btn primary" style="margin-top:12px" onclick="copyMappingFromProduct()">Copy Mapping</button>
+          </div>
+          <div class="item-card">
+            <div class="item-head"><h3>Mapping Template</h3><span class="pill">Editable After Apply</span></div>
+            <div class="form-grid">
+              <div class="field"><label>Product</label><select id="templateProductId">${products.map((item) => `<option value="${item.id}">${englishProductName(item.name)}</option>`).join("")}</select></div>
+              <div class="field"><label>Template</label><select id="mappingTemplateId">
+                <option value="sliding">Sliding Screen Template</option>
+                <option value="roller">Roller Screen Template</option>
+                <option value="security">Security Mesh Template</option>
+              </select></div>
+            </div>
+            <button class="btn primary" style="margin-top:12px" onclick="applyMappingTemplate()">Apply Template</button>
+          </div>
+          <div class="item-card">
+            <div class="item-head">
+              <h3>Mapping Preview</h3>
+              <span class="pill">No Stock Deduction</span>
+            </div>
+            <div class="form-grid">
+              <div class="field"><label>Preview Product</label><select onchange="setMappingPreviewProduct(this.value)">${products.map((item) => `<option value="${item.id}" ${item.id === mappingPreviewProductId ? "selected" : ""}>${englishProductName(item.name)}</option>`).join("")}</select></div>
+              <div class="field"><label>Preview Quotation / Order Item</label><select onchange="setMappingPreviewItem(this.value)">
+                <option value="">Sample 1000 x 1000 mm item</option>
+                ${previewItemOptions.map((item) => `<option value="${item.id}" ${item.id === mappingPreviewItemId ? "selected" : ""}>${item.sourceLabel} (${item.widthMm || 0} x ${item.heightMm || 0})</option>`).join("")}
+              </select></div>
+            </div>
+            <p style="color:var(--muted);margin-top:10px">Preview item: ${productDisplayName(previewItem.productId)} - ${previewItem.widthMm || 0} x ${previewItem.heightMm || 0} mm - Qty ${previewItem.quantity || 1}</p>
+            ${previewRows.length ? `<div class="table-wrap"><table><thead><tr><th>Inventory Item</th><th>Role</th><th>Formula</th><th class="right">Required Qty</th><th>Unit</th><th class="right">Unit Cost</th><th class="right">Estimated Cost</th></tr></thead><tbody>
+              ${previewRows.map((row) => `<tr><td>${row.stock.name || "-"}</td><td>${row.mapping.materialRole}</td><td>${row.mapping.formulaType}</td><td class="right">${row.requiredQty}</td><td>${row.mapping.deductUnit}</td><td class="right">${money(row.unitCost)}</td><td class="right">${money(row.estimatedCost)}</td></tr>`).join("")}
+            </tbody></table></div>` : `<div class="alert" style="margin-top:12px">Missing mapping for this product. Add mapping rules before Phase 3C stock deduction.</div>`}
+          </div>
+          <div class="item-card">
+            <div class="item-head"><h3>Mapping Rules</h3><span class="pill">${productMaterialMappings.length}</span></div>
+            ${productMaterialMappings.length ? productMaterialMappings.map((mapping) => `
+              <div class="item-card" style="box-shadow:none;margin-top:10px">
+                <div class="form-grid">
+                  <div class="field"><label>Product</label><select onchange="updateMapping('${mapping.id}','productId',this.value)">${products.map((item) => `<option value="${item.id}" ${item.id === mapping.productId ? "selected" : ""}>${englishProductName(item.name)}</option>`).join("")}</select></div>
+                  <div class="field"><label>Inventory Item</label><select onchange="updateMapping('${mapping.id}','inventoryItemId',this.value)">${inventory.map((item) => `<option value="${item.id}" ${item.id === mapping.inventoryItemId ? "selected" : ""}>${item.name} - ${item.category || "General"}</option>`).join("")}</select></div>
+                  <div class="field"><label>Material Role</label><select onchange="updateMapping('${mapping.id}','materialRole',this.value)">${mappingOption(materialRoles, mapping.materialRole)}</select></div>
+                  <div class="field"><label>Formula Type</label><select onchange="updateMapping('${mapping.id}','formulaType',this.value)">${mappingOption(mappingFormulaTypes, mapping.formulaType)}</select></div>
+                  <div class="field"><label>Base Qty</label><input type="number" step="0.0001" value="${mapping.baseQty}" onchange="updateMapping('${mapping.id}','baseQty',this.value)" /></div>
+                  <div class="field"><label>Wastage %</label><input type="number" step="0.01" value="${mapping.wastagePercent}" onchange="updateMapping('${mapping.id}','wastagePercent',this.value)" /></div>
+                  <div class="field"><label>Deduct Unit</label><select onchange="updateMapping('${mapping.id}','deductUnit',this.value)">${mappingOption(mappingDeductUnits, mapping.deductUnit)}</select></div>
+                  <div class="field"><label>Status</label><select onchange="updateMapping('${mapping.id}','active',this.value)"><option value="true" ${mapping.active !== false ? "selected" : ""}>Active</option><option value="false" ${mapping.active === false ? "selected" : ""}>Inactive</option></select></div>
+                </div>
+                <div class="item-head" style="margin-top:8px;margin-bottom:0">
+                  <p style="color:var(--muted);font-size:13px">Linked item: ${inventoryName(mapping.inventoryItemId)}</p>
+                  <button class="btn" onclick="duplicateMapping('${mapping.id}')">Duplicate Row</button>
+                </div>
+              </div>
+            `).join("") : `<p style="color:var(--muted)">No mapping rules yet.</p>`}
+          </div>
+        `;
       }
       function renderStaffManagement() {
         const el = document.getElementById("staffManagement");
@@ -5222,9 +5841,18 @@
                   <div class="field"><label>Safety Quantity</label><input type="number" value="${item.safetyQuantity}" oninput="updateInventory('${item.id}','safetyQuantity',this.value)" /></div>
                   <div class="field"><label>Usage Per Production Item</label><input type="number" value="${item.usagePerItem}" oninput="updateInventory('${item.id}','usagePerItem',this.value)" /></div>
                   <div class="field"><label>Unit</label><input value="${item.unit}" readonly /></div>
+                  <div class="field"><label>Item Type</label><select onchange="updateInventory('${item.id}','itemType',this.value)">${mappingOption(inventoryItemTypes, item.itemType || "aluminium")}</select></div>
+                  <div class="field"><label>Stock Unit</label><select onchange="updateInventory('${item.id}','stockUnit',this.value)">${mappingOption(stockUnits, item.stockUnit || "pcs")}</select></div>
+                  <div class="field"><label>Purchase Unit</label><input value="${item.purchaseUnit || item.unit || ""}" onchange="updateInventory('${item.id}','purchaseUnit',this.value)" /></div>
+                  <div class="field"><label>Pcs Per Bundle</label><input type="number" value="${item.pcsPerBundle || 0}" onchange="updateInventory('${item.id}','pcsPerBundle',this.value)" /></div>
+                  <div class="field"><label>Length mm Per Piece</label><input type="number" value="${item.lengthMmPerPiece || 0}" onchange="updateInventory('${item.id}','lengthMmPerPiece',this.value)" /></div>
+                  <div class="field"><label>Meter Per Roll</label><input type="number" value="${item.meterPerRoll || 0}" onchange="updateInventory('${item.id}','meterPerRoll',this.value)" /></div>
                   <div class="field"><label>RMB Unit Cost</label><input type="number" value="${item.rmbUnitCost || 0}" onchange="updateInventory('${item.id}','rmbUnitCost',this.value)" /></div>
                   <div class="field"><label>RM Unit Cost</label><input value="${money(item.unitCost || 0)}" readonly /></div>
+                  <div class="field"><label>Cost Per Stock Unit</label><input type="number" value="${item.costPerStockUnit || item.unitCost || 0}" onchange="updateInventory('${item.id}','costPerStockUnit',this.value)" /></div>
                   <div class="field"><label>Stock Value</label><input value="${money(Number(item.quantity || 0) * Number(item.unitCost || 0))}" readonly /></div>
+                  <div class="field"><label>Exclude Auto Deduct</label><select onchange="updateInventory('${item.id}','excludeFromAutoDeduct',this.value)"><option value="false" ${!item.excludeFromAutoDeduct ? "selected" : ""}>No</option><option value="true" ${item.excludeFromAutoDeduct ? "selected" : ""}>Yes</option></select></div>
+                  <div class="field"><label>Status</label><select onchange="updateInventory('${item.id}','active',this.value)"><option value="true" ${item.active !== false ? "selected" : ""}>Active</option><option value="false" ${item.active === false ? "selected" : ""}>Inactive</option></select></div>
                 </div>
               </div>
             `).join("")}
@@ -5304,7 +5932,7 @@
         document.getElementById("history").innerHTML = banner + (rows.length ? rows.map((quote) => `
           <div class="history-card">
             <div><strong>${quote.quoteNo}</strong> <span class="pill">${statusLabel(quote.status)}</span><p style="color:var(--muted);margin-top:5px">${quote.customer.name || "Unnamed Customer"} - ${quote.customer.area || "No area"} - ${money(quote.total)}</p>${quote.remarks ? `<p style="white-space:pre-wrap;color:var(--muted);margin-top:6px">${quote.remarks}</p>` : ""}</div>
-            <div class="history-actions"><button class="btn" onclick="editQuote('${quote.id}')">Edit</button><button class="btn danger" onclick="deleteQuote('${quote.id}')">Delete</button></div>
+            <div class="history-actions"><button class="btn" onclick="editQuote('${quote.id}')">Edit</button>${can("records:delete") ? `<button class="btn danger" onclick="deleteQuote('${quote.id}')">Delete</button>` : ""}</div>
           </div>
         `).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No saved quotations yet.</p>`);
       }
@@ -5439,9 +6067,9 @@
             </div>
             <div style="display:grid;gap:8px;text-align:right">
               <div><strong>${money(unpaidTotal(order))}</strong><p style="color:var(--muted);font-size:13px">Unpaid</p></div>
-              <button class="btn primary" onclick="generateProductionSheet('${order.id}')">Generate Production</button>
-              <button class="btn" onclick="generateInstallationSheet('${order.id}')">Generate Installation</button>
-              <button class="btn danger" onclick="deleteOrder('${order.id}')">Delete Order</button>
+              ${can("production:generate") ? `<button class="btn primary" onclick="generateProductionSheet('${order.id}')">Generate Production</button>` : ""}
+              ${can("installation:generate") ? `<button class="btn" onclick="generateInstallationSheet('${order.id}')">Generate Installation</button>` : ""}
+              ${can("records:delete") ? `<button class="btn danger" onclick="deleteOrder('${order.id}')">Delete Order</button>` : ""}
             </div>
           </div>
         `;
@@ -5594,7 +6222,7 @@
                   ${rows.map((appointment) => `<div class="calendar-event">
                     <strong>${appointment.appointmentTime} ${appointment.customerName}</strong>
                     <p>${appointment.product || "-"}</p>
-                    <p style="color:var(--muted)">${appointment.assignedStaff || "-"} | ${appointment.googleStatus || "Not Synced"}</p>
+                    <p style="color:var(--muted)">${appointment.assignedStaff || "-"} | ${appointment.status === "cancelled" ? "Cancelled" : "Scheduled"} | ${appointment.googleStatus || "Pending"}</p>
                   </div>`).join("") || `<p style="color:var(--muted);font-size:12px">No appointment</p>`}
                 </div>`;
               }).join("")}
@@ -5605,21 +6233,25 @@
             ${sortedAppointments.length ? sortedAppointments.map((appointment) => `
               <div class="history-card">
                 <div>
-                  <strong>${appointment.customerName}</strong> <span class="pill">${appointment.appointmentDate} ${appointment.appointmentTime}</span>
+                  <strong>${appointment.customerName}</strong> <span class="pill">${appointment.appointmentDate} ${appointment.appointmentTime}</span> <span class="pill" style="${appointment.status === "cancelled" ? "background:#fef2f2;color:#991b1b" : ""}">${appointment.status === "cancelled" ? "Cancelled" : "Scheduled"}</span>
                   <p style="color:var(--muted);margin-top:5px">${appointment.phone || "-"} - ${appointment.assignedStaff || "-"}</p>
                   <p style="white-space:pre-wrap;color:var(--muted)">${appointment.address || "-"}</p>
                   <div class="order-items">
                     <div class="payment-row"><span>Product</span><strong>${appointment.product || "-"}</strong></div>
-                    <div class="payment-row"><span>Google Calendar</span><strong>${appointment.googleStatus || "Not Synced"}</strong></div>
+                    <div class="payment-row"><span>Status</span><strong>${appointment.status === "cancelled" ? "Cancelled" : "Scheduled"}</strong></div>
+                    <div class="payment-row"><span>Google Status</span><strong>${appointment.googleStatus || "Pending"}</strong></div>
+                    <div class="payment-row"><span>Last Synced</span><strong>${appointment.googleLastSyncedAt ? String(appointment.googleLastSyncedAt).slice(0, 19).replace("T", " ") : "-"}</strong></div>
+                    ${appointment.cancelledAt ? `<div class="payment-row"><span>Cancelled At</span><strong>${String(appointment.cancelledAt).slice(0, 19).replace("T", " ")}</strong></div>` : ""}
                     ${appointment.googleEventId ? `<div class="payment-row"><span>Google Event ID</span><strong>${appointment.googleEventId}</strong></div>` : ""}
+                    ${appointment.googleSyncError ? `<div class="payment-row"><span>Sync Error</span><strong style="color:#991b1b">${appointment.googleSyncError}</strong></div>` : ""}
                   </div>
                   ${appointment.remarks ? `<p style="white-space:pre-wrap;color:var(--muted);margin-top:6px">${appointment.remarks}</p>` : ""}
                 </div>
                 <div class="history-actions">
                   ${appointment.googleEventLink ? `<button class="btn" onclick="window.open('${appointment.googleEventLink}', '_blank')">Open Calendar</button>` : `<button class="btn" onclick="window.open('${googleCalendarUrl(appointment)}', '_blank')">Add Calendar</button>`}
                   <button class="btn" onclick="editAppointment('${appointment.id}')">Edit</button>
-                  <button class="btn" onclick="syncAppointmentToGoogle('${appointment.id}')">Sync</button>
-                  <button class="btn danger" onclick="deleteAppointment('${appointment.id}')">Delete</button>
+                  ${can("appointment:sync") ? `<button class="btn" onclick="syncAppointmentToGoogle('${appointment.id}', '${appointment.status === "cancelled" ? "delete" : "upsert"}')">${appointment.googleStatus === "Failed" ? "Retry Sync" : "Sync"}</button>` : ""}
+                  ${can("appointment:cancel") ? `<button class="btn danger" onclick="deleteAppointment('${appointment.id}')">Cancel Appointment</button>` : ""}
                 </div>
               </div>
             `).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No appointments yet.</p>`}
@@ -5687,6 +6319,7 @@
         })).sort((a, b) => b.spend - a.spend);
       }
       function saveFacebookAd() {
+        if (!requirePermission("facebook:manage")) return;
         const row = {
           id: uid(),
           date: document.getElementById("adDate").value || today(),
@@ -5708,6 +6341,7 @@
         render();
       }
       function deleteFacebookAd(id) {
+        if (!requirePermission("facebook:manage")) return;
         facebookAds = facebookAds.filter((row) => row.id !== id);
         localStorage.setItem(facebookAdsKey, JSON.stringify(facebookAds));
         render();
@@ -5809,6 +6443,7 @@
         `;
       }
       function renderProductions() {
+        const productionCanEdit = can("production:update");
         const productionCard = (production) => `
           <div class="ops-card">
             <div class="ops-head">
@@ -5817,13 +6452,13 @@
                 <p style="color:var(--muted);margin-top:5px">${production.customer.name || "Unnamed Customer"} - ${production.customer.phone || "-"} - ${production.customer.address || "-"}</p>
                 <p style="color:var(--muted);margin-top:5px">Created: ${String(production.createdAt || "").slice(0, 10) || "-"} ${production.startedAt ? ` | Started: ${String(production.startedAt).slice(0, 10)}` : ""} ${production.completedAt ? ` | Completed: ${String(production.completedAt).slice(0, 10)}` : ""}</p>
                 ${productionAlertText(production) ? `<p style="color:#991b1b;font-weight:900;margin-top:5px">${productionAlertText(production)}</p>` : ""}
-                <div class="field" style="margin-top:10px;max-width:320px"><label>Area</label><input value="${production.customer.area || ""}" onchange="updateProductionArea('${production.id}',this.value)" /></div>
+                <div class="field" style="margin-top:10px;max-width:320px"><label>Area</label><input value="${production.customer.area || ""}" onchange="updateProductionArea('${production.id}',this.value)" ${productionCanEdit ? "" : "readonly"} /></div>
               </div>
-              <select style="max-width:220px" onchange="updateProductionStatus('${production.id}',this.value)">
+              <select style="max-width:220px" onchange="updateProductionStatus('${production.id}',this.value)" ${productionCanEdit ? "" : "disabled"}>
                 ${productionStatuses.map(([value, label]) => `<option value="${value}" ${production.status === value ? "selected" : ""}>${label}</option>`).join("")}
               </select>
             </div>
-            <div class="field" style="margin-bottom:12px"><label>Not Ready Reason / Delay Reason</label><textarea rows="2" placeholder="Example: waiting material, colour not confirmed, customer measurement pending" onchange="updateProductionField('${production.id}','delayReason',this.value)">${production.delayReason || ""}</textarea></div>
+            <div class="field" style="margin-bottom:12px"><label>Not Ready Reason / Delay Reason</label><textarea rows="2" placeholder="Example: waiting material, colour not confirmed, customer measurement pending" onchange="updateProductionField('${production.id}','delayReason',this.value)" ${productionCanEdit ? "" : "readonly"}>${production.delayReason || ""}</textarea></div>
             ${production.stockMovements && production.stockMovements.length ? `
               <div class="order-items">
                 <strong>Stock Deduction Tracking</strong>
@@ -5834,17 +6469,17 @@
             ${(production.items || []).map((item) => `
               <div class="ops-line-grid">
                 <div class="field"><label>Product</label><input value="${productDisplayName(item.productId)}" readonly /></div>
-                <div class="field"><label>Location</label><input value="${item.label || ""}" onchange="updateProductionItem('${production.id}','${item.id}','label',this.value)" /></div>
+                <div class="field"><label>Location</label><input value="${item.label || ""}" onchange="updateProductionItem('${production.id}','${item.id}','label',this.value)" ${productionCanEdit ? "" : "readonly"} /></div>
                 <div class="field"><label>Width mm</label><input value="${item.widthMm || 0}" readonly /></div>
                 <div class="field"><label>Height mm</label><input value="${item.heightMm || 0}" readonly /></div>
                 <div class="field"><label>Qty</label><input value="${item.quantity || 0}" readonly /></div>
-                <div class="field"><label>Track Type</label><input value="${item.trackType || ""}" onchange="updateProductionItem('${production.id}','${item.id}','trackType',this.value)" /></div>
-                <div class="field"><label>Track Width mm</label><input value="${item.trackWidthMm || 0}" onchange="updateProductionItem('${production.id}','${item.id}','trackWidthMm',this.value)" /></div>
-                <div class="field"><label>Handle Height mm</label><input value="${item.handleHeightMm || item.trackHeightMm || 0}" onchange="updateProductionItem('${production.id}','${item.id}','handleHeightMm',this.value)" /></div>
-                <div class="field"><label>Installation Type</label><input value="${item.installationType || ""}" onchange="updateProductionItem('${production.id}','${item.id}','installationType',this.value)" /></div>
-                <div class="field"><label>Opening Direction</label><input value="${item.openingDirection || ""}" onchange="updateProductionItem('${production.id}','${item.id}','openingDirection',this.value)" /></div>
-                <div class="field"><label>Colour</label><input value="${item.color || ""}" onchange="updateProductionItem('${production.id}','${item.id}','color',this.value)" /></div>
-                <div class="field"><label>Remark</label><input value="${item.remark || ""}" onchange="updateProductionItem('${production.id}','${item.id}','remark',this.value)" /></div>
+                <div class="field"><label>Track Type</label><input value="${item.trackType || ""}" onchange="updateProductionItem('${production.id}','${item.id}','trackType',this.value)" ${productionCanEdit ? "" : "readonly"} /></div>
+                <div class="field"><label>Track Width mm</label><input value="${item.trackWidthMm || 0}" onchange="updateProductionItem('${production.id}','${item.id}','trackWidthMm',this.value)" ${productionCanEdit ? "" : "readonly"} /></div>
+                <div class="field"><label>Handle Height mm</label><input value="${item.handleHeightMm || item.trackHeightMm || 0}" onchange="updateProductionItem('${production.id}','${item.id}','handleHeightMm',this.value)" ${productionCanEdit ? "" : "readonly"} /></div>
+                <div class="field"><label>Installation Type</label><input value="${item.installationType || ""}" onchange="updateProductionItem('${production.id}','${item.id}','installationType',this.value)" ${productionCanEdit ? "" : "readonly"} /></div>
+                <div class="field"><label>Opening Direction</label><input value="${item.openingDirection || ""}" onchange="updateProductionItem('${production.id}','${item.id}','openingDirection',this.value)" ${productionCanEdit ? "" : "readonly"} /></div>
+                <div class="field"><label>Colour</label><input value="${item.color || ""}" onchange="updateProductionItem('${production.id}','${item.id}','color',this.value)" ${productionCanEdit ? "" : "readonly"} /></div>
+                <div class="field"><label>Remark</label><input value="${item.remark || ""}" onchange="updateProductionItem('${production.id}','${item.id}','remark',this.value)" ${productionCanEdit ? "" : "readonly"} /></div>
               </div>
             `).join("")}
           </div>
@@ -5878,6 +6513,7 @@
         }).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No production sheets found for this view.</p>`);
       }
       function renderProductionStatus() {
+        const productionCanEdit = can("production:update");
         const groups = [
           ["pending-production", "Not Yet Produced"],
           ["in-production", "In Production"],
@@ -5896,7 +6532,7 @@
                     ${productionAlertText(production) ? `<p style="color:#991b1b;font-weight:900;margin-top:5px">${productionAlertText(production)}</p>` : ""}
                     ${production.delayReason ? `<p style="color:var(--muted);margin-top:5px"><strong>Reason:</strong> ${production.delayReason}</p>` : ""}
                   </div>
-                  <select onchange="updateProductionStatus('${production.id}',this.value)">
+                  <select onchange="updateProductionStatus('${production.id}',this.value)" ${productionCanEdit ? "" : "disabled"}>
                     ${productionStatuses.map(([value, label]) => `<option value="${value}" ${production.status === value ? "selected" : ""}>${label}</option>`).join("")}
                   </select>
                 </div>
