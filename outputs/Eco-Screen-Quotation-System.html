@@ -996,6 +996,7 @@
       let productStatusFilter = "active";
       let mappingPreviewProductId = defaultProductId();
       let mappingPreviewItemId = "";
+      let mappingBulkRowCount = 5;
       let editingId = null;
       let quoteNo = makeQuoteNo();
       let inputRenderTimer = null;
@@ -1177,6 +1178,24 @@
         "Mapping Preview": "对应规则预览",
         "Mapping Rules": "对应规则列表",
         "Add Mapping": "新增对应规则",
+        "Add Multiple Mapping Rows": "批量新增对应规则",
+        "Save All": "全部保存",
+        "Add Row": "新增一行",
+        "Target Product": "目标产品",
+        "Skip this row": "跳过这一行",
+        "Copy Mapping From Product": "从产品复制对应规则",
+        "Copy From": "复制来源",
+        "Copy To": "复制到",
+        "Copy Mapping": "复制对应规则",
+        "Append Only": "只新增不覆盖",
+        "Mapping Template": "对应规则模板",
+        "Template": "模板",
+        "Sliding Screen Template": "推拉纱窗模板",
+        "Roller Screen Template": "卷纱模板",
+        "Security Mesh Template": "防盗网模板",
+        "Apply Template": "套用模板",
+        "Editable After Apply": "套用后可编辑",
+        "Duplicate Row": "复制这一行",
         "Inventory Item": "库存项目",
         "Material Role": "材料角色",
         "Formula Type": "公式类型",
@@ -1274,6 +1293,18 @@
         "Appointment Records": "预约记录",
         "No appointment": "没有预约",
         "No appointments yet.": "还没有预约。",
+        "Status": "状态",
+        "Scheduled": "已预约",
+        "Cancelled": "已取消",
+        "Google Status": "Google 状态",
+        "Pending": "同步中",
+        "Synced": "已同步",
+        "Failed": "同步失败",
+        "Last Synced": "最后同步",
+        "Cancelled At": "取消时间",
+        "Sync Error": "同步错误",
+        "Retry Sync": "重试同步",
+        "Cancel Appointment": "取消预约",
         "Google Event ID": "Google 事件 ID",
         "Warranty Period": "保固期",
         "Coverage": "保固年限",
@@ -1733,7 +1764,11 @@
           remarks: appointment.remarks || "",
           googleEventId: appointment.googleEventId || "",
           googleEventLink: appointment.googleEventLink || "",
-          googleStatus: appointment.googleStatus || "Not Synced",
+          googleStatus: appointment.googleStatus || "Pending",
+          googleSyncError: appointment.googleSyncError || "",
+          googleLastSyncedAt: appointment.googleLastSyncedAt || "",
+          status: appointment.status || "scheduled",
+          cancelledAt: appointment.cancelledAt || "",
           reminderSentAt: appointment.reminderSentAt || "",
           updatedAt: appointment.updatedAt || appointment.createdAt || new Date().toISOString(),
           createdAt: appointment.createdAt || new Date().toISOString()
@@ -3815,6 +3850,10 @@
           google_event_id: appointment.googleEventId || "",
           google_event_link: appointment.googleEventLink || "",
           google_status: appointment.googleStatus || "",
+          google_sync_error: appointment.googleSyncError || null,
+          google_last_synced_at: appointment.googleLastSyncedAt || null,
+          status: appointment.status || "scheduled",
+          cancelled_at: appointment.cancelledAt || null,
           reminder_sent_at: appointment.reminderSentAt || null,
           created_at: appointment.createdAt || new Date().toISOString(),
           updated_at: appointment.updatedAt || appointment.createdAt || new Date().toISOString()
@@ -4027,6 +4066,10 @@
           googleEventId: row.google_event_id || "",
           googleEventLink: row.google_event_link || "",
           googleStatus: row.google_status || "Not Synced",
+          googleSyncError: row.google_sync_error || "",
+          googleLastSyncedAt: row.google_last_synced_at || "",
+          status: row.status || "scheduled",
+          cancelledAt: row.cancelled_at || "",
           reminderSentAt: row.reminder_sent_at || "",
           createdAt: row.created_at,
           updatedAt: row.updated_at
@@ -4642,6 +4685,147 @@
         toast("Mapping added.");
         render();
       }
+      function mappingFromInputs(prefix, productId) {
+        const inventoryItemId = document.getElementById(`${prefix}InventoryItemId`).value;
+        if (!productId || !inventoryItemId) return null;
+        return {
+          id: `mapping-${uid()}`,
+          productId,
+          inventoryItemId,
+          materialRole: document.getElementById(`${prefix}MaterialRole`).value || "frame",
+          formulaType: document.getElementById(`${prefix}FormulaType`).value || "per_qty",
+          baseQty: Number(document.getElementById(`${prefix}BaseQty`).value || 1),
+          wastagePercent: Number(document.getElementById(`${prefix}WastagePercent`).value || 0),
+          deductUnit: document.getElementById(`${prefix}DeductUnit`).value || "pcs",
+          active: document.getElementById(`${prefix}Active`).value === "true",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+      }
+      function addBulkMappingRow() {
+        mappingBulkRowCount += 1;
+        renderSettings();
+        applyLanguageToDom();
+      }
+      function saveAllMappingRows() {
+        const productId = document.getElementById("bulkMappingProductId").value;
+        const rows = [];
+        for (let index = 0; index < mappingBulkRowCount; index += 1) {
+          const row = mappingFromInputs(`bulkMapping${index}`, productId);
+          if (row) rows.push(row);
+        }
+        if (!rows.length) {
+          toast("Please select at least one inventory item.");
+          return;
+        }
+        productMaterialMappings = [...rows, ...productMaterialMappings];
+        localStorage.setItem(productMaterialMappingsKey, JSON.stringify(productMaterialMappings));
+        toast(`${rows.length} mapping rows saved.`);
+        render();
+      }
+      function duplicateMapping(id) {
+        const source = productMaterialMappings.find((mapping) => mapping.id === id);
+        if (!source) return;
+        productMaterialMappings = [{
+          ...source,
+          id: `mapping-${uid()}`,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }, ...productMaterialMappings];
+        localStorage.setItem(productMaterialMappingsKey, JSON.stringify(productMaterialMappings));
+        toast("Mapping duplicated.");
+        render();
+      }
+      function copyMappingFromProduct() {
+        const sourceProductId = document.getElementById("copyMappingSourceProductId").value;
+        const targetProductId = document.getElementById("copyMappingTargetProductId").value;
+        if (!sourceProductId || !targetProductId || sourceProductId === targetProductId) {
+          toast("Choose two different products.");
+          return;
+        }
+        const sourceRows = productMaterialMappings.filter((mapping) => mapping.productId === sourceProductId);
+        if (!sourceRows.length) {
+          toast("Source product has no mapping.");
+          return;
+        }
+        const targetRows = productMaterialMappings.filter((mapping) => mapping.productId === targetProductId);
+        if (targetRows.length && !confirm("Target product already has mapping. Copy will add new rows without deleting existing rows. Continue?")) return;
+        const copiedRows = sourceRows.map((mapping) => ({
+          ...mapping,
+          id: `mapping-${uid()}`,
+          productId: targetProductId,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }));
+        productMaterialMappings = [...copiedRows, ...productMaterialMappings];
+        localStorage.setItem(productMaterialMappingsKey, JSON.stringify(productMaterialMappings));
+        toast(`${copiedRows.length} mappings copied.`);
+        render();
+      }
+      function inventoryForTemplateRole(role) {
+        const activeInventory = inventory.filter((item) => item.active !== false);
+        const byType = activeInventory.find((item) => String(item.itemType || "").toLowerCase() === role);
+        if (byType) return byType.id;
+        const textMatch = activeInventory.find((item) => String(`${item.name} ${item.category}`).toLowerCase().includes(role));
+        return (textMatch || activeInventory[0] || {}).id || "";
+      }
+      function mappingTemplates() {
+        return {
+          sliding: [
+            ["frame", "perimeter", 1, "m"],
+            ["mesh", "area", 1, "sqm"],
+            ["track", "track_count", 1, "length"],
+            ["wheel", "per_qty", 2, "pcs"],
+            ["lock", "per_qty", 1, "set"],
+            ["screw", "per_qty", 8, "pcs"]
+          ],
+          roller: [
+            ["frame", "perimeter", 1, "m"],
+            ["mesh", "area", 1, "sqm"],
+            ["handle", "per_qty", 1, "pcs"],
+            ["accessory", "per_qty", 1, "set"]
+          ],
+          security: [
+            ["frame", "perimeter", 1, "m"],
+            ["mesh", "area", 1, "sqm"],
+            ["lock", "per_qty", 1, "set"],
+            ["screw", "per_qty", 10, "pcs"],
+            ["accessory", "per_qty", 1, "set"]
+          ]
+        };
+      }
+      function applyMappingTemplate() {
+        const productId = document.getElementById("templateProductId").value;
+        const templateId = document.getElementById("mappingTemplateId").value;
+        const templateRows = mappingTemplates()[templateId] || [];
+        if (!productId || !templateRows.length) {
+          toast("Choose product and template.");
+          return;
+        }
+        const existing = productMaterialMappings.filter((mapping) => mapping.productId === productId);
+        if (existing.length && !confirm("This product already has mapping. Template will add new rows without deleting existing rows. Continue?")) return;
+        const rows = templateRows.map(([materialRole, formulaType, baseQty, deductUnit]) => ({
+          id: `mapping-${uid()}`,
+          productId,
+          inventoryItemId: inventoryForTemplateRole(materialRole),
+          materialRole,
+          formulaType,
+          baseQty,
+          wastagePercent: 5,
+          deductUnit,
+          active: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        })).filter((row) => row.inventoryItemId);
+        if (!rows.length) {
+          toast("No inventory item available for this template.");
+          return;
+        }
+        productMaterialMappings = [...rows, ...productMaterialMappings];
+        localStorage.setItem(productMaterialMappingsKey, JSON.stringify(productMaterialMappings));
+        toast(`${rows.length} template rows added.`);
+        render();
+      }
       function setMappingPreviewProduct(value) {
         mappingPreviewProductId = value;
         mappingPreviewItemId = "";
@@ -4741,6 +4925,7 @@
       function hasAppointmentConflict(nextAppointment) {
         return appointments.some((appointment) =>
           appointment.id !== nextAppointment.id &&
+          appointment.status !== "cancelled" &&
           appointment.assignedStaff &&
           nextAppointment.assignedStaff &&
           appointment.assignedStaff.trim().toLowerCase() === nextAppointment.assignedStaff.trim().toLowerCase() &&
@@ -4748,41 +4933,83 @@
           appointment.appointmentTime === nextAppointment.appointmentTime
         );
       }
-      async function syncAppointmentToGoogle(id) {
+      function googleSyncErrorMessage(error) {
+        return error && error.message ? error.message : String(error || "Google Calendar sync failed.");
+      }
+      function googleAppointmentPayload(appointment, action = "upsert") {
+        return {
+          action,
+          id: appointment.id,
+          googleEventId: appointment.googleEventId || "",
+          customer_name: appointment.customerName || "",
+          customerName: appointment.customerName || "",
+          phone: appointment.phone || "",
+          address: appointment.address || "",
+          product: appointment.product || "",
+          appointment_date: appointment.appointmentDate || "",
+          appointmentDate: appointment.appointmentDate || "",
+          appointment_time: appointment.appointmentTime || "",
+          appointmentTime: appointment.appointmentTime || "",
+          assigned_staff: appointment.assignedStaff || "",
+          assignedStaff: appointment.assignedStaff || "",
+          remarks: appointment.remarks || "",
+          status: appointment.status || "scheduled"
+        };
+      }
+      function setAppointmentGoogleState(id, patch) {
+        appointments = appointments.map((item) => item.id === id ? {
+          ...item,
+          ...patch,
+          updatedAt: new Date().toISOString()
+        } : item);
+        localStorage.setItem(appointmentsKey, JSON.stringify(appointments));
+      }
+      async function syncAppointmentToGoogle(id, action = "upsert") {
         const appointment = appointments.find((item) => item.id === id);
         if (!appointment) return;
         if (!googleCalendarWebhook) {
           appointments = appointments.map((item) => item.id === id ? {
             ...item,
             googleStatus: "Calendar Link Ready",
-            googleEventLink: item.googleEventLink || googleCalendarUrl(item)
+            googleEventLink: item.googleEventLink || googleCalendarUrl(item),
+            googleSyncError: "",
+            googleLastSyncedAt: ""
           } : item);
           localStorage.setItem(appointmentsKey, JSON.stringify(appointments));
           render();
           return;
         }
+        setAppointmentGoogleState(id, { googleStatus: "Pending", googleSyncError: "" });
+        render();
         try {
           const response = await fetch(googleCalendarWebhook, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: "upsert", appointment })
+            body: JSON.stringify({
+              action,
+              appointment: googleAppointmentPayload(appointment, action)
+            })
           });
-          if (!response.ok) throw new Error("Google Calendar webhook failed.");
+          if (!response.ok) throw new Error(`Google Calendar webhook failed (${response.status}).`);
           const result = await response.json();
+          if (result && result.error) throw new Error(result.error);
+          const now = new Date().toISOString();
           appointments = appointments.map((item) => item.id === id ? {
             ...item,
-            googleEventId: result.eventId || item.googleEventId,
-            googleEventLink: result.htmlLink || result.googleEventLink || item.googleEventLink || googleCalendarUrl(item),
+            googleEventId: result.eventId || result.googleEventId || item.googleEventId,
+            googleEventLink: result.eventLink || result.htmlLink || result.googleEventLink || item.googleEventLink || googleCalendarUrl(item),
             googleStatus: "Synced",
-            updatedAt: new Date().toISOString()
+            googleSyncError: "",
+            googleLastSyncedAt: now,
+            updatedAt: now
           } : item);
           localStorage.setItem(appointmentsKey, JSON.stringify(appointments));
-          toast("Google Calendar event synced.");
+          toast(action === "delete" ? "Google Calendar event cancelled." : "Google Calendar event synced.");
           render();
         } catch (error) {
-          appointments = appointments.map((item) => item.id === id ? { ...item, googleStatus: "Sync Failed" } : item);
-          localStorage.setItem(appointmentsKey, JSON.stringify(appointments));
-          toast("Google Calendar sync failed. Check webhook setup.");
+          const message = googleSyncErrorMessage(error);
+          setAppointmentGoogleState(id, { googleStatus: "Failed", googleSyncError: message });
+          toast(`Google Calendar sync failed: ${message}`);
           render();
         }
       }
@@ -4825,7 +5052,11 @@
           remarks: document.getElementById("appointmentRemarks").value.trim(),
           googleEventId: existing ? existing.googleEventId : "",
           googleEventLink: existing ? existing.googleEventLink : "",
-          googleStatus: existing ? existing.googleStatus : "Not Synced",
+          googleStatus: "Pending",
+          googleSyncError: "",
+          googleLastSyncedAt: existing ? existing.googleLastSyncedAt || "" : "",
+          status: "scheduled",
+          cancelledAt: "",
           reminderSentAt: existing ? existing.reminderSentAt : ""
         };
         if (!appointment.customerName || !appointment.phone || !appointment.appointmentDate || !appointment.appointmentTime || !appointment.assignedStaff) {
@@ -4859,9 +5090,19 @@
       }
       function deleteAppointment(id) {
         const appointment = appointments.find((item) => item.id === id);
-        if (!appointment || !confirm(`Delete appointment for ${appointment.customerName}?`)) return;
-        appointments = appointments.filter((item) => item.id !== id);
+        if (!appointment || !confirm(`Cancel appointment for ${appointment.customerName}?`)) return;
+        const now = new Date().toISOString();
+        appointments = appointments.map((item) => item.id === id ? {
+          ...item,
+          status: "cancelled",
+          cancelledAt: now,
+          googleStatus: item.googleEventId ? "Pending" : "Calendar Link Ready",
+          googleSyncError: "",
+          updatedAt: now
+        } : item);
         localStorage.setItem(appointmentsKey, JSON.stringify(appointments));
+        if (appointment.googleEventId && googleCalendarWebhook) syncAppointmentToGoogle(id, "delete");
+        else toast("Appointment cancelled in CRM.");
         render();
       }
       function setCalendarView(view) {
@@ -5373,6 +5614,50 @@
           </div>
           <div class="item-card">
             <div class="item-head">
+              <div>
+                <h3>Add Multiple Mapping Rows</h3>
+                <p style="color:var(--muted);margin-top:5px;font-size:13px">Fill several rows first, then save all together.</p>
+              </div>
+              <button class="btn" onclick="addBulkMappingRow()">Add Row</button>
+            </div>
+            <div class="field" style="max-width:360px"><label>Target Product</label><select id="bulkMappingProductId">${products.map((item) => `<option value="${item.id}">${englishProductName(item.name)}</option>`).join("")}</select></div>
+            ${Array.from({ length: mappingBulkRowCount }).map((_, index) => `
+              <div class="item-card" style="box-shadow:none;margin-top:10px">
+                <div class="form-grid">
+                  <div class="field"><label>Inventory Item</label><select id="bulkMapping${index}InventoryItemId"><option value="">Skip this row</option>${inventory.filter((item) => item.active !== false).map((item) => `<option value="${item.id}">${item.name} - ${item.category || "General"}</option>`).join("")}</select></div>
+                  <div class="field"><label>Material Role</label><select id="bulkMapping${index}MaterialRole">${mappingOption(materialRoles, "frame")}</select></div>
+                  <div class="field"><label>Formula Type</label><select id="bulkMapping${index}FormulaType">${mappingOption(mappingFormulaTypes, "per_qty")}</select></div>
+                  <div class="field"><label>Base Qty</label><input id="bulkMapping${index}BaseQty" type="number" step="0.0001" value="1" /></div>
+                  <div class="field"><label>Wastage %</label><input id="bulkMapping${index}WastagePercent" type="number" step="0.01" value="0" /></div>
+                  <div class="field"><label>Deduct Unit</label><select id="bulkMapping${index}DeductUnit">${mappingOption(mappingDeductUnits, "pcs")}</select></div>
+                  <div class="field"><label>Status</label><select id="bulkMapping${index}Active"><option value="true">Active</option><option value="false">Inactive</option></select></div>
+                </div>
+              </div>
+            `).join("")}
+            <button class="btn primary" style="margin-top:12px" onclick="saveAllMappingRows()">Save All</button>
+          </div>
+          <div class="item-card">
+            <div class="item-head"><h3>Copy Mapping From Product</h3><span class="pill">Append Only</span></div>
+            <div class="form-grid">
+              <div class="field"><label>Copy From</label><select id="copyMappingSourceProductId">${products.map((item) => `<option value="${item.id}">${englishProductName(item.name)}</option>`).join("")}</select></div>
+              <div class="field"><label>Copy To</label><select id="copyMappingTargetProductId">${products.map((item) => `<option value="${item.id}">${englishProductName(item.name)}</option>`).join("")}</select></div>
+            </div>
+            <button class="btn primary" style="margin-top:12px" onclick="copyMappingFromProduct()">Copy Mapping</button>
+          </div>
+          <div class="item-card">
+            <div class="item-head"><h3>Mapping Template</h3><span class="pill">Editable After Apply</span></div>
+            <div class="form-grid">
+              <div class="field"><label>Product</label><select id="templateProductId">${products.map((item) => `<option value="${item.id}">${englishProductName(item.name)}</option>`).join("")}</select></div>
+              <div class="field"><label>Template</label><select id="mappingTemplateId">
+                <option value="sliding">Sliding Screen Template</option>
+                <option value="roller">Roller Screen Template</option>
+                <option value="security">Security Mesh Template</option>
+              </select></div>
+            </div>
+            <button class="btn primary" style="margin-top:12px" onclick="applyMappingTemplate()">Apply Template</button>
+          </div>
+          <div class="item-card">
+            <div class="item-head">
               <h3>Mapping Preview</h3>
               <span class="pill">No Stock Deduction</span>
             </div>
@@ -5402,7 +5687,10 @@
                   <div class="field"><label>Deduct Unit</label><select onchange="updateMapping('${mapping.id}','deductUnit',this.value)">${mappingOption(mappingDeductUnits, mapping.deductUnit)}</select></div>
                   <div class="field"><label>Status</label><select onchange="updateMapping('${mapping.id}','active',this.value)"><option value="true" ${mapping.active !== false ? "selected" : ""}>Active</option><option value="false" ${mapping.active === false ? "selected" : ""}>Inactive</option></select></div>
                 </div>
-                <p style="color:var(--muted);margin-top:8px;font-size:13px">Linked item: ${inventoryName(mapping.inventoryItemId)}</p>
+                <div class="item-head" style="margin-top:8px;margin-bottom:0">
+                  <p style="color:var(--muted);font-size:13px">Linked item: ${inventoryName(mapping.inventoryItemId)}</p>
+                  <button class="btn" onclick="duplicateMapping('${mapping.id}')">Duplicate Row</button>
+                </div>
               </div>
             `).join("") : `<p style="color:var(--muted)">No mapping rules yet.</p>`}
           </div>
@@ -5864,7 +6152,7 @@
                   ${rows.map((appointment) => `<div class="calendar-event">
                     <strong>${appointment.appointmentTime} ${appointment.customerName}</strong>
                     <p>${appointment.product || "-"}</p>
-                    <p style="color:var(--muted)">${appointment.assignedStaff || "-"} | ${appointment.googleStatus || "Not Synced"}</p>
+                    <p style="color:var(--muted)">${appointment.assignedStaff || "-"} | ${appointment.status === "cancelled" ? "Cancelled" : "Scheduled"} | ${appointment.googleStatus || "Pending"}</p>
                   </div>`).join("") || `<p style="color:var(--muted);font-size:12px">No appointment</p>`}
                 </div>`;
               }).join("")}
@@ -5875,21 +6163,25 @@
             ${sortedAppointments.length ? sortedAppointments.map((appointment) => `
               <div class="history-card">
                 <div>
-                  <strong>${appointment.customerName}</strong> <span class="pill">${appointment.appointmentDate} ${appointment.appointmentTime}</span>
+                  <strong>${appointment.customerName}</strong> <span class="pill">${appointment.appointmentDate} ${appointment.appointmentTime}</span> <span class="pill" style="${appointment.status === "cancelled" ? "background:#fef2f2;color:#991b1b" : ""}">${appointment.status === "cancelled" ? "Cancelled" : "Scheduled"}</span>
                   <p style="color:var(--muted);margin-top:5px">${appointment.phone || "-"} - ${appointment.assignedStaff || "-"}</p>
                   <p style="white-space:pre-wrap;color:var(--muted)">${appointment.address || "-"}</p>
                   <div class="order-items">
                     <div class="payment-row"><span>Product</span><strong>${appointment.product || "-"}</strong></div>
-                    <div class="payment-row"><span>Google Calendar</span><strong>${appointment.googleStatus || "Not Synced"}</strong></div>
+                    <div class="payment-row"><span>Status</span><strong>${appointment.status === "cancelled" ? "Cancelled" : "Scheduled"}</strong></div>
+                    <div class="payment-row"><span>Google Status</span><strong>${appointment.googleStatus || "Pending"}</strong></div>
+                    <div class="payment-row"><span>Last Synced</span><strong>${appointment.googleLastSyncedAt ? String(appointment.googleLastSyncedAt).slice(0, 19).replace("T", " ") : "-"}</strong></div>
+                    ${appointment.cancelledAt ? `<div class="payment-row"><span>Cancelled At</span><strong>${String(appointment.cancelledAt).slice(0, 19).replace("T", " ")}</strong></div>` : ""}
                     ${appointment.googleEventId ? `<div class="payment-row"><span>Google Event ID</span><strong>${appointment.googleEventId}</strong></div>` : ""}
+                    ${appointment.googleSyncError ? `<div class="payment-row"><span>Sync Error</span><strong style="color:#991b1b">${appointment.googleSyncError}</strong></div>` : ""}
                   </div>
                   ${appointment.remarks ? `<p style="white-space:pre-wrap;color:var(--muted);margin-top:6px">${appointment.remarks}</p>` : ""}
                 </div>
                 <div class="history-actions">
                   ${appointment.googleEventLink ? `<button class="btn" onclick="window.open('${appointment.googleEventLink}', '_blank')">Open Calendar</button>` : `<button class="btn" onclick="window.open('${googleCalendarUrl(appointment)}', '_blank')">Add Calendar</button>`}
                   <button class="btn" onclick="editAppointment('${appointment.id}')">Edit</button>
-                  <button class="btn" onclick="syncAppointmentToGoogle('${appointment.id}')">Sync</button>
-                  <button class="btn danger" onclick="deleteAppointment('${appointment.id}')">Delete</button>
+                  <button class="btn" onclick="syncAppointmentToGoogle('${appointment.id}', '${appointment.status === "cancelled" ? "delete" : "upsert"}')">${appointment.googleStatus === "Failed" ? "Retry Sync" : "Sync"}</button>
+                  <button class="btn danger" onclick="deleteAppointment('${appointment.id}')">Cancel Appointment</button>
                 </div>
               </div>
             `).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No appointments yet.</p>`}
