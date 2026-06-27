@@ -24,7 +24,7 @@
       }
       html { max-width: 100%; }
       button, input, select, textarea { font: inherit; }
-      button { cursor: pointer; }
+      button { cursor: pointer; touch-action: manipulation; }
       .topbar {
         position: sticky;
         top: 0;
@@ -553,29 +553,8 @@
         table { min-width: 0; }
       }
     </style>
-      <meta name="google-site-verification" content="puBEvWdWzBbxZBnQF7Fdhih0mY9dkqa5bHY-0EgGaUs" />
   </head>
   <body>
-<script>
-(function () {
-  var url = "https://aipybobjyctpzmpfxvrk.supabase.co";
-  var anonKey = "sb_publishable_W15IbmPambSaNP8eEFNcUw_3x16p5xH";
-  var googleCalendarWebhook = "";
-  var siteUrl = "";
-  if (url) {
-    localStorage.setItem("eco-screen-supabase-url", url);
-  }
-  if (anonKey) {
-    localStorage.setItem("eco-screen-supabase-anon-key", anonKey);
-  }
-  if (googleCalendarWebhook) {
-    localStorage.setItem("eco-screen-google-calendar-webhook", googleCalendarWebhook);
-  }
-  if (siteUrl) {
-    localStorage.setItem("eco-screen-site-url", siteUrl.replace(/\/$/, ""));
-  }
-})();
-</script>
     <div id="toast" class="toast"></div>
     <div id="copyModal" class="copy-modal no-print">
       <div class="copy-card">
@@ -706,17 +685,22 @@
           <div id="orders"></div>
         </section>
 
+        <section class="panel history no-print" data-page="invoice" data-roles="admin sales secretary">
+          <div class="panel-head"><h2>Invoice Page</h2></div>
+          <div id="invoices"></div>
+        </section>
+
         <section class="panel history no-print" data-page="pending-balance" data-roles="admin secretary">
           <div class="panel-head"><h2>Pending Balance Page</h2></div>
           <div id="pendingBalances"></div>
         </section>
 
-        <section class="panel history no-print" data-page="production" data-roles="admin production">
+        <section class="panel history no-print" data-page="production" data-roles="admin production secretary">
           <div class="panel-head"><h2>Production Sheets</h2></div>
           <div id="productions"></div>
         </section>
 
-        <section class="panel history no-print" data-page="production-status" data-roles="admin production">
+        <section class="panel history no-print" data-page="production-status" data-roles="admin production secretary">
           <div class="panel-head"><h2>Production Status</h2></div>
           <div id="productionStatus"></div>
         </section>
@@ -762,12 +746,12 @@
           <div id="appointments"></div>
         </section>
 
-        <section class="panel history no-print" data-page="facebook-ads" data-roles="admin sales secretary">
+        <section class="panel history no-print" data-page="facebook-ads" data-roles="admin">
           <div class="panel-head"><h2>Facebook Ads Dashboard</h2></div>
           <div id="facebookAds"></div>
         </section>
 
-        <section class="panel history no-print" data-page="financial" data-roles="admin secretary">
+        <section class="panel history no-print" data-page="financial" data-roles="admin">
           <div class="panel-head"><h2>Financial Dashboard</h2></div>
           <div id="financialDashboard"></div>
         </section>
@@ -799,6 +783,7 @@
       const productsKey = "eco-screen-products";
       const quotesKey = "eco-screen-quotes";
       const ordersKey = "eco-screen-orders";
+      const invoicesKey = "eco-screen-invoices";
       const productionsKey = "eco-screen-productions";
       const installationsKey = "eco-screen-installations";
       const completionRecordsKey = "eco-screen-completion-records";
@@ -879,6 +864,7 @@
           ["appointment", "Appointment"],
           ["follow-up", "Follow Up"],
           ["order", "Order"],
+          ["invoice", "Invoice"],
           ["facebook-ads", "Facebook Ads"],
           ["production", "Production"],
           ["production-status", "Production Status"],
@@ -900,7 +886,7 @@
           ["appointment", "Appointment"],
           ["follow-up", "Follow Up"],
           ["order", "Order"],
-          ["facebook-ads", "Facebook Ads"],
+          ["invoice", "Invoice"],
           ["warranty", "Warranty"]
         ],
         secretary: [
@@ -909,10 +895,11 @@
           ["appointment", "Appointment"],
           ["follow-up", "Follow Up"],
           ["order", "Order"],
+          ["invoice", "Invoice"],
+          ["production", "Pending Production"],
+          ["production-status", "Production Status"],
           ["installation", "Installation"],
           ["pending-balance", "Pending Balance"],
-          ["financial", "Financial Dashboard"],
-          ["facebook-ads", "Facebook Ads"],
           ["warranty", "Warranty"]
         ],
         production: [
@@ -927,6 +914,41 @@
           ["warranty", "Warranty"]
         ]
       };
+      const PERMISSIONS = {
+        admin: ["*"],
+        sales: [
+          "quote:save", "quote:convert", "quote:edit",
+          "customer:edit", "appointment:save", "appointment:sync", "appointment:cancel",
+          "followup:edit", "order:view", "invoice:manage", "warranty:view",
+          "production:generate", "installation:generate"
+        ],
+        secretary: [
+          "quote:save", "quote:convert", "quote:edit",
+          "customer:edit", "appointment:save", "appointment:sync", "appointment:cancel",
+          "followup:edit", "order:view", "invoice:manage", "pending:view", "warranty:view",
+          "production:view", "production:generate",
+          "installation:view", "installation:schedule", "installation:update", "installation:generate",
+          "payment:record"
+        ],
+        production: ["production:view", "production:update"],
+        installer: [
+          "installation:view", "installation:update", "installation:collection",
+          "signature:update", "completion:generate", "review:update", "warranty:view",
+          "payment:record"
+        ]
+      };
+      function can(action) {
+        const allowed = PERMISSIONS[currentRole] || [];
+        return allowed.includes("*") || allowed.includes(action);
+      }
+      function normalizeRoleName(role) {
+        return role === "boss" ? "admin" : role;
+      }
+      function requirePermission(action) {
+        if (can(action)) return true;
+        toast("Permission denied: your role cannot perform this action.");
+        return false;
+      }
       const checklistLabels = [
         ["arrived", "Arrived On Site"],
         ["installed", "Installation Completed"],
@@ -973,6 +995,7 @@
       products = ensureProductList(products);
       let quotes = normalizeQuotes(safeJsonParse(localStorage.getItem(quotesKey), []));
       let orders = normalizeOrders(safeJsonParse(localStorage.getItem(ordersKey), []));
+      let invoices = safeArray(safeJsonParse(localStorage.getItem(invoicesKey), []));
       let productions = normalizeProductions(safeJsonParse(localStorage.getItem(productionsKey), []));
       let installations = normalizeInstallations(safeJsonParse(localStorage.getItem(installationsKey), []));
       let completionRecords = safeArray(safeJsonParse(localStorage.getItem(completionRecordsKey), []));
@@ -985,10 +1008,19 @@
       let inventory = normalizeInventory(safeJsonParse(localStorage.getItem(inventoryKey), []));
       let productMaterialMappings = normalizeProductMaterialMappings(safeJsonParse(localStorage.getItem(productMaterialMappingsKey), []));
       let facebookAds = safeArray(safeJsonParse(localStorage.getItem(facebookAdsKey), []));
+      let metaAdsDaily = [];
+      let metaAdsLoadAttempted = false;
+      let metaAdsSyncState = {
+        syncing: false,
+        status: "",
+        error: "",
+        lastSyncedAt: "",
+        rowsSynced: 0
+      };
       let appointments = normalizeAppointments(safeJsonParse(localStorage.getItem(appointmentsKey), []));
       let customerCrm = safeObject(safeJsonParse(localStorage.getItem(customerCrmKey), {}));
       let staffProfiles = [];
-      let currentRole = localStorage.getItem(roleKey) || "admin";
+      let currentRole = normalizeRoleName(localStorage.getItem(roleKey) || "admin");
       let currentLanguage = localStorage.getItem(languageKey) || "en";
       if (!roleMenus[currentRole]) currentRole = "admin";
       let currentPage = roleMenus[currentRole][0][0];
@@ -1005,6 +1037,7 @@
         productsKey,
         quotesKey,
         ordersKey,
+        invoicesKey,
         productionsKey,
         installationsKey,
         completionRecordsKey,
@@ -1036,6 +1069,7 @@
           "Appointment": "预约",
           "Follow Up": "跟进",
           "Order": "订单",
+          "Invoice": "发票",
           "Production Order": "生产单",
           "Production": "生产单",
           "Production Status": "生产状态",
@@ -1069,6 +1103,22 @@
         "Save": "保存",
         "Save Quote": "保存报价",
         "Update Quote": "更新报价",
+        "Invoice Page": "发票页面",
+        "Create Invoice": "创建发票",
+        "Print Order": "打印订单",
+        "PDF Order": "订单 PDF",
+        "Print Production": "打印生产单",
+        "Print Installation": "打印安装单",
+        "Print Invoice": "打印发票",
+        "PDF Invoice": "发票 PDF",
+        "Mark as Paid": "标记已付",
+        "Invoice Date": "发票日期",
+        "Order Number": "订单编号",
+        "Quotation Number": "报价单编号",
+        "Deposit Paid": "已付订金",
+        "Balance Due": "应付余额",
+        "Payment Method": "付款方式",
+        "Notes / Terms": "备注 / 条款",
         "New Quote": "新报价",
         "Customer Name": "客户名字",
         "Phone Number": "电话号码",
@@ -1345,6 +1395,15 @@
         "Inventory": "库存",
         "Warranty": "保固",
         "Facebook Ads Dashboard": "Facebook 广告 Dashboard",
+        "Meta Ads Sync": "Meta 广告同步",
+        "Sync Meta Ads": "同步 Meta 广告",
+        "Syncing...": "同步中...",
+        "Reload Synced Data": "重新载入同步数据",
+        "Sync Date From": "同步开始日期",
+        "Sync Date To": "同步结束日期",
+        "Last Synced": "最后同步",
+        "Supabase Synced Data": "Supabase 同步数据",
+        "Manual Fallback Data": "手动备用数据",
         "Campaign Name": "Campaign 名字",
         "Ad Set Name": "Ad Set 名字",
         "Ad Name": "Ad 名字",
@@ -2762,6 +2821,16 @@
           .reduce((max, no) => Math.max(max, no), 0) + 1;
         return `ESO-${year}-${String(next).padStart(4, "0")}`;
       }
+      function makeInvoiceNo() {
+        const year = new Date().getFullYear();
+        const next = invoices
+          .map((invoice) => invoice.invoiceNo)
+          .filter((no) => no && no.startsWith(`INV-${year}-`))
+          .map((no) => Number(no.split("-").pop()))
+          .filter(Number.isFinite)
+          .reduce((max, no) => Math.max(max, no), 0) + 1;
+        return `INV-${year}-${String(next).padStart(4, "0")}`;
+      }
       function makeProductionNo() {
         const year = new Date().getFullYear();
         const next = productions
@@ -3243,6 +3312,7 @@
         setTimeout(() => el.classList.remove("show"), 2200);
       }
       function setRole(role) {
+        role = normalizeRoleName(role);
         if (cloudState.session && cloudState.role && cloudState.role !== "admin" && role !== cloudState.role) {
           toast("This login does not have permission for that role.");
           return;
@@ -3310,9 +3380,22 @@
           const visible = rolesAllowed.includes(currentRole) && page === currentPage;
           section.classList.toggle("page-hidden", !visible);
         });
-        const actionVisible = (currentRole === "admin" || currentRole === "sales" || currentRole === "secretary") && currentPage === "quotation";
+        const actionVisible = can("quote:save") && currentPage === "quotation";
         document.querySelector(".bottom-actions").classList.toggle("page-hidden", !actionVisible);
         document.querySelector(".topbar .actions").classList.toggle("page-hidden", !actionVisible);
+      }
+      function normalizeInteractiveElements() {
+        document.querySelectorAll("button:not([type])").forEach((button) => {
+          button.setAttribute("type", "button");
+        });
+        document.querySelectorAll("button").forEach((button) => {
+          if (!button.dataset.clickNormalized) {
+            button.dataset.clickNormalized = "true";
+            button.addEventListener("click", (event) => {
+              event.stopPropagation();
+            });
+          }
+        });
       }
       async function copyText(text) {
         try {
@@ -3450,7 +3533,7 @@
         }
       }
       async function createStaffAccount() {
-        if (currentRole !== "admin" || cloudState.role !== "admin") return toast("Admin only.");
+        if (!requirePermission("staff:manage") || cloudState.role !== "admin") return;
         const email = document.getElementById("staffEmail").value.trim();
         const password = document.getElementById("staffPassword").value;
         const role = document.getElementById("staffRole").value;
@@ -3480,7 +3563,7 @@
         }
       }
       async function updateStaffProfile(id, field, value) {
-        if (currentRole !== "admin" || cloudState.role !== "admin") return toast("Admin only.");
+        if (!requirePermission("staff:manage") || cloudState.role !== "admin") return;
         const body = { [field]: field === "active" ? value === true || value === "true" : value, updated_at: new Date().toISOString() };
         try {
           await supabaseFetch(`/rest/v1/eco_screen_profiles?id=eq.${id}`, {
@@ -3549,7 +3632,7 @@
         try {
           const rows = await supabaseFetch(`/rest/v1/eco_screen_profiles?id=eq.${cloudState.session.user.id}&select=id,email,role,active`);
           const profile = rows && rows[0] || {};
-          cloudState.role = profile.role || "sales";
+          cloudState.role = normalizeRoleName(profile.role || "sales");
           cloudState.email = profile.email || cloudState.session.user.email || "";
           cloudState.active = profile.active !== false;
           if (!cloudState.active) {
@@ -3568,7 +3651,7 @@
           try {
             const rows = await supabaseFetch(`/rest/v1/eco_screen_profiles?id=eq.${cloudState.session.user.id}&select=id,email,role`);
             const profile = rows && rows[0] || {};
-            cloudState.role = profile.role || "sales";
+            cloudState.role = normalizeRoleName(profile.role || "sales");
             cloudState.email = profile.email || cloudState.session.user.email || "";
             cloudState.active = true;
           } catch (fallbackError) {
@@ -4216,6 +4299,240 @@
           }
         }, 150);
       }
+      function printableDocument(title, bodyHtml) {
+        return `<!doctype html>
+          <html>
+            <head>
+              <meta charset="utf-8" />
+              <title>${title}</title>
+              <style>
+                @page { size: A4; margin: 12mm; }
+                body { font-family: Arial, sans-serif; color: #0f172a; margin: 0; }
+                .doc { max-width: 780px; margin: 0 auto; padding: 18px; }
+                .head { display: flex; justify-content: space-between; gap: 18px; border-bottom: 2px solid #047857; padding-bottom: 14px; margin-bottom: 18px; }
+                .logo { width: 52px; height: 52px; border-radius: 12px; background: #047857; color: white; display: grid; place-items: center; font-weight: 900; font-size: 18px; }
+                h1, h2, h3 { margin: 0; }
+                h1 { color: #047857; font-size: 26px; }
+                h2 { font-size: 20px; text-align: right; }
+                p { margin: 4px 0; }
+                .muted { color: #64748b; font-size: 13px; }
+                .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 18px; margin-bottom: 16px; }
+                .box { border: 1px solid #cbd5e1; border-radius: 10px; padding: 10px; }
+                table { width: 100%; border-collapse: collapse; margin: 14px 0; }
+                th { background: #ecfdf5; color: #065f46; text-align: left; }
+                th, td { border: 1px solid #cbd5e1; padding: 8px; vertical-align: top; font-size: 13px; }
+                .right { text-align: right; }
+                .totals { margin-left: auto; width: 330px; }
+                .row { display: flex; justify-content: space-between; border-bottom: 1px solid #e2e8f0; padding: 7px 0; }
+                .sign { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 28px; }
+                .line { border-top: 1px solid #334155; padding-top: 6px; min-height: 46px; }
+                img.signature { max-width: 220px; border: 1px solid #cbd5e1; border-radius: 8px; background: white; }
+              </style>
+            </head>
+            <body><div class="doc">${bodyHtml}</div></body>
+          </html>`;
+      }
+      function documentHeader(title, number) {
+        return `<div class="head">
+          <div style="display:flex;gap:12px;align-items:flex-start">
+            <div class="logo">ES</div>
+            <div>
+              <h1>${companyInfo.name}</h1>
+              <p>${companyInfo.address}</p>
+              <p>Tel: ${companyInfo.phone}</p>
+            </div>
+          </div>
+          <div><h2>${title}</h2><p><strong>${number || ""}</strong></p><p class="muted">${today()}</p></div>
+        </div>`;
+      }
+      function openPrintDocument(title, bodyHtml) {
+        const printWindow = window.open("", "_blank");
+        if (!printWindow) {
+          toast("Popup blocked. Please allow popups and try again.");
+          return;
+        }
+        printWindow.document.open();
+        printWindow.document.write(printableDocument(title, bodyHtml));
+        printWindow.document.close();
+        setTimeout(() => {
+          try {
+            printWindow.focus();
+            printWindow.print();
+          } catch (error) {
+            toast("Please press Ctrl + P in the print window.");
+          }
+        }, 150);
+      }
+      function itemRowsHtml(list, showPrice = true) {
+        return safeArray(list).map((item) => {
+          const unit = itemUnitPrice(item);
+          const amount = itemTotal(item);
+          return `<tr>
+            <td>${item.label || "-"}</td>
+            <td>${productDisplayName(item.productId)}</td>
+            <td>${item.widthMm || 0} x ${item.heightMm || 0}</td>
+            <td class="right">${item.quantity || 0}</td>
+            <td>${item.color || "-"}</td>
+            <td>${item.meshType || product(item.productId).category || "-"}</td>
+            ${showPrice ? `<td class="right">${money(unit)}</td><td class="right">${money(amount)}</td>` : ""}
+            <td>${itemExtraDetails(item) || item.remark || "-"}</td>
+          </tr>`;
+        }).join("");
+      }
+      function orderDocumentHtml(order) {
+        return documentHeader("Order", order.orderNo) + `
+          <div class="grid">
+            <div class="box"><strong>Customer</strong><p>${order.customer.name || "-"}</p><p>${order.customer.phone || "-"}</p><p>${order.customer.address || "-"}</p></div>
+            <div class="box"><strong>Order Details</strong><p>Quotation: ${order.quoteNo || "-"}</p><p>Order Date: ${String(order.createdAt || "").slice(0, 10) || "-"}</p><p>Installation Date: ${order.installationDate || "-"}</p></div>
+          </div>
+          <table><thead><tr><th>Location</th><th>Product Type</th><th>W x H mm</th><th class="right">Qty</th><th>Color</th><th>Mesh Type</th><th class="right">Unit Price</th><th class="right">Amount</th><th>Remarks</th></tr></thead><tbody>${itemRowsHtml(order.items, true)}</tbody></table>
+          <div class="totals">
+            <div class="row"><span>Subtotal</span><strong>${money(order.subtotal || order.total)}</strong></div>
+            <div class="row"><span>Discount</span><strong>${money(order.discount || 0)}</strong></div>
+            <div class="row"><span>Total</span><strong>${money(order.total)}</strong></div>
+            <div class="row"><span>Deposit</span><strong>${money(order.deposit)}</strong></div>
+            <div class="row"><span>Balance</span><strong>${money(unpaidTotal(order))}</strong></div>
+          </div>
+          <div class="box" style="margin-top:16px"><strong>Remarks</strong><p>${order.installationNotes || "-"}</p></div>`;
+      }
+      function printOrder(orderId) {
+        const order = orders.find((item) => item.id === orderId);
+        if (!order) return;
+        openPrintDocument(`Order ${order.orderNo}`, orderDocumentHtml(order));
+      }
+      function downloadOrderPdf(orderId) { printOrder(orderId); }
+      function productionDocumentHtml(production) {
+        return documentHeader("Production Job Sheet", production.productionNo) + `
+          <div class="grid">
+            <div class="box"><strong>Customer</strong><p>${production.customer.name || "-"}</p></div>
+            <div class="box"><strong>Job Details</strong><p>Order: ${production.orderNo || "-"}</p><p>Due Date: ${production.dueDate || "-"}</p><p>Status: ${production.status || "-"}</p><p>Completed Date: ${String(production.completedAt || "").slice(0, 10) || "-"}</p></div>
+          </div>
+          <table><thead><tr><th>Location</th><th>Product Name</th><th>W x H mm</th><th class="right">Qty</th><th>Frame Color</th><th>Mesh Type</th><th>Track Type</th><th>Lock Type</th><th>Production Remarks</th></tr></thead><tbody>
+            ${safeArray(production.items).map((item) => `<tr><td>${item.label || "-"}</td><td>${productDisplayName(item.productId)}</td><td>${item.widthMm || 0} x ${item.heightMm || 0}</td><td class="right">${item.quantity || 0}</td><td>${item.color || "-"}</td><td>${item.meshType || product(item.productId).category || "-"}</td><td>${item.trackType || "-"}</td><td>${item.lockSet || item.lockType || "-"}</td><td>${item.remark || production.delayReason || "-"}</td></tr>`).join("")}
+          </tbody></table>
+          <div class="sign"><div class="line">Prepared by</div><div class="line">Checked by</div></div>`;
+      }
+      function printProduction(productionId) {
+        const production = productions.find((item) => item.id === productionId);
+        if (!production) return;
+        openPrintDocument(`Production ${production.productionNo}`, productionDocumentHtml(production));
+      }
+      function installationDocumentHtml(installation) {
+        return documentHeader("Installation Job Sheet", installation.installationNo) + `
+          <div class="grid">
+            <div class="box"><strong>Customer</strong><p>${installation.customer.name || "-"}</p><p>${installation.customer.phone || "-"}</p><p>${installation.customer.address || "-"}</p></div>
+            <div class="box"><strong>Installation</strong><p>Order: ${installation.orderNo || "-"}</p><p>Appointment: ${installation.installationDate || "-"} ${installation.arrivalTime || ""}</p><p>Installer: ${installation.installerName || "-"}</p><p>Completed Date: ${installation.completedDate || "-"}</p></div>
+          </div>
+          <table><thead><tr><th>Location</th><th>Product</th><th>W x H mm</th><th class="right">Qty</th><th>Color</th><th>Mesh Type</th><th>Remarks</th></tr></thead><tbody>${itemRowsHtml(installation.items, false)}</tbody></table>
+          <div class="grid">
+            <div class="box"><strong>Installation Remarks</strong><p>${installation.installationNotes || installation.siteIssue || "-"}</p></div>
+            <div class="box"><strong>Balance to Collect</strong><p>${money(installation.balance)}</p></div>
+          </div>
+          <div class="grid">
+            <div class="box"><strong>Before Photo</strong><p>${installation.beforePhoto || "Not uploaded"}</p></div>
+            <div class="box"><strong>After Photo</strong><p>${installation.afterPhoto || (installation.photoUploaded ? "Uploaded" : "Not uploaded")}</p></div>
+          </div>
+          <div class="box"><strong>Customer Signature</strong><p>${installation.signature ? `<img class="signature" src="${installation.signature}" />` : "No signature"}</p></div>`;
+      }
+      function printInstallation(installationId) {
+        const installation = installations.find((item) => item.id === installationId);
+        if (!installation) return;
+        openPrintDocument(`Installation ${installation.installationNo}`, installationDocumentHtml(installation));
+      }
+      function invoicePaymentStatus(invoice) {
+        const paid = Number(invoice.paidAmount || invoice.depositPaid || 0);
+        const balanceDue = Math.max(Number(invoice.total || 0) - paid, 0);
+        if (balanceDue <= 0 || invoice.paymentStatus === "Paid") return "Paid";
+        if (paid > 0) return "Partial";
+        return "Unpaid";
+      }
+      function invoiceFromOrder(order) {
+        const existing = invoices.find((invoice) => invoice.orderNo === order.orderNo);
+        return {
+          id: existing ? existing.id : uid(),
+          invoiceNo: existing ? existing.invoiceNo : makeInvoiceNo(),
+          invoiceDate: existing ? existing.invoiceDate : today(),
+          createdAt: existing ? existing.createdAt : new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          customer: order.customer,
+          orderNo: order.orderNo,
+          quoteNo: order.quoteNo,
+          items: order.items || [],
+          subtotal: Number(order.subtotal || order.total || 0),
+          discount: Number(order.discount || 0),
+          total: Number(order.total || 0),
+          depositPaid: Number(order.deposit || 0),
+          balanceDue: unpaidTotal(order),
+          paymentMethod: "",
+          paymentStatus: unpaidTotal(order) <= 0 ? "Paid" : Number(order.deposit || 0) > 0 ? "Partial" : "Unpaid",
+          notes: "50% deposit upon confirmation, balance of payment upon completion. Deposit paid is not refundable for cancellation job."
+        };
+      }
+      function createInvoiceFromOrder(orderId) {
+        if (!requirePermission("invoice:manage")) return;
+        const order = orders.find((item) => item.id === orderId);
+        if (!order) return;
+        const invoice = invoiceFromOrder(order);
+        invoices = invoices.some((item) => item.id === invoice.id)
+          ? invoices.map((item) => item.id === invoice.id ? invoice : item)
+          : [invoice, ...invoices];
+        localStorage.setItem(invoicesKey, JSON.stringify(invoices));
+        toast(`Invoice ${invoice.invoiceNo} created.`);
+        currentPage = "invoice";
+        render();
+      }
+      function markInvoicePaid(invoiceId) {
+        if (!requirePermission("invoice:manage")) return;
+        invoices = invoices.map((invoice) => invoice.id === invoiceId ? {
+          ...invoice,
+          paidAmount: Number(invoice.total || 0),
+          balanceDue: 0,
+          paymentStatus: "Paid",
+          updatedAt: new Date().toISOString()
+        } : invoice);
+        localStorage.setItem(invoicesKey, JSON.stringify(invoices));
+        toast("Invoice marked as paid.");
+        render();
+      }
+      function updateInvoiceField(invoiceId, field, value) {
+        if (!requirePermission("invoice:manage")) return;
+        invoices = invoices.map((invoice) => invoice.id === invoiceId ? {
+          ...invoice,
+          [field]: ["depositPaid", "paidAmount"].includes(field) ? Number(value || 0) : value,
+          updatedAt: new Date().toISOString()
+        } : invoice);
+        localStorage.setItem(invoicesKey, JSON.stringify(invoices));
+      }
+      function invoiceDocumentHtml(invoice) {
+        const paid = Number(invoice.paidAmount || invoice.depositPaid || 0);
+        const balanceDue = Math.max(Number(invoice.total || 0) - paid, 0);
+        return documentHeader("Invoice", invoice.invoiceNo) + `
+          <div class="grid">
+            <div class="box"><strong>Bill To</strong><p>${invoice.customer.name || "-"}</p><p>${invoice.customer.phone || "-"}</p><p>${invoice.customer.address || "-"}</p></div>
+            <div class="box"><strong>Invoice Details</strong><p>Invoice Date: ${invoice.invoiceDate || "-"}</p><p>Order: ${invoice.orderNo || "-"}</p><p>Quotation: ${invoice.quoteNo || "-"}</p><p>Status: ${invoicePaymentStatus(invoice)}</p></div>
+          </div>
+          <table><thead><tr><th>Item Description</th><th class="right">Qty</th><th class="right">Unit Price</th><th class="right">Amount</th></tr></thead><tbody>
+            ${safeArray(invoice.items).map((item) => `<tr><td>${item.label || "-"} - ${productDisplayName(item.productId)}${itemExtraDetails(item) ? `<p class="muted">${itemExtraDetails(item)}</p>` : ""}</td><td class="right">${item.quantity || 0}</td><td class="right">${money(itemUnitPrice(item))}</td><td class="right">${money(itemTotal(item))}</td></tr>`).join("")}
+          </tbody></table>
+          <div class="totals">
+            <div class="row"><span>Subtotal</span><strong>${money(invoice.subtotal)}</strong></div>
+            <div class="row"><span>Discount</span><strong>${money(invoice.discount)}</strong></div>
+            <div class="row"><span>Total</span><strong>${money(invoice.total)}</strong></div>
+            <div class="row"><span>Deposit Paid</span><strong>${money(invoice.depositPaid)}</strong></div>
+            <div class="row"><span>Balance Due</span><strong>${money(balanceDue)}</strong></div>
+          </div>
+          <div class="grid" style="margin-top:16px">
+            <div class="box"><strong>Payment Method</strong><p>${invoice.paymentMethod || "-"}</p></div>
+            <div class="box"><strong>Company Bank Details</strong><p>ECO SCREEN SDN BHD</p><p>PUBLIC BANK</p><p>3242952413</p></div>
+          </div>
+          <div class="box"><strong>Notes / Terms</strong><p>${invoice.notes || "-"}</p></div>`;
+      }
+      function printInvoice(invoiceId) {
+        const invoice = invoices.find((item) => item.id === invoiceId);
+        if (!invoice) return;
+        openPrintDocument(`Invoice ${invoice.invoiceNo}`, invoiceDocumentHtml(invoice));
+      }
+      function downloadInvoicePdf(invoiceId) { printInvoice(invoiceId); }
       function removeItem(id) { if (items.length > 1) items = items.filter((item) => item.id !== id); render(); }
       function scheduleInputRender() {
         clearTimeout(inputRenderTimer);
@@ -4243,6 +4560,7 @@
         scheduleInputRender();
       }
       function updateProduct(id, field, value) {
+        if (!requirePermission("product:manage")) return;
         products = products.map((item) => {
           if (item.id !== id) return item;
           const nextValue = field === "price" || field === "minimumSqft" ? Number(value || 0) : field === "active" ? value === true || value === "true" : value;
@@ -4257,6 +4575,7 @@
         applyLanguageToDom();
       }
       function addProduct() {
+        if (!requirePermission("product:manage")) return;
         const name = document.getElementById("newProductName").value.trim();
         const category = document.getElementById("newProductCategory").value.trim();
         const price = Number(document.getElementById("newProductPrice").value || 0);
@@ -4303,6 +4622,7 @@
         });
       }
       function saveQuote() {
+        if (!requirePermission("quote:save")) return;
         if (!validateSlidingItems(items)) return;
         const nextQuoteNo = readQuoteNoOrWarn();
         if (!nextQuoteNo) return;
@@ -4354,6 +4674,7 @@
         };
       }
       function convertCurrentQuoteToOrder() {
+        if (!requirePermission("quote:convert")) return;
         const currentStatus = document.getElementById("status").value;
         if (currentStatus !== "won") {
           toast("Change status to Won before converting.");
@@ -4393,6 +4714,7 @@
         render();
       }
       function generateProductionSheet(orderId) {
+        if (!requirePermission("production:generate")) return;
         const order = orders.find((item) => item.id === orderId);
         if (!order) return;
         if (productions.some((item) => item.orderNo === order.orderNo)) {
@@ -4453,6 +4775,7 @@
         render();
       }
       function updateOrderCost(orderId, field, value) {
+        if (!requirePermission("cost:manage")) return;
         orders = orders.map((order) => order.id === orderId ? {
           ...order,
           costs: {
@@ -4479,6 +4802,7 @@
         await copyText(text);
       }
       function generateInstallationSheet(orderId) {
+        if (!requirePermission("installation:generate")) return;
         const order = orders.find((item) => item.id === orderId);
         if (!order) return;
         if (installations.some((item) => item.orderNo === order.orderNo)) {
@@ -4609,6 +4933,7 @@
         return movements;
       }
       function updateProductionStatus(id, value) {
+        if (!requirePermission("production:update")) return;
         const production = productions.find((item) => item.id === id);
         let movements = null;
         if (production && value === "completed" && !production.inventoryDeducted) {
@@ -4627,10 +4952,12 @@
         render();
       }
       function updateProductionField(id, field, value) {
+        if (!requirePermission("production:update")) return;
         productions = productions.map((item) => item.id === id ? { ...item, [field]: value } : item);
         localStorage.setItem(productionsKey, JSON.stringify(productions));
       }
       function updateInventory(id, field, value) {
+        if (!requirePermission("inventory:manage")) return;
         inventory = inventory.map((item) => {
           if (item.id !== id) return item;
           const numericFields = ["quantity", "safetyQuantity", "usagePerItem", "rmbUnitCost", "unitCost", "pcsPerBundle", "lengthMmPerPiece", "meterPerRoll", "costPerStockUnit"];
@@ -4652,6 +4979,7 @@
         return item ? `${item.name} (${item.category || "General"})` : "-";
       }
       function updateMapping(id, field, value) {
+        if (!requirePermission("mapping:manage")) return;
         productMaterialMappings = productMaterialMappings.map((mapping) => {
           if (mapping.id !== id) return mapping;
           const numericFields = ["baseQty", "wastagePercent"];
@@ -4662,6 +4990,7 @@
         render();
       }
       function addProductMaterialMapping() {
+        if (!requirePermission("mapping:manage")) return;
         const productId = document.getElementById("mappingProductId").value;
         const inventoryItemId = document.getElementById("mappingInventoryItemId").value;
         if (!productId || !inventoryItemId) {
@@ -4708,6 +5037,7 @@
         applyLanguageToDom();
       }
       function saveAllMappingRows() {
+        if (!requirePermission("mapping:manage")) return;
         const productId = document.getElementById("bulkMappingProductId").value;
         const rows = [];
         for (let index = 0; index < mappingBulkRowCount; index += 1) {
@@ -4724,6 +5054,7 @@
         render();
       }
       function duplicateMapping(id) {
+        if (!requirePermission("mapping:manage")) return;
         const source = productMaterialMappings.find((mapping) => mapping.id === id);
         if (!source) return;
         productMaterialMappings = [{
@@ -4737,6 +5068,7 @@
         render();
       }
       function copyMappingFromProduct() {
+        if (!requirePermission("mapping:manage")) return;
         const sourceProductId = document.getElementById("copyMappingSourceProductId").value;
         const targetProductId = document.getElementById("copyMappingTargetProductId").value;
         if (!sourceProductId || !targetProductId || sourceProductId === targetProductId) {
@@ -4795,6 +5127,7 @@
         };
       }
       function applyMappingTemplate() {
+        if (!requirePermission("mapping:manage")) return;
         const productId = document.getElementById("templateProductId").value;
         const templateId = document.getElementById("mappingTemplateId").value;
         const templateRows = mappingTemplates()[templateId] || [];
@@ -4876,6 +5209,7 @@
         });
       }
       function updateExchangeRate(value) {
+        if (!requirePermission("inventory:manage")) return;
         rmbToMyrRate = Number(value || 0);
         localStorage.setItem(exchangeRateKey, rmbToMyrRate);
         inventory = normalizeInventory(inventory);
@@ -4883,16 +5217,19 @@
         render();
       }
       function updateGoogleReviewLink(value) {
+        if (!requirePermission("settings:manage")) return;
         googleReviewLink = value || "";
         localStorage.setItem(googleReviewLinkKey, googleReviewLink);
         render();
       }
       function updateGoogleCalendarWebhook(value) {
+        if (!requirePermission("settings:manage")) return;
         googleCalendarWebhook = value || "";
         localStorage.setItem(googleCalendarWebhookKey, googleCalendarWebhook);
         render();
       }
       function updateSiteUrl(value) {
+        if (!requirePermission("settings:manage")) return;
         siteUrl = (value || "").replace(/\/$/, "");
         localStorage.setItem(siteUrlKey, siteUrl);
         render();
@@ -4965,6 +5302,7 @@
         localStorage.setItem(appointmentsKey, JSON.stringify(appointments));
       }
       async function syncAppointmentToGoogle(id, action = "upsert") {
+        if (!requirePermission("appointment:sync")) return;
         const appointment = appointments.find((item) => item.id === id);
         if (!appointment) return;
         if (!googleCalendarWebhook) {
@@ -5014,6 +5352,7 @@
         }
       }
       async function syncAppointmentsFromGoogle() {
+        if (!requirePermission("appointment:sync")) return;
         if (!googleCalendarWebhook) {
           toast("Add Google Calendar Webhook URL in Settings first.");
           return;
@@ -5037,6 +5376,7 @@
         }
       }
       function saveAppointment(id = "") {
+        if (!requirePermission("appointment:save")) return;
         const existing = appointments.find((item) => item.id === id);
         const appointment = {
           id: id || uid(),
@@ -5089,6 +5429,7 @@
         window.scrollTo({ top: 0, behavior: "smooth" });
       }
       function deleteAppointment(id) {
+        if (!requirePermission("appointment:cancel")) return;
         const appointment = appointments.find((item) => item.id === id);
         if (!appointment || !confirm(`Cancel appointment for ${appointment.customerName}?`)) return;
         const now = new Date().toISOString();
@@ -5124,6 +5465,7 @@
         render();
       }
       function updateProductionArea(id, value) {
+        if (!requirePermission("production:update")) return;
         productions = productions.map((item) => item.id === id ? {
           ...item,
           customer: { ...item.customer, area: value }
@@ -5131,6 +5473,7 @@
         localStorage.setItem(productionsKey, JSON.stringify(productions));
       }
       function updateProductionItem(productionId, itemId, field, value) {
+        if (!requirePermission("production:update")) return;
         const nextValue = ["trackWidthMm","handleHeightMm"].includes(field) ? Number(String(value).replace(/[^\d.]/g, "") || 0) : value;
         productions = productions.map((production) => production.id === productionId ? {
           ...production,
@@ -5139,6 +5482,7 @@
         localStorage.setItem(productionsKey, JSON.stringify(productions));
       }
       function updateInstallationStatus(id, value) {
+        if (!requirePermission("installation:update")) return;
         installations = installations.map((item) => item.id === id ? {
           ...item,
           status: value,
@@ -5148,6 +5492,7 @@
         render();
       }
       function updateInstallationField(id, field, value) {
+        if (!requirePermission("installation:update")) return;
         installations = installations.map((item) => item.id === id ? {
           ...item,
           [field]: field === "customerRating" || field === "amountCollected" ? Number(value || 0) : value
@@ -5160,6 +5505,7 @@
         render();
       }
       function updateCustomerConfirmation(id, field, checked) {
+        if (!requirePermission("installation:update")) return;
         installations = installations.map((item) => item.id === id ? {
           ...item,
           customerConfirmation: { ...(item.customerConfirmation || {}), [field]: checked }
@@ -5168,6 +5514,7 @@
         render();
       }
       function updateInstallationChecklist(id, field, checked) {
+        if (!requirePermission(field === "balanceCollected" ? "payment:record" : "installation:update")) return;
         if (field === "balanceCollected") {
           syncInstallationCollection(id, checked);
           render();
@@ -5300,6 +5647,7 @@
         upsertInstallerCollectionToSupabase(payment, nextOrder, installation);
       }
       function saveSignature(id, dataUrl) {
+        if (!requirePermission("signature:update")) return;
         installations = installations.map((item) => item.id === id ? { ...item, signature: dataUrl } : item);
         localStorage.setItem(installationsKey, JSON.stringify(installations));
       }
@@ -5308,6 +5656,7 @@
         render();
       }
       function generateCompletionRecord(id) {
+        if (!requirePermission("completion:generate")) return;
         const installation = installations.find((item) => item.id === id);
         if (!installation) return;
         if (completionRecords.some((record) => record.installationNo === installation.installationNo)) {
@@ -5378,6 +5727,7 @@
         render();
       }
       function editQuote(id) {
+        if (!requirePermission("quote:edit")) return;
         const quote = quotes.find((item) => item.id === id);
         if (!quote) return;
         editingId = quote.id;
@@ -5392,6 +5742,7 @@
         render();
       }
       function deleteQuote(id) {
+        if (!requirePermission("records:delete")) return;
         const quote = quotes.find((item) => item.id === id);
         if (!quote || !confirm(`Delete quotation ${quote.quoteNo}?`)) return;
         quotes = quotes.filter((item) => item.id !== id);
@@ -5401,6 +5752,7 @@
         render();
       }
       function deleteOrder(id) {
+        if (!requirePermission("records:delete")) return;
         const order = orders.find((item) => item.id === id);
         if (!order || !confirm(`Delete order ${order.orderNo}? Related production, installation, completion and warranty records will also be deleted.`)) return;
         const relatedInstallations = installations.filter((item) => item.orderNo === order.orderNo).map((item) => item.installationNo);
@@ -5862,7 +6214,7 @@
         document.getElementById("history").innerHTML = banner + (rows.length ? rows.map((quote) => `
           <div class="history-card">
             <div><strong>${quote.quoteNo}</strong> <span class="pill">${statusLabel(quote.status)}</span><p style="color:var(--muted);margin-top:5px">${quote.customer.name || "Unnamed Customer"} - ${quote.customer.area || "No area"} - ${money(quote.total)}</p>${quote.remarks ? `<p style="white-space:pre-wrap;color:var(--muted);margin-top:6px">${quote.remarks}</p>` : ""}</div>
-            <div class="history-actions"><button class="btn" onclick="editQuote('${quote.id}')">Edit</button><button class="btn danger" onclick="deleteQuote('${quote.id}')">Delete</button></div>
+            <div class="history-actions"><button class="btn" onclick="editQuote('${quote.id}')">Edit</button>${can("records:delete") ? `<button class="btn danger" onclick="deleteQuote('${quote.id}')">Delete</button>` : ""}</div>
           </div>
         `).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No saved quotations yet.</p>`);
       }
@@ -5997,9 +6349,12 @@
             </div>
             <div style="display:grid;gap:8px;text-align:right">
               <div><strong>${money(unpaidTotal(order))}</strong><p style="color:var(--muted);font-size:13px">Unpaid</p></div>
-              <button class="btn primary" onclick="generateProductionSheet('${order.id}')">Generate Production</button>
-              <button class="btn" onclick="generateInstallationSheet('${order.id}')">Generate Installation</button>
-              <button class="btn danger" onclick="deleteOrder('${order.id}')">Delete Order</button>
+              ${can("production:generate") ? `<button class="btn primary" onclick="generateProductionSheet('${order.id}')">Generate Production</button>` : ""}
+              ${can("installation:generate") ? `<button class="btn" onclick="generateInstallationSheet('${order.id}')">Generate Installation</button>` : ""}
+              <button class="btn" onclick="printOrder('${order.id}')">Print Order</button>
+              <button class="btn" onclick="downloadOrderPdf('${order.id}')">PDF Order</button>
+              ${can("invoice:manage") ? `<button class="btn" onclick="createInvoiceFromOrder('${order.id}')">Create Invoice</button>` : ""}
+              ${can("records:delete") ? `<button class="btn danger" onclick="deleteOrder('${order.id}')">Delete Order</button>` : ""}
             </div>
           </div>
         `;
@@ -6026,6 +6381,46 @@
             </div>
           </div>
         `).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No pending balance orders.</p>`;
+      }
+      function renderInvoices() {
+        const el = document.getElementById("invoices");
+        if (!el) return;
+        el.innerHTML = invoices.length ? invoices.map((invoice) => {
+          const status = invoicePaymentStatus(invoice);
+          const paid = Number(invoice.paidAmount || invoice.depositPaid || 0);
+          const balanceDue = Math.max(Number(invoice.total || 0) - paid, 0);
+          return `
+            <div class="order-card">
+              <div>
+                <p class="eyebrow">${companyInfo.name}</p>
+                <strong>${invoice.invoiceNo}</strong> <span class="pill">${status}</span>
+                <p style="color:var(--muted);margin-top:5px">${invoice.customer.name || "Unnamed Customer"} - ${invoice.customer.phone || "-"}</p>
+                <p style="color:var(--muted);white-space:pre-wrap">${invoice.customer.address || "-"}</p>
+                <div class="order-items">
+                  <div class="payment-row"><span>Invoice Date</span><strong>${invoice.invoiceDate || "-"}</strong></div>
+                  <div class="payment-row"><span>Order Number</span><strong>${invoice.orderNo || "-"}</strong></div>
+                  <div class="payment-row"><span>Quotation Number</span><strong>${invoice.quoteNo || "-"}</strong></div>
+                  <div class="payment-row"><span>Total</span><strong>${money(invoice.total)}</strong></div>
+                  <div class="payment-row"><span>Deposit Paid</span><strong>${money(invoice.depositPaid)}</strong></div>
+                  <div class="payment-row"><span>Balance Due</span><strong>${money(balanceDue)}</strong></div>
+                </div>
+                <div class="payment-grid" style="margin-top:12px">
+                  <div class="field"><label>Payment Method</label><select onchange="updateInvoiceField('${invoice.id}','paymentMethod',this.value)">
+                    <option value="">Select</option>
+                    ${["Cash","Bank Transfer","DuitNow","Card"].map((method) => `<option value="${method}" ${invoice.paymentMethod === method ? "selected" : ""}>${method}</option>`).join("")}
+                  </select></div>
+                  <div class="field"><label>Notes / Terms</label><textarea rows="2" onchange="updateInvoiceField('${invoice.id}','notes',this.value)">${invoice.notes || ""}</textarea></div>
+                </div>
+              </div>
+              <div style="display:grid;gap:8px;text-align:right">
+                <div><strong>${money(balanceDue)}</strong><p style="color:var(--muted);font-size:13px">Balance Due</p></div>
+                <button class="btn" onclick="printInvoice('${invoice.id}')">Print Invoice</button>
+                <button class="btn" onclick="downloadInvoicePdf('${invoice.id}')">PDF Invoice</button>
+                <button class="btn primary" onclick="markInvoicePaid('${invoice.id}')">Mark as Paid</button>
+              </div>
+            </div>
+          `;
+        }).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No invoices yet. Create an invoice from an order first.</p>`;
       }
       function renderCustomers() {
         const filter = activeDashboardFilter("customer");
@@ -6180,8 +6575,8 @@
                 <div class="history-actions">
                   ${appointment.googleEventLink ? `<button class="btn" onclick="window.open('${appointment.googleEventLink}', '_blank')">Open Calendar</button>` : `<button class="btn" onclick="window.open('${googleCalendarUrl(appointment)}', '_blank')">Add Calendar</button>`}
                   <button class="btn" onclick="editAppointment('${appointment.id}')">Edit</button>
-                  <button class="btn" onclick="syncAppointmentToGoogle('${appointment.id}', '${appointment.status === "cancelled" ? "delete" : "upsert"}')">${appointment.googleStatus === "Failed" ? "Retry Sync" : "Sync"}</button>
-                  <button class="btn danger" onclick="deleteAppointment('${appointment.id}')">Cancel Appointment</button>
+                  ${can("appointment:sync") ? `<button class="btn" onclick="syncAppointmentToGoogle('${appointment.id}', '${appointment.status === "cancelled" ? "delete" : "upsert"}')">${appointment.googleStatus === "Failed" ? "Retry Sync" : "Sync"}</button>` : ""}
+                  ${can("appointment:cancel") ? `<button class="btn danger" onclick="deleteAppointment('${appointment.id}')">Cancel Appointment</button>` : ""}
                 </div>
               </div>
             `).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No appointments yet.</p>`}
@@ -6249,6 +6644,7 @@
         })).sort((a, b) => b.spend - a.spend);
       }
       function saveFacebookAd() {
+        if (!requirePermission("facebook:manage")) return;
         const row = {
           id: uid(),
           date: document.getElementById("adDate").value || today(),
@@ -6270,17 +6666,115 @@
         render();
       }
       function deleteFacebookAd(id) {
+        if (!requirePermission("facebook:manage")) return;
         facebookAds = facebookAds.filter((row) => row.id !== id);
         localStorage.setItem(facebookAdsKey, JSON.stringify(facebookAds));
         render();
       }
+      function yesterday() {
+        const date = new Date();
+        date.setDate(date.getDate() - 1);
+        return date.toISOString().slice(0, 10);
+      }
+      function metaDailyToAdRow(row) {
+        return {
+          id: row.id,
+          date: row.date,
+          campaign: row.campaign_name || row.campaign_id || "Unnamed Campaign",
+          adSet: row.adset_name || row.adset_id || "",
+          ad: row.ad_name || row.ad_id || "",
+          spend: adNumber(row.spend),
+          whatsapp: adNumber(row.whatsapp_conversations),
+          leadQuality: row.lead_quality || "-",
+          appointments: adNumber(row.appointments),
+          closedOrders: adNumber(row.closed_orders),
+          revenue: adNumber(row.revenue),
+          remark: row.source === "meta" ? "Synced from Meta" : "",
+          source: row.source || "meta"
+        };
+      }
+      function facebookDashboardRows() {
+        const syncedRows = metaAdsDaily.map(metaDailyToAdRow);
+        return syncedRows.length ? syncedRows : facebookAds.map((row) => ({ ...row, source: row.source || "manual" }));
+      }
+      async function loadMetaAdsDaily(force = false) {
+        if (!cloudState.session || !supabaseReady()) return;
+        if (metaAdsLoadAttempted && !force) return;
+        metaAdsLoadAttempted = true;
+        try {
+          const rows = await supabaseFetch("/rest/v1/facebook_ads_daily?select=*&order=date.desc&limit=500");
+          metaAdsDaily = safeArray(rows);
+          if (metaAdsDaily.length) {
+            const accountRows = await fetchTable("facebook_ad_accounts", "select=last_synced_at,sync_status,sync_error&id=eq.main");
+            const account = accountRows && accountRows[0];
+            if (account) {
+              metaAdsSyncState.lastSyncedAt = account.last_synced_at || "";
+              metaAdsSyncState.status = account.sync_status || "";
+              metaAdsSyncState.error = account.sync_error || "";
+            }
+          }
+        } catch (error) {
+          metaAdsSyncState.error = "Unable to load synced Meta Ads data. Run the Phase 6B Supabase migration first.";
+        }
+      }
+      function ensureMetaAdsDailyLoaded() {
+        if (currentPage === "facebook-ads" && can("facebook:manage") && cloudState.session && supabaseReady() && !metaAdsLoadAttempted) {
+          loadMetaAdsDaily().then(() => renderFacebookAds());
+        }
+      }
+      async function syncMetaAds() {
+        if (!requirePermission("facebook:manage")) return;
+        if (!cloudState.session || !cloudState.session.access_token) {
+          toast("Cloud login required before syncing Meta Ads.");
+          return;
+        }
+        const dateFrom = document.getElementById("metaSyncDateFrom").value || yesterday();
+        const dateTo = document.getElementById("metaSyncDateTo").value || today();
+        metaAdsSyncState = { ...metaAdsSyncState, syncing: true, status: "syncing", error: "", rowsSynced: 0 };
+        renderFacebookAds();
+        try {
+          const response = await fetch("/api/meta-ads-sync", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${cloudState.session.access_token}`
+            },
+            body: JSON.stringify({ date_from: dateFrom, date_to: dateTo })
+          });
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok || result.error) throw new Error(result.error || `Meta sync failed (${response.status}).`);
+          metaAdsDaily = safeArray(result.rows);
+          metaAdsSyncState = {
+            syncing: false,
+            status: "success",
+            error: "",
+            lastSyncedAt: result.last_synced_at || new Date().toISOString(),
+            rowsSynced: Number(result.rows_synced || 0)
+          };
+          metaAdsLoadAttempted = false;
+          await loadMetaAdsDaily(true);
+          toast(`Meta Ads synced. ${metaAdsSyncState.rowsSynced} rows saved.`);
+        } catch (error) {
+          metaAdsSyncState = {
+            ...metaAdsSyncState,
+            syncing: false,
+            status: "failed",
+            error: String(error.message || error)
+          };
+          toast(`Meta Ads sync failed: ${metaAdsSyncState.error}`);
+        }
+        renderFacebookAds();
+      }
       function renderFacebookAds() {
         const el = document.getElementById("facebookAds");
         if (!el) return;
+        ensureMetaAdsDailyLoaded();
         const fromValue = document.getElementById("adsFilterFrom") && document.getElementById("adsFilterFrom").value || "";
         const toValue = document.getElementById("adsFilterTo") && document.getElementById("adsFilterTo").value || "";
         const campaignValue = document.getElementById("adsFilterCampaign") && document.getElementById("adsFilterCampaign").value || "";
-        const rows = facebookAds.filter((row) => (!fromValue || row.date >= fromValue) && (!toValue || row.date <= toValue) && (!campaignValue || String(row.campaign || "").toLowerCase().includes(campaignValue.toLowerCase())));
+        const allRows = facebookDashboardRows();
+        const usingSyncedRows = metaAdsDaily.length > 0;
+        const rows = allRows.filter((row) => (!fromValue || row.date >= fromValue) && (!toValue || row.date <= toValue) && (!campaignValue || String(row.campaign || "").toLowerCase().includes(campaignValue.toLowerCase())));
         const summary = summarizeAds(rows);
         const totals = summary.reduce((sum, row) => ({
           spend: sum.spend + row.spend,
@@ -6291,7 +6785,31 @@
           profit: sum.profit + row.profit
         }), { spend: 0, whatsapp: 0, appointments: 0, closedOrders: 0, revenue: 0, profit: 0 });
         const dailyRows = [...rows].sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 10);
+        const syncMessage = metaAdsSyncState.syncing ? "Syncing Meta Ads..." :
+          metaAdsSyncState.status === "success" ? `Success. ${metaAdsSyncState.rowsSynced} rows synced.` :
+          metaAdsSyncState.status === "failed" ? `Failed: ${metaAdsSyncState.error}` :
+          metaAdsSyncState.error ? metaAdsSyncState.error :
+          cloudState.session ? "Ready to sync Meta Ads from Vercel serverless function." : "Cloud login required before syncing Meta Ads.";
         el.innerHTML = `
+          <div class="item-card">
+            <div class="item-head">
+              <div>
+                <h3>Meta Ads Sync</h3>
+                <p style="color:var(--muted);margin-top:5px;font-size:13px">Synced data is loaded from Supabase first. Manual records remain as fallback.</p>
+              </div>
+              <span class="pill">${usingSyncedRows ? "Supabase Synced Data" : "Manual Fallback Data"}</span>
+            </div>
+            <div class="form-grid" style="margin-top:12px">
+              <div class="field"><label>Sync Date From</label><input id="metaSyncDateFrom" type="date" value="${document.getElementById("metaSyncDateFrom") && document.getElementById("metaSyncDateFrom").value || yesterday()}" /></div>
+              <div class="field"><label>Sync Date To</label><input id="metaSyncDateTo" type="date" value="${document.getElementById("metaSyncDateTo") && document.getElementById("metaSyncDateTo").value || today()}" /></div>
+              <div class="field"><label>Last Synced</label><input value="${metaAdsSyncState.lastSyncedAt ? String(metaAdsSyncState.lastSyncedAt).replace("T", " ").slice(0, 19) : "-"}" readonly /></div>
+            </div>
+            <div class="actions" style="margin-top:12px">
+              <button class="btn primary" onclick="syncMetaAds()" ${metaAdsSyncState.syncing ? "disabled" : ""}>${metaAdsSyncState.syncing ? "Syncing..." : "Sync Meta Ads"}</button>
+              <button class="btn" onclick="loadMetaAdsDaily(true).then(() => renderFacebookAds())">Reload Synced Data</button>
+            </div>
+            <p style="color:${metaAdsSyncState.status === "failed" || metaAdsSyncState.error ? "#991b1b" : "var(--muted)"};margin-top:10px;font-size:13px">${syncMessage}</p>
+          </div>
           <div class="form-grid">
             <div class="field"><label>Date</label><input id="adDate" type="date" value="${today()}" /></div>
             <div class="field"><label>Campaign Name</label><input id="adCampaign" placeholder="Main Campaign" /></div>
@@ -6325,7 +6843,7 @@
             ${summary.map((row) => `<tr><td>${row.campaign}</td><td class="right">${money(row.spend)}</td><td class="right">${row.whatsapp}</td><td class="right">${money(row.costPerWhatsapp)}</td><td class="right">${row.appointmentRate.toFixed(1)}%</td><td class="right">${row.closingRate.toFixed(1)}%</td><td class="right">${row.roas.toFixed(2)}x</td><td class="right">${money(row.profit)}</td></tr>`).join("") || `<tr><td colspan="8">No Facebook ads data yet.</td></tr>`}
           </tbody></table></div>
           <div class="table-wrap"><table><thead><tr><th>Daily Report</th><th>Campaign</th><th>Ad Set</th><th>Ad</th><th class="right">Spend</th><th class="right">WhatsApp</th><th class="right">CPA</th><th>Quality</th><th class="right">Appointments</th><th class="right">Closed</th><th class="right">Revenue</th><th>Ad Decision</th><th></th></tr></thead><tbody>
-            ${dailyRows.map((row) => `<tr><td>${row.date}</td><td>${row.campaign}</td><td>${row.adSet || "-"}</td><td>${row.ad}</td><td class="right">${money(row.spend)}</td><td class="right">${row.whatsapp}</td><td class="right">${money(adCostPerWhatsapp(row))}</td><td>${row.leadQuality}</td><td class="right">${row.appointments}</td><td class="right">${row.closedOrders}</td><td class="right">${money(row.revenue)}</td><td><span class="pill">${adDecision(row, rows)}</span>${row.remark ? `<p style="color:var(--muted);font-size:12px">${row.remark}</p>` : ""}</td><td><button class="btn danger" onclick="deleteFacebookAd('${row.id}')">Delete</button></td></tr>`).join("") || `<tr><td colspan="13">No daily report yet.</td></tr>`}
+            ${dailyRows.map((row) => `<tr><td>${row.date}</td><td>${row.campaign}</td><td>${row.adSet || "-"}</td><td>${row.ad}</td><td class="right">${money(row.spend)}</td><td class="right">${row.whatsapp}</td><td class="right">${money(adCostPerWhatsapp(row))}</td><td>${row.leadQuality}</td><td class="right">${row.appointments}</td><td class="right">${row.closedOrders}</td><td class="right">${money(row.revenue)}</td><td><span class="pill">${adDecision(row, rows)}</span>${row.remark ? `<p style="color:var(--muted);font-size:12px">${row.remark}</p>` : ""}</td><td>${row.source === "meta" ? `<span class="pill">Meta</span>` : `<button class="btn danger" onclick="deleteFacebookAd('${row.id}')">Delete</button>`}</td></tr>`).join("") || `<tr><td colspan="13">No daily report yet.</td></tr>`}
           </tbody></table></div>
         `;
       }
@@ -6371,6 +6889,7 @@
         `;
       }
       function renderProductions() {
+        const productionCanEdit = can("production:update");
         const productionCard = (production) => `
           <div class="ops-card">
             <div class="ops-head">
@@ -6379,13 +6898,16 @@
                 <p style="color:var(--muted);margin-top:5px">${production.customer.name || "Unnamed Customer"} - ${production.customer.phone || "-"} - ${production.customer.address || "-"}</p>
                 <p style="color:var(--muted);margin-top:5px">Created: ${String(production.createdAt || "").slice(0, 10) || "-"} ${production.startedAt ? ` | Started: ${String(production.startedAt).slice(0, 10)}` : ""} ${production.completedAt ? ` | Completed: ${String(production.completedAt).slice(0, 10)}` : ""}</p>
                 ${productionAlertText(production) ? `<p style="color:#991b1b;font-weight:900;margin-top:5px">${productionAlertText(production)}</p>` : ""}
-                <div class="field" style="margin-top:10px;max-width:320px"><label>Area</label><input value="${production.customer.area || ""}" onchange="updateProductionArea('${production.id}',this.value)" /></div>
+                <div class="field" style="margin-top:10px;max-width:320px"><label>Area</label><input value="${production.customer.area || ""}" onchange="updateProductionArea('${production.id}',this.value)" ${productionCanEdit ? "" : "readonly"} /></div>
               </div>
-              <select style="max-width:220px" onchange="updateProductionStatus('${production.id}',this.value)">
-                ${productionStatuses.map(([value, label]) => `<option value="${value}" ${production.status === value ? "selected" : ""}>${label}</option>`).join("")}
-              </select>
+              <div style="display:grid;gap:8px;min-width:180px">
+                <select style="max-width:220px" onchange="updateProductionStatus('${production.id}',this.value)" ${productionCanEdit ? "" : "disabled"}>
+                  ${productionStatuses.map(([value, label]) => `<option value="${value}" ${production.status === value ? "selected" : ""}>${label}</option>`).join("")}
+                </select>
+                <button class="btn" onclick="printProduction('${production.id}')">Print Production</button>
+              </div>
             </div>
-            <div class="field" style="margin-bottom:12px"><label>Not Ready Reason / Delay Reason</label><textarea rows="2" placeholder="Example: waiting material, colour not confirmed, customer measurement pending" onchange="updateProductionField('${production.id}','delayReason',this.value)">${production.delayReason || ""}</textarea></div>
+            <div class="field" style="margin-bottom:12px"><label>Not Ready Reason / Delay Reason</label><textarea rows="2" placeholder="Example: waiting material, colour not confirmed, customer measurement pending" onchange="updateProductionField('${production.id}','delayReason',this.value)" ${productionCanEdit ? "" : "readonly"}>${production.delayReason || ""}</textarea></div>
             ${production.stockMovements && production.stockMovements.length ? `
               <div class="order-items">
                 <strong>Stock Deduction Tracking</strong>
@@ -6396,17 +6918,17 @@
             ${(production.items || []).map((item) => `
               <div class="ops-line-grid">
                 <div class="field"><label>Product</label><input value="${productDisplayName(item.productId)}" readonly /></div>
-                <div class="field"><label>Location</label><input value="${item.label || ""}" onchange="updateProductionItem('${production.id}','${item.id}','label',this.value)" /></div>
+                <div class="field"><label>Location</label><input value="${item.label || ""}" onchange="updateProductionItem('${production.id}','${item.id}','label',this.value)" ${productionCanEdit ? "" : "readonly"} /></div>
                 <div class="field"><label>Width mm</label><input value="${item.widthMm || 0}" readonly /></div>
                 <div class="field"><label>Height mm</label><input value="${item.heightMm || 0}" readonly /></div>
                 <div class="field"><label>Qty</label><input value="${item.quantity || 0}" readonly /></div>
-                <div class="field"><label>Track Type</label><input value="${item.trackType || ""}" onchange="updateProductionItem('${production.id}','${item.id}','trackType',this.value)" /></div>
-                <div class="field"><label>Track Width mm</label><input value="${item.trackWidthMm || 0}" onchange="updateProductionItem('${production.id}','${item.id}','trackWidthMm',this.value)" /></div>
-                <div class="field"><label>Handle Height mm</label><input value="${item.handleHeightMm || item.trackHeightMm || 0}" onchange="updateProductionItem('${production.id}','${item.id}','handleHeightMm',this.value)" /></div>
-                <div class="field"><label>Installation Type</label><input value="${item.installationType || ""}" onchange="updateProductionItem('${production.id}','${item.id}','installationType',this.value)" /></div>
-                <div class="field"><label>Opening Direction</label><input value="${item.openingDirection || ""}" onchange="updateProductionItem('${production.id}','${item.id}','openingDirection',this.value)" /></div>
-                <div class="field"><label>Colour</label><input value="${item.color || ""}" onchange="updateProductionItem('${production.id}','${item.id}','color',this.value)" /></div>
-                <div class="field"><label>Remark</label><input value="${item.remark || ""}" onchange="updateProductionItem('${production.id}','${item.id}','remark',this.value)" /></div>
+                <div class="field"><label>Track Type</label><input value="${item.trackType || ""}" onchange="updateProductionItem('${production.id}','${item.id}','trackType',this.value)" ${productionCanEdit ? "" : "readonly"} /></div>
+                <div class="field"><label>Track Width mm</label><input value="${item.trackWidthMm || 0}" onchange="updateProductionItem('${production.id}','${item.id}','trackWidthMm',this.value)" ${productionCanEdit ? "" : "readonly"} /></div>
+                <div class="field"><label>Handle Height mm</label><input value="${item.handleHeightMm || item.trackHeightMm || 0}" onchange="updateProductionItem('${production.id}','${item.id}','handleHeightMm',this.value)" ${productionCanEdit ? "" : "readonly"} /></div>
+                <div class="field"><label>Installation Type</label><input value="${item.installationType || ""}" onchange="updateProductionItem('${production.id}','${item.id}','installationType',this.value)" ${productionCanEdit ? "" : "readonly"} /></div>
+                <div class="field"><label>Opening Direction</label><input value="${item.openingDirection || ""}" onchange="updateProductionItem('${production.id}','${item.id}','openingDirection',this.value)" ${productionCanEdit ? "" : "readonly"} /></div>
+                <div class="field"><label>Colour</label><input value="${item.color || ""}" onchange="updateProductionItem('${production.id}','${item.id}','color',this.value)" ${productionCanEdit ? "" : "readonly"} /></div>
+                <div class="field"><label>Remark</label><input value="${item.remark || ""}" onchange="updateProductionItem('${production.id}','${item.id}','remark',this.value)" ${productionCanEdit ? "" : "readonly"} /></div>
               </div>
             `).join("")}
           </div>
@@ -6440,6 +6962,7 @@
         }).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No production sheets found for this view.</p>`);
       }
       function renderProductionStatus() {
+        const productionCanEdit = can("production:update");
         const groups = [
           ["pending-production", "Not Yet Produced"],
           ["in-production", "In Production"],
@@ -6458,7 +6981,7 @@
                     ${productionAlertText(production) ? `<p style="color:#991b1b;font-weight:900;margin-top:5px">${productionAlertText(production)}</p>` : ""}
                     ${production.delayReason ? `<p style="color:var(--muted);margin-top:5px"><strong>Reason:</strong> ${production.delayReason}</p>` : ""}
                   </div>
-                  <select onchange="updateProductionStatus('${production.id}',this.value)">
+                  <select onchange="updateProductionStatus('${production.id}',this.value)" ${productionCanEdit ? "" : "disabled"}>
                     ${productionStatuses.map(([value, label]) => `<option value="${value}" ${production.status === value ? "selected" : ""}>${label}</option>`).join("")}
                   </select>
                 </div>
@@ -6570,6 +7093,7 @@
               <div class="actions" style="margin-top:8px">
                 <button class="btn" onclick="clearSignature('${installation.id}')">Clear Signature</button>
                 <button class="btn" onclick="copyGoogleReviewWhatsapp('${installation.id}')">Copy Google Review WhatsApp</button>
+                <button class="btn" onclick="printInstallation('${installation.id}')">Print Installation</button>
                 <button class="btn primary" onclick="generateCompletionRecord('${installation.id}')">Generate Completion Record</button>
               </div>
             </div>
@@ -6777,6 +7301,7 @@
         renderHistory();
         renderFollowUps();
         renderOrders();
+        renderInvoices();
         renderPendingBalances();
         renderCustomers();
         renderAppointments();
@@ -6792,6 +7317,7 @@
         renderCustomerReviews();
         renderWarranties();
         applyRoleAccess();
+        normalizeInteractiveElements();
         applyLanguageToDom();
         setupSignaturePads();
       }

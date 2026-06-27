@@ -15,8 +15,10 @@ const phaseOneSqlSource = join(root, "outputs", "phase-1-payment-quotation-migra
 const phaseTwoBProductsSqlSource = join(root, "outputs", "phase-2b-products-migration.sql");
 const phaseThreeBMappingSqlSource = join(root, "outputs", "phase-3b-inventory-mapping-migration.sql");
 const phaseFourAGoogleCalendarSqlSource = join(root, "outputs", "phase-4a-google-calendar-sync-migration.sql");
+const phaseSixBFacebookAdsSqlSource = join(root, "outputs", "phase-6b-facebook-ads-sync-migration.sql");
 const envGuideSource = join(root, "outputs", "supabase-env-guide.md");
 const calendarGuideSource = join(root, "outputs", "google-calendar-webhook-guide.md");
+const metaAdsGuideSource = join(root, "outputs", "meta-ads-sync-guide.md");
 const envLocal = join(root, ".env.local");
 const googleSiteVerification = "puBEvWdWzBbxZBnQF7Fdhih0mY9dkqa5bHY-0EgGaUs";
 
@@ -68,7 +70,9 @@ copyFileSync(phaseOneSqlSource, join(dist, "phase-1-payment-quotation-migration.
 copyFileSync(phaseTwoBProductsSqlSource, join(dist, "phase-2b-products-migration.sql"));
 copyFileSync(phaseThreeBMappingSqlSource, join(dist, "phase-3b-inventory-mapping-migration.sql"));
 copyFileSync(phaseFourAGoogleCalendarSqlSource, join(dist, "phase-4a-google-calendar-sync-migration.sql"));
+copyFileSync(phaseSixBFacebookAdsSqlSource, join(dist, "phase-6b-facebook-ads-sync-migration.sql"));
 copyFileSync(envGuideSource, join(dist, "supabase-env-guide.md"));
 copyFileSync(calendarGuideSource, join(dist, "google-calendar-webhook-guide.md"));
+copyFileSync(metaAdsGuideSource, join(dist, "meta-ads-sync-guide.md"));
 
 process.stdout.write("Build complete: dist/index.html\n");
