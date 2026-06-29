@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -581,21 +581,6 @@
         <p id="cloudStatusText" style="margin-top:12px;color:var(--muted)">Local mode. Add Supabase config to enable cloud sync.</p>
       </div>
     </div>
-    <div id="followUpModal" class="copy-modal no-print">
-      <div class="copy-card">
-        <div class="panel-head"><h2>Follow Up Done</h2><button class="btn" onclick="hideFollowUpModal()">Close</button></div>
-        <input id="followUpQuoteId" type="hidden" />
-        <div class="form-grid">
-          <div class="field wide"><label>Follow Up Note</label><textarea id="followUpNoteInput" rows="3" placeholder="Customer response, next action, price discussion"></textarea></div>
-          <div class="field"><label>Next Follow Up Date</label><input id="nextFollowUpDateInput" type="date" /></div>
-          <div class="field"><label>Result / Status</label><select id="followUpResultInput"><option value="Follow Up Done">Follow Up Done</option><option value="Need Follow Up">Need Follow Up</option><option value="Appointment Set">Appointment Set</option><option value="Won">Won</option><option value="Lost">Lost</option></select></div>
-        </div>
-        <div class="actions" style="margin-top:12px;justify-content:flex-end">
-          <button class="btn" onclick="hideFollowUpModal()">Cancel</button>
-          <button class="btn primary" onclick="saveFollowUpDoneFromModal()">Save Follow Up</button>
-        </div>
-      </div>
-    </div>
     <header class="topbar no-print">
       <div class="topbar-inner">
         <div class="brand">
@@ -640,11 +625,6 @@
       </aside>
 
       <main class="main">
-        <section class="panel history no-print" data-page="today-tasks" data-roles="admin sales secretary production installer">
-          <div class="panel-head"><h2>Today Task Dashboard</h2></div>
-          <div id="todayTaskDashboard"></div>
-        </section>
-
         <div class="grid-main no-print" data-page="quotation" data-roles="admin sales secretary">
           <div>
             <section class="panel">
@@ -771,11 +751,6 @@
           <div id="facebookAds"></div>
         </section>
 
-        <section class="panel history no-print" data-page="activity-log" data-roles="admin">
-          <div class="panel-head"><h2>Activity Log</h2></div>
-          <div id="activityLog"></div>
-        </section>
-
         <section class="panel history no-print" data-page="financial" data-roles="admin">
           <div class="panel-head"><h2>Financial Dashboard</h2></div>
           <div id="financialDashboard"></div>
@@ -828,8 +803,6 @@
       const roleKey = "eco-screen-role";
       const languageKey = "eco-screen-language";
       const customerCrmKey = "eco-screen-customer-crm";
-      const activityLogsKey = "eco-screen-activity-logs";
-      const followUpHistoryKey = "eco-screen-follow-up-history";
       const mm2PerSqft = 92903.04;
       function safeJsonParse(value, fallback) {
         if (value === null || value === undefined || value === "") return fallback;
@@ -857,7 +830,6 @@
         ["quoted", "Quoted"],
         ["follow-up", "Follow Up"],
         ["won", "Won"],
-        ["lost", "Lost"],
         ["cancelled", "Cancelled"]
       ];
       const productionStatuses = [
@@ -887,14 +859,12 @@
       ];
       const roleMenus = {
         admin: [
-          ["today-tasks", "Today Task Dashboard"],
           ["quotation", "Quotation"],
           ["customer", "Customer"],
           ["appointment", "Appointment"],
           ["follow-up", "Follow Up"],
           ["order", "Order"],
           ["invoice", "Invoice"],
-          ["activity-log", "Activity Log"],
           ["facebook-ads", "Facebook Ads"],
           ["production", "Production"],
           ["production-status", "Production Status"],
@@ -911,7 +881,6 @@
           ["settings", "Settings"]
         ],
         sales: [
-          ["today-tasks", "Today Task Dashboard"],
           ["quotation", "Quotation"],
           ["customer", "Customer"],
           ["appointment", "Appointment"],
@@ -921,7 +890,6 @@
           ["warranty", "Warranty"]
         ],
         secretary: [
-          ["today-tasks", "Today Task Dashboard"],
           ["quotation", "Quotation"],
           ["customer", "Customer"],
           ["appointment", "Appointment"],
@@ -935,12 +903,10 @@
           ["warranty", "Warranty"]
         ],
         production: [
-          ["today-tasks", "Today Task Dashboard"],
           ["production", "Production Order"],
           ["production-status", "Production Status"]
         ],
         installer: [
-          ["today-tasks", "Today Task Dashboard"],
           ["installation", "Installation Order"],
           ["signature", "Customer Signature"],
           ["collection", "Collection Record"],
@@ -1053,16 +1019,12 @@
       };
       let appointments = normalizeAppointments(safeJsonParse(localStorage.getItem(appointmentsKey), []));
       let customerCrm = safeObject(safeJsonParse(localStorage.getItem(customerCrmKey), {}));
-      let activityLogs = safeArray(safeJsonParse(localStorage.getItem(activityLogsKey), []));
-      let followUpHistory = safeArray(safeJsonParse(localStorage.getItem(followUpHistoryKey), []));
       let staffProfiles = [];
       let currentRole = normalizeRoleName(localStorage.getItem(roleKey) || "admin");
       let currentLanguage = localStorage.getItem(languageKey) || "en";
       if (!roleMenus[currentRole]) currentRole = "admin";
       let currentPage = roleMenus[currentRole][0][0];
       let dashboardFilter = null;
-      let taskFilter = "today";
-      let activityLogFilter = { range: "today", customer: "", staff: "", action: "" };
       let productStatusFilter = "active";
       let mappingPreviewProductId = defaultProductId();
       let mappingPreviewItemId = "";
@@ -1085,8 +1047,6 @@
         facebookAdsKey,
         appointmentsKey,
         customerCrmKey,
-        activityLogsKey,
-        followUpHistoryKey,
         exchangeRateKey,
         googleReviewLinkKey,
         googleCalendarWebhookKey,
@@ -1105,13 +1065,11 @@
           "Production": "生产",
           "Installer": "安装",
           "Quotation": "报价",
-          "Today Task Dashboard": "今日任务 Dashboard",
           "Customer": "客户",
           "Appointment": "预约",
           "Follow Up": "跟进",
           "Order": "订单",
           "Invoice": "发票",
-          "Activity Log": "活动记录",
           "Production Order": "生产单",
           "Production": "生产单",
           "Production Status": "生产状态",
@@ -1139,27 +1097,6 @@
         "Quotation CRM": "报价 CRM 系统",
         "Cloud Login": "云端登录",
         "New": "新建",
-        "Today Task Dashboard": "今日任务 Dashboard",
-        "Today's Appointments": "今日预约",
-        "Pending Follow Up": "待跟进",
-        "Pending Production": "待生产",
-        "Pending Installation": "待安装",
-        "Pending Collection": "待收款",
-        "Warning / Attention": "提醒 / 注意",
-        "This Week": "本周",
-        "Overdue": "逾期",
-        "All Pending": "全部待处理",
-        "Open Customer": "打开客户",
-        "WhatsApp Customer": "WhatsApp 客户",
-        "Create / Open Quote": "创建 / 打开报价",
-        "WhatsApp Follow Up": "WhatsApp 跟进",
-        "Mark Follow Up Done": "标记已跟进",
-        "Set Appointment": "设置预约",
-        "Mark Lost": "标记 Lost",
-        "Open Order": "打开订单",
-        "Mark Production Completed": "标记生产完成",
-        "Mark Installation Completed": "标记安装完成",
-        "WhatsApp Chase Payment": "WhatsApp 追款",
         "WhatsApp": "WhatsApp",
         "Copy": "复制",
         "PDF File": "PDF 文件",
@@ -1612,44 +1549,15 @@
       }
       function makeItem(productId = defaultProductId()) {
         const p = product(productId);
-        return { id: uid(), createdAt: Date.now(), label: "", productId, productName: englishProductName(p.name), unitPrice: Number(p.price || 0), minimumSqft: Number(p.minimumSqft || 0), widthMm: 0, heightMm: 0, quantity: 1, color: "", remark: "", ...makeSlidingFields() };
-      }
-      function lineItemSnapshot(item) {
-        const p = product(item.productId);
-        return { ...item, productName: item.productName || englishProductName(p.name) };
+        return { id: uid(), createdAt: Date.now(), label: "", productId, unitPrice: Number(p.price || 0), minimumSqft: Number(p.minimumSqft || 0), widthMm: 0, heightMm: 0, quantity: 1, color: "", remark: "", ...makeSlidingFields() };
       }
       function orderedItems(list = items) {
         return safeArray(list)
           .map((item, index) => ({ item, index }))
           .sort((a, b) => Number(b.item.createdAt || 0) - Number(a.item.createdAt || 0) || a.index - b.index)
-          .map((row) => lineItemSnapshot(row.item));
+          .map((row) => row.item);
       }
       function money(value) { return "RM " + Number(value || 0).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
-      function isToday(value) { return String(value || "").slice(0, 10) === today(); }
-      function daysBetween(from, to = today()) {
-        if (!from) return 0;
-        const start = new Date(String(from).slice(0, 10));
-        const end = new Date(String(to).slice(0, 10));
-        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 0;
-        return Math.floor((end - start) / 86400000);
-      }
-      function isThisWeek(value) {
-        const diff = daysBetween(today(), value);
-        return diff >= 0 && diff <= 7;
-      }
-      function getCustomerById(id) {
-        return collectCustomers().find((customer) => customer.key === id || customer.phone === id || customer.name === id) || null;
-      }
-      function getQuoteById(id) { return quotes.find((quote) => quote.id === id || quote.quoteNo === id) || null; }
-      function getOrderById(id) { return orders.find((order) => order.id === id || order.orderNo === id) || null; }
-      function getInvoiceByOrder(orderOrNo) {
-        const orderNo = typeof orderOrNo === "string" ? orderOrNo : orderOrNo && orderOrNo.orderNo;
-        return invoices.find((invoice) => invoice.orderNo === orderNo) || null;
-      }
-      function whatsappLink(phone, message = "") {
-        const digits = digitsOnly(phone);
-        return digits ? `https://wa.me/${digits}?text=${encodeURIComponent(message)}` : "";
-      }
       function labelText(label) { return currentLanguage === "zh" ? (labelTranslations.zh[label] || label) : label; }
       function translateText(text) {
         if (currentLanguage !== "zh") return text;
@@ -1723,12 +1631,6 @@
       }
       function productDisplayName(id) {
         return productNameForUi(product(id).name);
-      }
-      function getProductDisplayName(itemOrId) {
-        if (itemOrId && typeof itemOrId === "object") {
-          return productNameForUi(itemOrId.productName || itemOrId.product_name || product(itemOrId.productId).name);
-        }
-        return productDisplayName(itemOrId);
       }
       function isSlidingProductName(name) {
         const text = String(name || "").toLowerCase();
@@ -1879,19 +1781,12 @@
           .reduce((max, no) => Math.max(max, no), 0) + 1;
         return `ESQ-${year}-${String(next).padStart(4, "0")}`;
       }
-      function normalizeLineItems(rawItems) {
-        return safeArray(rawItems).map((item) => lineItemSnapshot({
-          ...item,
-          productName: item.productName || item.product_name || englishProductName(product(item.productId).name)
-        }));
-      }
       function normalizeQuotes(rawQuotes) {
         return safeArray(rawQuotes).map((quote, index) => ({
           ...quote,
           quoteNo: quote.quoteNo || `ESQ-${new Date(quote.createdAt || Date.now()).getFullYear()}-${String(index + 1).padStart(4, "0")}`,
           updatedAt: quote.updatedAt || quote.createdAt || new Date().toISOString(),
           status: quote.status || "quoted",
-          items: normalizeLineItems(quote.items),
           subtotal: Number(quote.subtotal || quote.total || 0),
           discount: Number(quote.discount || 0),
           remarks: quote.remarks || ""
@@ -1911,8 +1806,7 @@
             ads: Number(order.costs && order.costs.ads || 0),
             other: Number(order.costs && order.costs.other || 0)
           },
-          payments: order.payments || [],
-          items: normalizeLineItems(order.items)
+          payments: order.payments || []
         }));
       }
       function normalizeAppointments(rawAppointments) {
@@ -1950,7 +1844,7 @@
           startedAt: production.startedAt || "",
           completedAt: production.completedAt || "",
           delayReason: production.delayReason || production.reason || "",
-          items: normalizeLineItems(production.items).map((item) => ({
+          items: safeArray(production.items).map((item) => ({
             color: item.color || "",
             openingDirection: "",
             lockSet: "",
@@ -2001,7 +1895,6 @@
             balanceCollected: false,
             ...(installation.checklist || {})
           },
-          items: normalizeLineItems(installation.items),
           signature: installation.signature || ""
         }));
       }
@@ -3244,7 +3137,7 @@
           const costSplit = itemCostSplit(item);
           return {
             item,
-          productName: getProductDisplayName(item),
+          productName: productDisplayName(item.productId),
             categories,
             stockItems,
             stockCost,
@@ -3327,7 +3220,7 @@
           .map((item) => ({
             quoteNo: quote.quoteNo,
             customer: quote.customer && quote.customer.name || "-",
-            productName: getProductDisplayName(item),
+            productName: productDisplayName(item.productId),
             location: item.label || "Item",
             widthMm: item.widthMm || 0,
             heightMm: item.heightMm || 0,
@@ -3410,104 +3303,6 @@
         };
         localStorage.setItem(customerCrmKey, JSON.stringify(customerCrm));
         toast("Customer follow-up updated.");
-        render();
-      }
-      function currentStaffName() {
-        return cloudState.email || cloudState.role || statusLabelFromList(roles, currentRole) || "Local User";
-      }
-      function activityCustomerId(customer) {
-        return customerKey(customer || {});
-      }
-      function addActivityLog(actionType, details = {}) {
-        const customer = details.customer || {};
-        const log = {
-          id: uid(),
-          createdAt: new Date().toISOString(),
-          actionType,
-          customerId: details.customerId || activityCustomerId(customer),
-          customerName: details.customerName || customer.name || "",
-          quoteNo: details.quoteNo || "",
-          orderNo: details.orderNo || "",
-          invoiceNo: details.invoiceNo || "",
-          staffName: details.staffName || currentStaffName(),
-          note: details.note || ""
-        };
-        activityLogs = [log, ...safeArray(activityLogs)].slice(0, 1500);
-        localStorage.setItem(activityLogsKey, JSON.stringify(activityLogs));
-        return log;
-      }
-      function addFollowUpHistory(details = {}) {
-        const quote = details.quote || {};
-        const customer = details.customer || quote.customer || {};
-        const row = {
-          id: uid(),
-          createdAt: new Date().toISOString(),
-          quoteId: quote.id || details.quoteId || "",
-          quoteNo: quote.quoteNo || details.quoteNo || "",
-          customerId: details.customerId || activityCustomerId(customer),
-          customerName: details.customerName || customer.name || "",
-          followUpBy: details.followUpBy || currentStaffName(),
-          note: details.note || "",
-          nextFollowUpDate: details.nextFollowUpDate || "",
-          result: details.result || "Follow Up Done"
-        };
-        followUpHistory = [row, ...safeArray(followUpHistory)];
-        localStorage.setItem(followUpHistoryKey, JSON.stringify(followUpHistory));
-        return row;
-      }
-      function followUpHistoryForQuote(quote) {
-        const customerId = activityCustomerId(quote.customer || {});
-        return safeArray(followUpHistory)
-          .filter((row) => row.quoteId === quote.id || row.quoteNo === quote.quoteNo || (row.customerId && row.customerId === customerId))
-          .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
-      }
-      function showFollowUpModal(quoteId) {
-        const quote = getQuoteById(quoteId);
-        if (!quote) return;
-        document.getElementById("followUpQuoteId").value = quoteId;
-        document.getElementById("followUpNoteInput").value = "";
-        document.getElementById("nextFollowUpDateInput").value = "";
-        document.getElementById("followUpResultInput").value = "Follow Up Done";
-        document.getElementById("followUpModal").classList.add("show");
-      }
-      function hideFollowUpModal() {
-        document.getElementById("followUpModal").classList.remove("show");
-      }
-      function saveFollowUpDoneFromModal() {
-        if (!requirePermission("followup:edit")) return;
-        const quoteId = document.getElementById("followUpQuoteId").value;
-        const quote = getQuoteById(quoteId);
-        if (!quote) return;
-        const note = document.getElementById("followUpNoteInput").value.trim();
-        const nextFollowUpDate = document.getElementById("nextFollowUpDateInput").value;
-        const result = document.getElementById("followUpResultInput").value || "Follow Up Done";
-        const now = new Date().toISOString();
-        quotes = quotes.map((item) => item.id === quoteId ? {
-          ...item,
-          status: result === "Lost" ? "lost" : result === "Won" ? "won" : "follow-up",
-          updatedAt: now
-        } : item);
-        localStorage.setItem(quotesKey, JSON.stringify(quotes));
-        const key = customerKey(quote.customer || {});
-        customerCrm = {
-          ...customerCrm,
-          [key]: {
-            ...(customerCrm[key] || {}),
-            status: result === "Lost" ? "Cancelled" : result === "Won" ? "Won" : "Follow Up",
-            followUpDate: nextFollowUpDate || (customerCrm[key] && customerCrm[key].followUpDate) || "",
-            note: note || (customerCrm[key] && customerCrm[key].note) || "",
-            lastFollowUpAt: today()
-          }
-        };
-        localStorage.setItem(customerCrmKey, JSON.stringify(customerCrm));
-        addFollowUpHistory({ quote, note, nextFollowUpDate, result });
-        addActivityLog("Follow up done", {
-          customer: quote.customer,
-          quoteNo: quote.quoteNo,
-          note: `${result}${note ? ` - ${note}` : ""}${nextFollowUpDate ? ` | Next: ${nextFollowUpDate}` : ""}`
-        });
-        hideFollowUpModal();
-        toast("Follow-up history saved.");
         render();
       }
       function toast(message) {
@@ -4240,7 +4035,6 @@
               id: item.id,
               label: item.line_label || "",
               productId: item.product_id || "roller",
-              productName: item.product_name || englishProductName((productMap.get(item.product_id) || {}).name || product(item.product_id || "roller").name),
               widthMm: Number(item.width_mm || 0),
               heightMm: Number(item.height_mm || 0),
               quantity: Number(item.quantity || 0),
@@ -4575,7 +4369,7 @@
           const amount = itemTotal(item);
           return `<tr>
             <td>${item.label || "-"}</td>
-            <td>${getProductDisplayName(item)}</td>
+            <td>${productDisplayName(item.productId)}</td>
             <td>${item.widthMm || 0} x ${item.heightMm || 0}</td>
             <td class="right">${item.quantity || 0}</td>
             <td>${item.color || "-"}</td>
@@ -4614,7 +4408,7 @@
             <div class="box"><strong>Job Details</strong><p>Order: ${production.orderNo || "-"}</p><p>Due Date: ${production.dueDate || "-"}</p><p>Status: ${production.status || "-"}</p><p>Completed Date: ${String(production.completedAt || "").slice(0, 10) || "-"}</p></div>
           </div>
           <table><thead><tr><th>Location</th><th>Product Name</th><th>W x H mm</th><th class="right">Qty</th><th>Frame Color</th><th>Mesh Type</th><th>Track Type</th><th>Lock Type</th><th>Production Remarks</th></tr></thead><tbody>
-            ${safeArray(production.items).map((item) => `<tr><td>${item.label || "-"}</td><td>${getProductDisplayName(item)}</td><td>${item.widthMm || 0} x ${item.heightMm || 0}</td><td class="right">${item.quantity || 0}</td><td>${item.color || "-"}</td><td>${item.meshType || product(item.productId).category || "-"}</td><td>${item.trackType || "-"}</td><td>${item.lockSet || item.lockType || "-"}</td><td>${item.remark || production.delayReason || "-"}</td></tr>`).join("")}
+            ${safeArray(production.items).map((item) => `<tr><td>${item.label || "-"}</td><td>${productDisplayName(item.productId)}</td><td>${item.widthMm || 0} x ${item.heightMm || 0}</td><td class="right">${item.quantity || 0}</td><td>${item.color || "-"}</td><td>${item.meshType || product(item.productId).category || "-"}</td><td>${item.trackType || "-"}</td><td>${item.lockSet || item.lockType || "-"}</td><td>${item.remark || production.delayReason || "-"}</td></tr>`).join("")}
           </tbody></table>
           <div class="sign"><div class="line">Prepared by</div><div class="line">Checked by</div></div>`;
       }
@@ -4683,21 +4477,12 @@
           ? invoices.map((item) => item.id === invoice.id ? invoice : item)
           : [invoice, ...invoices];
         localStorage.setItem(invoicesKey, JSON.stringify(invoices));
-        addActivityLog("Invoice created", {
-          customer: invoice.customer,
-          quoteNo: invoice.quoteNo,
-          orderNo: invoice.orderNo,
-          invoiceNo: invoice.invoiceNo,
-          note: `Invoice total ${money(invoice.total)}`
-        });
         toast(`Invoice ${invoice.invoiceNo} created.`);
         currentPage = "invoice";
         render();
       }
       function markInvoicePaid(invoiceId) {
         if (!requirePermission("invoice:manage")) return;
-        const invoiceBefore = invoices.find((invoice) => invoice.id === invoiceId);
-        const alreadyPaid = invoiceBefore && invoicePaymentStatus(invoiceBefore) === "Paid";
         invoices = invoices.map((invoice) => invoice.id === invoiceId ? {
           ...invoice,
           paidAmount: Number(invoice.total || 0),
@@ -4706,15 +4491,6 @@
           updatedAt: new Date().toISOString()
         } : invoice);
         localStorage.setItem(invoicesKey, JSON.stringify(invoices));
-        if (invoiceBefore && !alreadyPaid) {
-          addActivityLog("Invoice marked paid", {
-            customer: invoiceBefore.customer,
-            quoteNo: invoiceBefore.quoteNo,
-            orderNo: invoiceBefore.orderNo,
-            invoiceNo: invoiceBefore.invoiceNo,
-            note: `Paid ${money(invoiceBefore.total)}`
-          });
-        }
         toast("Invoice marked as paid.");
         render();
       }
@@ -4736,7 +4512,7 @@
             <div class="box"><strong>Invoice Details</strong><p>Invoice Date: ${invoice.invoiceDate || "-"}</p><p>Order: ${invoice.orderNo || "-"}</p><p>Quotation: ${invoice.quoteNo || "-"}</p><p>Status: ${invoicePaymentStatus(invoice)}</p></div>
           </div>
           <table><thead><tr><th>Item Description</th><th class="right">Qty</th><th class="right">Unit Price</th><th class="right">Amount</th></tr></thead><tbody>
-            ${safeArray(invoice.items).map((item) => `<tr><td>${item.label || "-"} - ${getProductDisplayName(item)}${itemExtraDetails(item) ? `<p class="muted">${itemExtraDetails(item)}</p>` : ""}</td><td class="right">${item.quantity || 0}</td><td class="right">${money(itemUnitPrice(item))}</td><td class="right">${money(itemTotal(item))}</td></tr>`).join("")}
+            ${safeArray(invoice.items).map((item) => `<tr><td>${item.label || "-"} - ${productDisplayName(item.productId)}${itemExtraDetails(item) ? `<p class="muted">${itemExtraDetails(item)}</p>` : ""}</td><td class="right">${item.quantity || 0}</td><td class="right">${money(itemUnitPrice(item))}</td><td class="right">${money(itemTotal(item))}</td></tr>`).join("")}
           </tbody></table>
           <div class="totals">
             <div class="row"><span>Subtotal</span><strong>${money(invoice.subtotal)}</strong></div>
@@ -4765,16 +4541,6 @@
           render();
         }, 450);
       }
-      function updateItemMiniTotal(id) {
-        const item = items.find((row) => row.id === id);
-        if (!item) return;
-        const actualEl = document.querySelector(`[data-mini-id="${id}"][data-mini-field="actual"]`);
-        const chargeEl = document.querySelector(`[data-mini-id="${id}"][data-mini-field="charge"]`);
-        const totalEl = document.querySelector(`[data-mini-id="${id}"][data-mini-field="total"]`);
-        if (actualEl) actualEl.textContent = actualSqft(item).toFixed(2);
-        if (chargeEl) chargeEl.textContent = chargeableSqft(item).toFixed(2);
-        if (totalEl) totalEl.textContent = money(itemTotal(item));
-      }
       function updateItem(id, field, value) {
         const numberFields = ["widthMm","heightMm","quantity","trackWidthMm","handleHeightMm"];
         const nextValue = numberFields.includes(field) ? Number(String(value).replace(/[^\d.]/g, "") || 0) : value;
@@ -4782,7 +4548,7 @@
           if (item.id !== id) return item;
           if (field === "productId") {
             const nextProduct = product(nextValue);
-            return { ...item, productId: nextValue, productName: englishProductName(nextProduct.name), unitPrice: Number(nextProduct.price || 0), minimumSqft: Number(nextProduct.minimumSqft || 0) };
+            return { ...item, productId: nextValue, unitPrice: Number(nextProduct.price || 0), minimumSqft: Number(nextProduct.minimumSqft || 0) };
           }
           return { ...item, [field]: nextValue };
         });
@@ -4790,15 +4556,11 @@
           render();
           return;
         }
-        updateItemMiniTotal(id);
         refreshQuotePreview();
+        scheduleInputRender();
       }
       function updateProduct(id, field, value) {
         if (!requirePermission("product:manage")) return;
-        if (field === "name") {
-          updateProductName(id, value);
-          return;
-        }
         products = products.map((item) => {
           if (item.id !== id) return item;
           const nextValue = field === "price" || field === "minimumSqft" ? Number(value || 0) : field === "active" ? value === true || value === "true" : value;
@@ -4806,35 +4568,6 @@
         });
         localStorage.setItem(productsKey, JSON.stringify(products));
         render();
-      }
-      function logProductNameChange(productItem, oldName, nextName) {
-        addActivityLog("Product name changed", {
-          note: `${oldName || "-"} changed to ${nextName || "-"} (${productItem.id})`
-        });
-      }
-      function syncProductNameToDropdown() {
-        renderItems();
-        refreshQuotePreview();
-      }
-      function updateProductName(id, value) {
-        if (!requirePermission("product:manage")) return;
-        const nextName = String(value || "").trim();
-        if (!nextName) {
-          toast("Product name is required.");
-          return;
-        }
-        const current = products.find((item) => item.id === id);
-        if (!current) return;
-        const oldName = englishProductName(current.name);
-        if (oldName === nextName) return;
-        products = products.map((item) => item.id === id ? normalizeProduct({ ...item, name: nextName, updatedAt: new Date().toISOString() }) : item);
-        localStorage.setItem(productsKey, JSON.stringify(products));
-        items = items.map((item) => item.productId === id ? { ...item, productName: nextName } : item);
-        logProductNameChange(current, oldName, nextName);
-        toast("Product name updated.");
-        renderSettings();
-        syncProductNameToDropdown();
-        applyLanguageToDom();
       }
       function setProductStatusFilter(value) {
         productStatusFilter = value;
@@ -4914,11 +4647,6 @@
         quotes = editingId ? quotes.map((item) => item.id === editingId ? quote : item) : [quote, ...quotes];
         localStorage.setItem(quotesKey, JSON.stringify(quotes));
         propagateQuoteNoChange(oldQuoteNo, nextQuoteNo);
-        addActivityLog(editingId ? "Quote updated" : "Quote created", {
-          customer: quote.customer,
-          quoteNo: quote.quoteNo,
-          note: `Quote total ${money(quote.total)}`
-        });
         toast(editingId ? "Quote updated." : "Quote saved.");
         if (!editingId) newQuote(false);
         render();
@@ -4982,12 +4710,6 @@
         };
         orders = [order, ...orders];
         localStorage.setItem(ordersKey, JSON.stringify(orders));
-        addActivityLog("Order created", {
-          customer: order.customer,
-          quoteNo: order.quoteNo,
-          orderNo: order.orderNo,
-          note: `Order total ${money(order.total)}`
-        });
         toast(`Order ${order.orderNo} created.`);
         render();
       }
@@ -5049,15 +4771,6 @@
           balance: Math.max(Number(order.total || 0) - paidTotal({ ...order, payments: [...(order.payments || []), payment] }), 0)
         } : order);
         localStorage.setItem(ordersKey, JSON.stringify(orders));
-        const updatedOrder = orders.find((order) => order.id === orderId);
-        if (updatedOrder) {
-          addActivityLog("Collection marked paid", {
-            customer: updatedOrder.customer,
-            quoteNo: updatedOrder.quoteNo,
-            orderNo: updatedOrder.orderNo,
-            note: `${payment.label}: ${money(payment.amount)} by ${payment.method || "Unknown method"}`
-          });
-        }
         toast("Payment added.");
         render();
       }
@@ -5222,7 +4935,6 @@
       function updateProductionStatus(id, value) {
         if (!requirePermission("production:update")) return;
         const production = productions.find((item) => item.id === id);
-        const wasCompleted = production && production.status === "completed";
         let movements = null;
         if (production && value === "completed" && !production.inventoryDeducted) {
           movements = deductInventoryForProduction(production);
@@ -5236,14 +4948,6 @@
           inventoryDeducted: item.inventoryDeducted || Boolean(movements)
         } : item);
         localStorage.setItem(productionsKey, JSON.stringify(productions));
-        if (production && value === "completed" && !wasCompleted) {
-          addActivityLog("Production marked completed", {
-            customer: production.customer,
-            quoteNo: production.quoteNo,
-            orderNo: production.orderNo,
-            note: `Production ${production.productionNo} completed`
-          });
-        }
         if (value === "completed") toast(movements ? "Production completed. Inventory deducted and tracked." : "Production marked as completed.");
         render();
       }
@@ -5472,8 +5176,8 @@
       }
       function previewItemsForMapping() {
         const rows = [];
-        orders.forEach((order) => safeArray(order.items).forEach((item) => rows.push({ ...item, sourceLabel: `${order.orderNo} - ${item.label || getProductDisplayName(item)}` })));
-        quotes.forEach((quote) => safeArray(quote.items).forEach((item) => rows.push({ ...item, sourceLabel: `${quote.quoteNo} - ${item.label || getProductDisplayName(item)}` })));
+        orders.forEach((order) => safeArray(order.items).forEach((item) => rows.push({ ...item, sourceLabel: `${order.orderNo} - ${item.label || productDisplayName(item.productId)}` })));
+        quotes.forEach((quote) => safeArray(quote.items).forEach((item) => rows.push({ ...item, sourceLabel: `${quote.quoteNo} - ${item.label || productDisplayName(item.productId)}` })));
         return rows;
       }
       function selectedMappingPreviewItem() {
@@ -5705,10 +5409,6 @@
         }
         appointments = existing ? appointments.map((item) => item.id === id ? appointment : item) : [appointment, ...appointments];
         localStorage.setItem(appointmentsKey, JSON.stringify(appointments));
-        addActivityLog(existing ? "Appointment updated" : "Appointment set", {
-          customer: { name: appointment.customerName, phone: appointment.phone, address: appointment.address },
-          note: `${appointment.appointmentDate} ${appointment.appointmentTime} - ${appointment.product || "Appointment"}`
-        });
         toast(existing ? "Appointment updated." : "Appointment created.");
         syncAppointmentToGoogle(appointment.id);
         render();
@@ -5783,22 +5483,12 @@
       }
       function updateInstallationStatus(id, value) {
         if (!requirePermission("installation:update")) return;
-        const installation = installations.find((item) => item.id === id);
-        const wasCompleted = installation && (installation.status === "installed" || installation.status === "balance-collected");
         installations = installations.map((item) => item.id === id ? {
           ...item,
           status: value,
           completedDate: value === "installed" || value === "balance-collected" ? (item.completedDate || today()) : item.completedDate
         } : item);
         localStorage.setItem(installationsKey, JSON.stringify(installations));
-        if (installation && ["installed", "balance-collected"].includes(value) && !wasCompleted) {
-          addActivityLog("Installation marked completed", {
-            customer: installation.customer,
-            quoteNo: installation.quoteNo,
-            orderNo: installation.orderNo,
-            note: `Installation ${installation.installationNo} marked ${statusLabelFromList(installationStatuses, value)}`
-          });
-        }
         render();
       }
       function updateInstallationField(id, field, value) {
@@ -5953,12 +5643,6 @@
         } : item);
         localStorage.setItem(ordersKey, JSON.stringify(orders));
         localStorage.setItem(installationsKey, JSON.stringify(installations));
-        addActivityLog("Collection marked paid", {
-          customer: nextOrder.customer,
-          quoteNo: nextOrder.quoteNo,
-          orderNo: nextOrder.orderNo,
-          note: `Installer collected ${money(payment.amount)} for ${installation.installationNo}`
-        });
         toast("Installer collection synced to order payment records.");
         upsertInstallerCollectionToSupabase(payment, nextOrder, installation);
       }
@@ -6012,7 +5696,7 @@
         const newWarranties = (installation.items || [])
           .filter((item) => !warranties.some((warranty) => warranty.installationNo === installation.installationNo && warranty.itemId === item.id))
           .map((item, index) => {
-            const productName = getProductDisplayName(item);
+            const productName = productDisplayName(item.productId);
             const years = warrantyYears(productName);
             const startDate = installation.installationDate || today();
             return {
@@ -6102,273 +5786,6 @@
         const customer = getCustomer();
         const text = `Hi ${customer.name || "Customer"}, this is your screen quotation ${quoteNo}. Total ${money(total())}, Deposit ${money(deposit())}, Balance ${money(balance())}.`;
         await copyText(text);
-      }
-      function taskFilterMatch(dateValue, overdue = false) {
-        if (taskFilter === "all") return true;
-        if (taskFilter === "overdue") return overdue || (dateValue && String(dateValue).slice(0, 10) < today());
-        if (taskFilter === "week") return isThisWeek(dateValue || today());
-        return !dateValue || isToday(dateValue);
-      }
-      function setTaskFilter(value) {
-        taskFilter = value;
-        renderTodayTaskDashboard();
-        applyLanguageToDom();
-      }
-      function taskProductSummary(itemsList) {
-        const counts = {};
-        safeArray(itemsList).forEach((item) => {
-          const name = getProductDisplayName(item);
-          counts[name] = (counts[name] || 0) + Number(item.quantity || 0);
-        });
-        return Object.entries(counts).map(([name, qty]) => `${name} x ${qty}`).join(", ") || "-";
-      }
-      function jsString(value) { return JSON.stringify(String(value || "")); }
-      function quoteForCustomer(customer = {}) {
-        const phone = digitsOnly(customer.phone);
-        return quotes.find((quote) =>
-          phone && digitsOnly(quote.customer && quote.customer.phone) === phone ||
-          customer.name && quote.customer && quote.customer.name === customer.name
-        ) || null;
-      }
-      async function openTaskWhatsapp(phone, message) {
-        const link = whatsappLink(phone, message);
-        if (link) {
-          try { window.open(link, "_blank"); } catch (error) {}
-        }
-        await copyText(message);
-      }
-      function openCustomerTask(customer) {
-        currentPage = "customer";
-        dashboardFilter = null;
-        render();
-        toast(`Customer opened: ${customer.name || customer.phone || "Customer"}`);
-      }
-      function openCustomerFromAppointment(appointmentId) {
-        const appointment = appointments.find((item) => item.id === appointmentId);
-        if (!appointment) return;
-        openCustomerTask({ name: appointment.customerName, phone: appointment.phone, address: appointment.address, area: appointment.area || "" });
-      }
-      function openOrderTask(orderNo) {
-        currentPage = "order";
-        dashboardFilter = { page: "order", filter: "all" };
-        render();
-        toast(`Order opened: ${orderNo}`);
-      }
-      function createOrOpenQuoteFromAppointment(appointmentId) {
-        const appointment = appointments.find((item) => item.id === appointmentId);
-        if (!appointment) return;
-        const quote = quoteForCustomer({ name: appointment.customerName, phone: appointment.phone });
-        currentPage = "quotation";
-        render();
-        if (quote) {
-          editQuote(quote.id);
-          return;
-        }
-        newQuote(false);
-        setCustomer({
-          name: appointment.customerName,
-          phone: appointment.phone,
-          address: appointment.address,
-          area: appointment.area || "",
-          appointmentDate: appointment.appointmentDate || today()
-        });
-        refreshQuotePreview();
-        toast("New quote prepared from appointment.");
-      }
-      function setAppointmentFromQuote(quoteId) {
-        const quote = getQuoteById(quoteId);
-        if (!quote) return;
-        currentPage = "appointment";
-        render();
-        setTimeout(() => {
-          const customer = quote.customer || {};
-          const fields = {
-            appointmentCustomerName: customer.name || "",
-            appointmentPhone: customer.phone || "",
-            appointmentAddress: customer.address || "",
-            appointmentProduct: taskProductSummary(quote.items),
-            appointmentDateField: customer.appointmentDate || today(),
-            appointmentTimeField: "09:00",
-            appointmentStaff: "",
-            appointmentRemarks: `Quotation ${quote.quoteNo}`
-          };
-          Object.entries(fields).forEach(([id, value]) => {
-            const el = document.getElementById(id);
-            if (el) el.value = value;
-          });
-        }, 60);
-      }
-      function markFollowUpDone(quoteId) {
-        showFollowUpModal(quoteId);
-      }
-      function markQuoteLost(quoteId) {
-        const quote = getQuoteById(quoteId);
-        quotes = quotes.map((quote) => quote.id === quoteId ? { ...quote, status: "lost", updatedAt: new Date().toISOString() } : quote);
-        localStorage.setItem(quotesKey, JSON.stringify(quotes));
-        if (quote) {
-          addActivityLog("Quote marked lost", {
-            customer: quote.customer,
-            quoteNo: quote.quoteNo,
-            note: "Marked lost from Today Task Dashboard"
-          });
-        }
-        toast("Quotation marked as lost.");
-        render();
-      }
-      function markProductionCompleted(productionId) {
-        const production = productions.find((item) => item.id === productionId);
-        if (!production) return;
-        updateProductionStatus(productionId, "completed");
-      }
-      function markInstallationCompleted(installationId) {
-        updateInstallationStatus(installationId, "installed");
-      }
-      function markInvoicePaidFromDashboard(id, type = "invoice") {
-        if (type === "invoice") {
-          if (!can("invoice:manage") && !can("payment:record")) return requirePermission("invoice:manage");
-          const invoiceBefore = invoices.find((invoice) => invoice.id === id);
-          const alreadyPaid = invoiceBefore && invoicePaymentStatus(invoiceBefore) === "Paid";
-          invoices = invoices.map((invoice) => invoice.id === id ? {
-            ...invoice,
-            paidAmount: Number(invoice.total || 0),
-            balanceDue: 0,
-            paymentStatus: "Paid",
-            updatedAt: new Date().toISOString()
-          } : invoice);
-          localStorage.setItem(invoicesKey, JSON.stringify(invoices));
-          if (invoiceBefore && !alreadyPaid) {
-            addActivityLog("Invoice marked paid", {
-              customer: invoiceBefore.customer,
-              quoteNo: invoiceBefore.quoteNo,
-              orderNo: invoiceBefore.orderNo,
-              invoiceNo: invoiceBefore.invoiceNo,
-              note: `Paid from Today Task Dashboard: ${money(invoiceBefore.total)}`
-            });
-          }
-          toast("Invoice marked as paid.");
-          render();
-          return;
-        }
-        if (!can("payment:record") && !can("invoice:manage")) return requirePermission("payment:record");
-        const order = getOrderById(id);
-        if (!order) return;
-        const balanceAmount = unpaidTotal(order);
-        if (balanceAmount <= 0) return;
-        const payment = { id: `dashboard-paid-${uid()}`, label: "Dashboard payment", amount: balanceAmount, date: today(), method: "Bank Transfer", remark: "Marked paid from Today Task Dashboard" };
-        orders = orders.map((item) => item.id === order.id ? { ...item, payments: [...safeArray(item.payments), payment], balance: 0 } : item);
-        localStorage.setItem(ordersKey, JSON.stringify(orders));
-        addActivityLog("Collection marked paid", {
-          customer: order.customer,
-          quoteNo: order.quoteNo,
-          orderNo: order.orderNo,
-          note: `Dashboard payment ${money(balanceAmount)}`
-        });
-        const invoice = getInvoiceByOrder(order);
-        if (invoice) markInvoicePaid(invoice.id);
-        toast("Balance marked as paid.");
-        render();
-      }
-      function taskCard(title, rowsHtml, count) {
-        return `<div class="item-card"><div class="item-head"><h3>${title}</h3><span class="pill">${count}</span></div>${rowsHtml || `<p style="color:var(--muted)">No tasks.</p>`}</div>`;
-      }
-      function taskRow(main, detail, actions = "") {
-        return `<div class="history-card" style="margin-top:10px"><div>${main}<p style="color:var(--muted);margin-top:5px">${detail}</p></div><div class="history-actions">${actions}</div></div>`;
-      }
-      function renderTodayTaskDashboard() {
-        const el = document.getElementById("todayTaskDashboard");
-        if (!el) return;
-        const filterButtons = [["today", "Today"], ["week", "This Week"], ["overdue", "Overdue"], ["all", "All Pending"]]
-          .map(([value, label]) => `<button class="btn ${taskFilter === value ? "primary" : ""}" onclick="setTaskFilter('${value}')">${label}</button>`).join("");
-
-        const appointmentRows = appointments
-          .filter((appointment) => appointment.status !== "cancelled" && taskFilterMatch(appointment.appointmentDate, appointment.appointmentDate < today()))
-          .map((appointment) => {
-            const quote = quoteForCustomer({ name: appointment.customerName, phone: appointment.phone });
-            const customer = { name: appointment.customerName, phone: appointment.phone, address: appointment.address, area: appointment.area || "" };
-            return taskRow(
-              `<strong>${appointment.customerName || "Customer"}</strong> <span class="pill">${quote ? quote.quoteNo : "No Quote"}</span>`,
-              `${appointment.phone || "-"} | ${customer.area || "-"} | ${appointment.appointmentDate || "-"} ${appointment.appointmentTime || ""}`,
-              `<button class="btn" onclick="openCustomerFromAppointment('${appointment.id}')">Open Customer</button>
-               <button class="btn" onclick="openTaskWhatsapp(${jsString(appointment.phone)},${jsString(`Hi ${appointment.customerName || "Customer"}, reminder for your Eco Screen appointment on ${appointment.appointmentDate || "-"} at ${appointment.appointmentTime || "-"} .`)})">WhatsApp Customer</button>
-               <button class="btn primary" onclick="createOrOpenQuoteFromAppointment('${appointment.id}')">Create / Open Quote</button>`
-            );
-          }).join("");
-
-        const followUpQuotes = quotes
-          .filter((quote) => ["quoted", "follow-up"].includes(quote.status || "quoted"))
-          .filter((quote) => taskFilterMatch(quote.updatedAt || quote.createdAt, daysBetween(quote.updatedAt || quote.createdAt) > 3));
-        const followUpRows = followUpQuotes.map((quote) => {
-          const lastDate = String(quote.updatedAt || quote.createdAt || "").slice(0, 10);
-          const days = daysBetween(lastDate);
-          return taskRow(
-            `<strong>${quote.quoteNo}</strong> <span class="pill">${statusLabel(quote.status)}</span>`,
-            `${quote.customer.name || "-"} | ${quote.customer.phone || "-"} | ${money(quote.total)} | Last updated: ${lastDate || "-"} | ${days} days`,
-            `<button class="btn" onclick="openTaskWhatsapp(${jsString(quote.customer.phone)},${jsString(`Hi ${quote.customer.name || "Customer"}, just following up on your Eco Screen quotation ${quote.quoteNo}. Please let me know if you have any questions. Thank you.`)})">WhatsApp Follow Up</button>
-             <button class="btn" onclick="markFollowUpDone('${quote.id}')">Mark Follow Up Done</button>
-             <button class="btn" onclick="setAppointmentFromQuote('${quote.id}')">Set Appointment</button>
-             <button class="btn danger" onclick="markQuoteLost('${quote.id}')">Mark Lost</button>`
-          );
-        }).join("");
-
-        const productionTasks = [
-          ...productions.filter((production) => production.status !== "completed").map((production) => ({ production, order: orders.find((order) => order.orderNo === production.orderNo) })),
-          ...orders.filter((order) => !productions.some((production) => production.orderNo === order.orderNo)).map((order) => ({ production: null, order }))
-        ].filter((row) => taskFilterMatch(row.order && row.order.installationDate || row.production && row.production.createdAt, row.order && row.order.installationDate && row.order.installationDate < today()));
-        const productionRows = productionTasks.map(({ production, order }) => taskRow(
-          `<strong>${order && order.orderNo || production.orderNo}</strong> <span class="pill">${production ? statusLabelFromList(productionStatuses, production.status) : "No Production Sheet"}</span>`,
-          `${(order && order.customer.name) || (production.customer && production.customer.name) || "-"} | ${taskProductSummary(order && order.items || production.items)} | Install: ${order && order.installationDate || "-"}`,
-          `<button class="btn" onclick="openOrderTask('${order && order.orderNo || production.orderNo}')">Open Order</button>
-           ${production ? `<button class="btn" onclick="printProduction('${production.id}')">Print Production</button>${can("production:update") ? `<button class="btn primary" onclick="markProductionCompleted('${production.id}')">Mark Production Completed</button>` : ""}` : order && can("production:generate") ? `<button class="btn primary" onclick="generateProductionSheet('${order.id}')">Generate Production</button>` : ""}`
-        )).join("");
-
-        const installationRows = installations
-          .filter((installation) => !["installed", "balance-collected"].includes(installation.status))
-          .filter((installation) => taskFilterMatch(installation.installationDate, installation.installationDate && installation.installationDate < today()))
-          .map((installation) => taskRow(
-            `<strong>${installation.orderNo}</strong> <span class="pill">${statusLabelFromList(installationStatuses, installation.status)}</span>`,
-            `${installation.customer.name || "-"} | ${installation.customer.phone || "-"} | ${installation.installationDate || "-"} | ${installation.customer.address || "-"}`,
-            `<button class="btn" onclick="openTaskWhatsapp(${jsString(installation.customer.phone)},${jsString(`Hi ${installation.customer.name || "Customer"}, this is Eco Screen regarding your installation on ${installation.installationDate || "-"} .`)})">WhatsApp Customer</button>
-             <button class="btn" onclick="printInstallation('${installation.id}')">Print Installation</button>
-             <button class="btn primary" onclick="markInstallationCompleted('${installation.id}')">Mark Installation Completed</button>`
-          )).join("");
-
-        const collectionTasks = orders
-          .filter((order) => unpaidTotal(order) > 0)
-          .filter((order) => taskFilterMatch(order.installationDate || order.createdAt, isOverdue(order)))
-          .map((order) => {
-            const invoice = getInvoiceByOrder(order);
-            const overdueDays = order.installationDate ? Math.max(daysBetween(order.installationDate), 0) : 0;
-            return taskRow(
-              `<strong>${order.customer.name || "Customer"}</strong> <span class="pill">${money(unpaidTotal(order))}</span>`,
-              `${order.customer.phone || "-"} | Order: ${order.orderNo} | Invoice: ${invoice ? invoice.invoiceNo : "-"} | Install: ${order.installationDate || "-"} | Overdue: ${overdueDays} days`,
-              `<button class="btn" onclick="copyPendingWhatsapp('${order.id}')">WhatsApp Chase Payment</button>
-               ${invoice ? `<button class="btn" onclick="printInvoice('${invoice.id}')">Print Invoice</button><button class="btn primary" onclick="markInvoicePaidFromDashboard('${invoice.id}','invoice')">Mark Paid</button>` : `<button class="btn primary" onclick="markInvoicePaidFromDashboard('${order.id}','order')">Mark Paid</button>`}`
-            );
-          }).join("");
-
-        const warningRows = [
-          ...quotes.filter((quote) => ["quoted", "follow-up"].includes(quote.status || "quoted") && daysBetween(quote.updatedAt || quote.createdAt) > 7)
-            .map((quote) => `<div class="alert" style="margin-top:8px">Quotation ${quote.quoteNo} has no follow-up for ${daysBetween(quote.updatedAt || quote.createdAt)} days.</div>`),
-          ...productions.filter((production) => production.status !== "completed").filter((production) => {
-            const order = orders.find((item) => item.orderNo === production.orderNo);
-            return order && order.installationDate && daysBetween(today(), order.installationDate) <= 2 && order.installationDate >= today();
-          }).map((production) => `<div class="alert" style="margin-top:8px">Production ${production.productionNo} is pending and installation is within 2 days.</div>`),
-          ...orders.filter((order) => unpaidTotal(order) > 0 && order.installationDate && daysBetween(order.installationDate) > 7)
-            .map((order) => `<div class="alert" style="margin-top:8px">Collection overdue more than 7 days: ${order.orderNo} ${money(unpaidTotal(order))}.</div>`),
-          ...invoices.filter((invoice) => invoicePaymentStatus(invoice) !== "Paid" && daysBetween(invoice.invoiceDate) > 7)
-            .map((invoice) => `<div class="alert" style="margin-top:8px">Invoice unpaid more than 7 days: ${invoice.invoiceNo}.</div>`)
-        ].join("");
-
-        const sections = [];
-        if (["admin", "sales", "secretary"].includes(currentRole)) sections.push(taskCard("Today's Appointments", appointmentRows, (appointmentRows.match(/history-card/g) || []).length));
-        if (["admin", "sales", "secretary"].includes(currentRole)) sections.push(taskCard("Pending Follow Up", followUpRows, followUpQuotes.length));
-        if (["admin", "production", "secretary"].includes(currentRole)) sections.push(taskCard("Pending Production", productionRows, productionTasks.length));
-        if (["admin", "installer", "secretary"].includes(currentRole)) sections.push(taskCard("Pending Installation", installationRows, (installationRows.match(/history-card/g) || []).length));
-        if (["admin", "installer", "secretary"].includes(currentRole)) sections.push(taskCard("Pending Collection", collectionRows, (collectionRows.match(/history-card/g) || []).length));
-        sections.push(taskCard("Warning / Attention", warningRows, (warningRows.match(/class=\"alert\"/g) || []).length));
-
-        el.innerHTML = `<div class="actions" style="margin-bottom:14px">${filterButtons}</div>${sections.join("")}`;
-        normalizeInteractiveElements();
       }
       function renderDashboard() {
         const todayValue = today();
@@ -6740,9 +6157,9 @@
               <div class="field"><label>Colour</label><input data-item-id="${item.id}" data-field="color" value="${item.color || ""}" oninput="updateItem('${item.id}','color',this.value)" placeholder="White / Black / Brown" /></div>
               <div class="field wide"><label>Line Remark</label><textarea data-item-id="${item.id}" data-field="remark" rows="2" oninput="updateItem('${item.id}','remark',this.value)" placeholder="Special size, handle note, site condition">${item.remark || ""}</textarea></div>
               <div class="mini-total">
-                <div class="line"><span>Actual</span><strong data-mini-id="${item.id}" data-mini-field="actual">${actualSqft(item).toFixed(2)}</strong></div>
-                <div class="line"><span>Charge</span><strong data-mini-id="${item.id}" data-mini-field="charge">${chargeableSqft(item).toFixed(2)}</strong></div>
-                <div class="line"><span>Total</span><strong data-mini-id="${item.id}" data-mini-field="total">${money(itemTotal(item))}</strong></div>
+                <div class="line"><span>Actual</span><strong>${actualSqft(item).toFixed(2)}</strong></div>
+                <div class="line"><span>Charge</span><strong>${chargeableSqft(item).toFixed(2)}</strong></div>
+                <div class="line"><span>Total</span><strong>${money(itemTotal(item))}</strong></div>
               </div>
               <div style="grid-column:1/-1;border-top:1px solid var(--line);padding-top:12px;margin-top:4px">
                 <p class="eyebrow">${isSlidingItem(item) ? "Sliding Track Details Required" : "Production Details Optional"}</p>
@@ -6783,67 +6200,9 @@
             <div class="info-box"><p class="eyebrow">Job Details</p><p style="margin-top:8px"><strong>Area:</strong> ${customer.area || "-"}</p><p><strong>Appointment:</strong> ${customer.appointmentDate || "-"}</p></div>
           </div>
           <div class="table-wrap"><table><thead><tr><th>Description</th><th>Product</th><th class="right">Size</th><th class="right">Sqft</th><th class="right">Rate</th><th class="right">Qty</th><th class="right">Amount</th></tr></thead><tbody>
-            ${orderedItems().map((item, index) => `<tr><td>${item.label || `Item ${index + 1}`}${itemExtraDetails(item) ? `<p style="color:var(--muted);font-size:12px;margin-top:4px">${itemExtraDetails(item)}</p>` : ""}</td><td>${getProductDisplayName(item)}</td><td class="right">${item.widthMm || 0} x ${item.heightMm || 0} mm</td><td class="right">${chargeableSqft(item).toFixed(2)}</td><td class="right">${money(itemUnitPrice(item))}</td><td class="right">${item.quantity || 0}</td><td class="right"><strong>${money(itemTotal(item))}</strong></td></tr>`).join("")}
+            ${orderedItems().map((item, index) => `<tr><td>${item.label || `Item ${index + 1}`}${itemExtraDetails(item) ? `<p style="color:var(--muted);font-size:12px;margin-top:4px">${itemExtraDetails(item)}</p>` : ""}</td><td>${productDisplayName(item.productId)}</td><td class="right">${item.widthMm || 0} x ${item.heightMm || 0} mm</td><td class="right">${chargeableSqft(item).toFixed(2)}</td><td class="right">${money(itemUnitPrice(item))}</td><td class="right">${item.quantity || 0}</td><td class="right"><strong>${money(itemTotal(item))}</strong></td></tr>`).join("")}
           </tbody></table></div>
           <div class="quote-bottom"><div class="notes"><strong style="color:var(--ink)">Terms & Conditions</strong><p style="margin-top:8px">i) Prices quoted are valid for a period of two (2) weeks from the quotation date.</p><p style="margin-top:8px">ii) 50% deposit is required upon confirmation, balance of payment upon completion.</p><p style="margin-top:8px">iii) Deposit paid is non-refundable.</p><p style="margin-top:8px">iv) All cheques should not be crossed and make payable to:</p><p style="margin-top:8px"><strong>ECO SCREEN SDN BHD<br>PUBLIC BANK<br>3242952413</strong></p></div><div><div class="line"><span>Subtotal</span><strong>${money(subtotal())}</strong></div>${discountLine}<div class="line"><span>Total</span><strong>${money(total())}</strong></div><div class="line"><span>Deposit</span><strong>${money(deposit())}</strong></div><div class="total-box" style="margin-top:10px"><div class="line"><span>Balance</span><strong>${money(balance())}</strong></div></div></div></div>
-        `;
-      }
-      function followUpHistoryHtml(quote) {
-        const rows = followUpHistoryForQuote(quote).slice(0, 4);
-        if (!rows.length) return "";
-        return `<div class="order-items" style="margin-top:10px">
-          <strong>Follow Up History</strong>
-          ${rows.map((row) => `<div class="payment-row"><span>${String(row.createdAt || "").slice(0, 16).replace("T", " ")} - ${row.followUpBy || "-"}</span><strong>${row.result || "-"}</strong></div><p style="color:var(--muted);white-space:pre-wrap;margin-top:4px">${row.note || "No note"}${row.nextFollowUpDate ? ` | Next: ${row.nextFollowUpDate}` : ""}</p>`).join("")}
-        </div>`;
-      }
-      function setActivityLogRange(value) {
-        activityLogFilter.range = value;
-        renderActivityLog();
-        applyLanguageToDom();
-      }
-      function updateActivityLogFilter(field, value) {
-        activityLogFilter = { ...activityLogFilter, [field]: value };
-        renderActivityLog();
-        applyLanguageToDom();
-      }
-      function activityLogMatches(log) {
-        const createdDate = String(log.createdAt || "").slice(0, 10);
-        if (activityLogFilter.range === "today" && createdDate !== today()) return false;
-        if (activityLogFilter.range === "week" && !isThisWeek(createdDate)) return false;
-        const customerFilter = String(activityLogFilter.customer || "").toLowerCase().trim();
-        if (customerFilter && !String(log.customerName || "").toLowerCase().includes(customerFilter)) return false;
-        const staffFilter = String(activityLogFilter.staff || "").toLowerCase().trim();
-        if (staffFilter && !String(log.staffName || "").toLowerCase().includes(staffFilter)) return false;
-        if (activityLogFilter.action && log.actionType !== activityLogFilter.action) return false;
-        return true;
-      }
-      function renderActivityLog() {
-        const el = document.getElementById("activityLog");
-        if (!el) return;
-        const actions = [...new Set(safeArray(activityLogs).map((log) => log.actionType).filter(Boolean))].sort();
-        const rows = safeArray(activityLogs).filter(activityLogMatches);
-        const rangeButtons = [["today", "Today"], ["week", "This Week"], ["all", "All"]]
-          .map(([value, label]) => `<button class="btn ${activityLogFilter.range === value ? "primary" : ""}" onclick="setActivityLogRange('${value}')">${label}</button>`).join("");
-        el.innerHTML = `
-          <div class="item-card">
-            <div class="item-head"><h3>Activity Filters</h3><span class="pill">${rows.length} Logs</span></div>
-            <div class="actions" style="margin-bottom:12px">${rangeButtons}</div>
-            <div class="form-grid">
-              <div class="field"><label>Customer</label><input value="${activityLogFilter.customer || ""}" onchange="updateActivityLogFilter('customer',this.value)" placeholder="Search customer" /></div>
-              <div class="field"><label>Staff / User</label><input value="${activityLogFilter.staff || ""}" onchange="updateActivityLogFilter('staff',this.value)" placeholder="Search staff" /></div>
-              <div class="field"><label>Action Type</label><select onchange="updateActivityLogFilter('action',this.value)"><option value="">All Actions</option>${actions.map((action) => `<option value="${action}" ${activityLogFilter.action === action ? "selected" : ""}>${action}</option>`).join("")}</select></div>
-            </div>
-          </div>
-          ${rows.length ? rows.map((log) => `
-            <div class="history-card">
-              <div>
-                <strong>${log.actionType || "Activity"}</strong> <span class="pill">${String(log.createdAt || "").slice(0, 16).replace("T", " ")}</span>
-                <p style="color:var(--muted);margin-top:5px">${log.customerName || "No customer"}${log.quoteNo ? ` | Quote ${log.quoteNo}` : ""}${log.orderNo ? ` | Order ${log.orderNo}` : ""}${log.invoiceNo ? ` | Invoice ${log.invoiceNo}` : ""}</p>
-                <p style="color:var(--muted);white-space:pre-wrap">${log.note || "-"}</p>
-              </div>
-              <div style="text-align:right"><strong>${log.staffName || "-"}</strong><p style="color:var(--muted);font-size:13px">${log.customerId || ""}</p></div>
-            </div>
-          `).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No activity logs found for this filter.</p>`}
         `;
       }
       function renderHistory() {
@@ -6854,7 +6213,7 @@
         const banner = filterBanner("follow-up", { "new-quotations": "New Quotations" });
         document.getElementById("history").innerHTML = banner + (rows.length ? rows.map((quote) => `
           <div class="history-card">
-            <div><strong>${quote.quoteNo}</strong> <span class="pill">${statusLabel(quote.status)}</span><p style="color:var(--muted);margin-top:5px">${quote.customer.name || "Unnamed Customer"} - ${quote.customer.area || "No area"} - ${money(quote.total)}</p>${quote.remarks ? `<p style="white-space:pre-wrap;color:var(--muted);margin-top:6px">${quote.remarks}</p>` : ""}${followUpHistoryHtml(quote)}</div>
+            <div><strong>${quote.quoteNo}</strong> <span class="pill">${statusLabel(quote.status)}</span><p style="color:var(--muted);margin-top:5px">${quote.customer.name || "Unnamed Customer"} - ${quote.customer.area || "No area"} - ${money(quote.total)}</p>${quote.remarks ? `<p style="white-space:pre-wrap;color:var(--muted);margin-top:6px">${quote.remarks}</p>` : ""}</div>
             <div class="history-actions"><button class="btn" onclick="editQuote('${quote.id}')">Edit</button>${can("records:delete") ? `<button class="btn danger" onclick="deleteQuote('${quote.id}')">Delete</button>` : ""}</div>
           </div>
         `).join("") : `<p style="background:var(--soft);border-radius:12px;padding:14px;color:var(--muted)">No saved quotations yet.</p>`);
@@ -6985,7 +6344,7 @@
                 </div>
               ` : ""}
               <div class="order-items">
-                ${(order.items || []).map((item) => `<div>${item.label || "Item"} - ${getProductDisplayName(item)} - ${item.widthMm || 0} x ${item.heightMm || 0} mm - Qty ${item.quantity || 0}${itemExtraDetails(item) ? `<p style="color:var(--muted);font-size:12px">${itemExtraDetails(item)}</p>` : ""}</div>`).join("")}
+                ${(order.items || []).map((item) => `<div>${item.label || "Item"} - ${productDisplayName(item.productId)} - ${item.widthMm || 0} x ${item.heightMm || 0} mm - Qty ${item.quantity || 0}${itemExtraDetails(item) ? `<p style="color:var(--muted);font-size:12px">${itemExtraDetails(item)}</p>` : ""}</div>`).join("")}
               </div>
             </div>
             <div style="display:grid;gap:8px;text-align:right">
@@ -7558,7 +6917,7 @@
             ` : ""}
             ${(production.items || []).map((item) => `
               <div class="ops-line-grid">
-                <div class="field"><label>Product</label><input value="${getProductDisplayName(item)}" readonly /></div>
+                <div class="field"><label>Product</label><input value="${productDisplayName(item.productId)}" readonly /></div>
                 <div class="field"><label>Location</label><input value="${item.label || ""}" onchange="updateProductionItem('${production.id}','${item.id}','label',this.value)" ${productionCanEdit ? "" : "readonly"} /></div>
                 <div class="field"><label>Width mm</label><input value="${item.widthMm || 0}" readonly /></div>
                 <div class="field"><label>Height mm</label><input value="${item.heightMm || 0}" readonly /></div>
@@ -7664,7 +7023,7 @@
               </div>
             </div>
             <div class="order-items">
-              ${(installation.items || []).map((item) => `<div>${item.label || "Item"} - ${getProductDisplayName(item)} - ${item.widthMm || 0} x ${item.heightMm || 0} mm - Qty ${item.quantity || 0}${itemExtraDetails(item) ? `<p style="color:var(--muted);font-size:12px">${itemExtraDetails(item)}</p>` : ""}</div>`).join("")}
+              ${(installation.items || []).map((item) => `<div>${item.label || "Item"} - ${productDisplayName(item.productId)} - ${item.widthMm || 0} x ${item.heightMm || 0} mm - Qty ${item.quantity || 0}${itemExtraDetails(item) ? `<p style="color:var(--muted);font-size:12px">${itemExtraDetails(item)}</p>` : ""}</div>`).join("")}
             </div>
             <div class="payment-grid" style="margin-top:12px">
               <div class="field"><label>Installer Name</label><input value="${installation.installerName || ""}" onchange="updateInstallationField('${installation.id}','installerName',this.value)" placeholder="Installer name" /></div>
@@ -7935,7 +7294,6 @@
         document.getElementById("summaryBalance").textContent = money(balance());
         document.getElementById("orderConvertPanel").style.display = document.getElementById("status").value === "won" ? "block" : "none";
         renderDashboard();
-        renderTodayTaskDashboard();
         renderSettings();
         renderStaffManagement();
         renderItems();
@@ -7948,7 +7306,6 @@
         renderCustomers();
         renderAppointments();
         renderFacebookAds();
-        renderActivityLog();
         renderFinancialDashboard();
         renderProfitAnalysis();
         renderInventory();
@@ -8033,10 +7390,13 @@
       }
       setCustomer({ appointmentDate: today() });
       document.getElementById("status").innerHTML = statuses.map(([value, label]) => `<option value="${value}">${label}</option>`).join("");
+      document.addEventListener("focusout", (event) => {
+        const target = event.target;
+        if (target && target.dataset && target.dataset.itemId) setTimeout(render, 80);
+      }, true);
       render();
       initializeCloud();
     </script>
   </body>
 </html>
-
 
