@@ -2,6 +2,7 @@ import { roles } from "./data.js";
 import { renderAddProductForm, renderProducts, attachProductEvents } from "./products.js";
 import { attachQuotationEvents, renderQuotationForm } from "./quotations.js";
 import { setRole, state } from "./state.js";
+import { attachWorkflowEvents, renderWorkflowModules } from "./workflow.js";
 
 function appHtml() {
   return `
@@ -81,6 +82,24 @@ function appHtml() {
           <div id="productList" class="product-list"></div>
         </section>
       </aside>
+
+      <section class="panel workflow-panel" id="ordersPanel">
+        <div class="panel-head">
+          <h2>Orders</h2>
+          <span class="pill" id="workflowStatus">Ready</span>
+        </div>
+        <div id="orderList" class="workflow-list"></div>
+      </section>
+
+      <section class="panel workflow-panel">
+        <div class="panel-head"><h2>Production Jobs</h2></div>
+        <div id="productionList" class="workflow-list"></div>
+      </section>
+
+      <section class="panel workflow-panel">
+        <div class="panel-head"><h2>Installation Jobs</h2></div>
+        <div id="installationList" class="workflow-list"></div>
+      </section>
     </main>
 
     <section id="printArea" class="print-area">
@@ -110,6 +129,7 @@ function appHtml() {
         <p>50% deposit is required upon confirmation. Deposit paid is not refundable.</p>
       </div>
     </section>
+    <section id="workflowPrintArea" class="print-area workflow-print-area"></section>
   `;
 }
 
@@ -118,9 +138,11 @@ function renderShell() {
   attachRoleEvents();
   attachQuotationEvents();
   attachProductEvents();
+  attachWorkflowEvents();
   renderQuotationForm();
   renderAddProductForm();
   renderProducts();
+  renderWorkflowModules();
   applyRoleAccess();
 }
 

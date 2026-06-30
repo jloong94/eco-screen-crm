@@ -6,6 +6,9 @@ export const state = {
   currentPage: "quotation",
   products: loadJson(storageKeys.products, defaultProducts),
   quotations: loadJson(storageKeys.quotations, []),
+  orders: loadJson(storageKeys.orders, []),
+  productionJobs: loadJson(storageKeys.productionJobs, []),
+  installationJobs: loadJson(storageKeys.installationJobs, []),
   currentQuote: null
 };
 
@@ -15,6 +18,18 @@ export function persistProducts() {
 
 export function persistQuotations() {
   saveJson(storageKeys.quotations, state.quotations);
+}
+
+export function persistOrders() {
+  saveJson(storageKeys.orders, state.orders);
+}
+
+export function persistProductionJobs() {
+  saveJson(storageKeys.productionJobs, state.productionJobs);
+}
+
+export function persistInstallationJobs() {
+  saveJson(storageKeys.installationJobs, state.installationJobs);
 }
 
 export function setRole(role) {
@@ -31,14 +46,30 @@ export function today() {
 }
 
 export function nextQuoteNumber() {
+  return nextNumber("ESQ", state.quotations, "quoteNumber");
+}
+
+export function nextOrderNumber() {
+  return nextNumber("ESO", state.orders, "orderNumber");
+}
+
+export function nextProductionNumber() {
+  return nextNumber("ESP", state.productionJobs, "productionNumber");
+}
+
+export function nextInstallationNumber() {
+  return nextNumber("ESI", state.installationJobs, "installationNumber");
+}
+
+function nextNumber(prefix, rows, field) {
   const year = new Date().getFullYear();
-  const next = state.quotations
-    .map((quote) => quote.quoteNumber)
-    .filter((number) => number && number.startsWith(`ESQ-${year}-`))
+  const next = rows
+    .map((row) => row[field])
+    .filter((number) => number && number.startsWith(`${prefix}-${year}-`))
     .map((number) => Number(number.split("-").pop()))
     .filter(Number.isFinite)
     .reduce((max, number) => Math.max(max, number), 0) + 1;
-  return `ESQ-${year}-${String(next).padStart(4, "0")}`;
+  return `${prefix}-${year}-${String(next).padStart(4, "0")}`;
 }
 
 export function activeProducts() {

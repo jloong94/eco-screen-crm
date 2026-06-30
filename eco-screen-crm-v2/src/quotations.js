@@ -9,6 +9,7 @@ import {
   state
 } from "./state.js";
 import { actualSqft, chargeableSqft, lineTotal, money, quoteTotals, toNumber } from "./calculations.js";
+import { convertQuoteToOrder, renderWorkflowModules } from "./workflow.js";
 
 export function renderQuotationForm() {
   const quote = ensureCurrentQuote();
@@ -143,7 +144,7 @@ function itemCardHtml(item, index) {
           <textarea rows="2" data-item-id="${item.id}" data-field="remark" placeholder="Site note, special request">${item.remark || ""}</textarea>
         </label>
         <div class="line-metrics">
-          <span>ft² / Area</span>
+          <span>ft2 / Area</span>
           <strong data-line-id="${item.id}" data-line-field="area">${chargeableSqft(item).toFixed(2)}</strong>
           <span>Line Total</span>
           <strong data-line-id="${item.id}" data-line-field="total">${money(lineTotal(item))}</strong>
@@ -235,16 +236,27 @@ export function newQuote() {
 export function renderQuotationList() {
   const list = document.querySelector("#quotationList");
   list.innerHTML = state.quotations.length ? state.quotations.map((quote) => `
-    <button class="quote-row" type="button" data-open-quote="${quote.id}">
-      <span><strong>${quote.quoteNumber}</strong><small>${quote.customer.name || "-"}</small></span>
-      <span>${money(quote.total || 0)}</span>
-    </button>
+    <article class="quote-row">
+      <button type="button" data-open-quote="${quote.id}">
+        <span><strong>${quote.quoteNumber}</strong><small>${quote.customer.name || "-"}</small></span>
+        <span>${money(quote.total || 0)}</span>
+      </button>
+      <button class="btn primary" type="button" data-convert-quote="${quote.id}">Convert to Order</button>
+    </article>
   `).join("") : `<p class="muted-text">No saved quotations yet.</p>`;
   list.querySelectorAll("[data-open-quote]").forEach((button) => {
     button.addEventListener("click", () => {
       const quote = state.quotations.find((row) => row.id === button.dataset.openQuote);
       state.currentQuote = JSON.parse(JSON.stringify(quote));
       renderQuotationForm();
+    });
+  });
+  list.querySelectorAll("[data-convert-quote]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const result = convertQuoteToOrder(button.dataset.convertQuote);
+      document.querySelector("#saveStatus").textContent = result.ok ? "Order created successfully." : result.message;
+      renderQuotationList();
+      renderWorkflowModules();
     });
   });
 }

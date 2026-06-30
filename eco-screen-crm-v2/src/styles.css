@@ -135,6 +135,9 @@ input:focus, select:focus, textarea:focus {
   font-weight: 900;
 }
 .pill.muted { color: var(--muted); }
+.pill[data-type="success"] { background: #dcfce7; color: #166534; }
+.pill[data-type="warning"] { background: #fef3c7; color: #92400e; }
+.pill[data-type="error"] { background: #fee2e2; color: #991b1b; }
 .quote-items { display: grid; gap: 12px; }
 .item-card, .card {
   border: 1px solid var(--line);
@@ -187,7 +190,35 @@ input:focus, select:focus, textarea:focus {
   text-align: left;
 }
 .quote-row small { display: block; color: var(--muted); margin-top: 4px; }
+.quote-row > button:first-child {
+  flex: 1;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
 .card-head { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.workflow-panel { grid-column: 1 / -1; }
+.workflow-list { display: grid; gap: 12px; }
+.mini-table {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+}
+.mini-table div {
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: white;
+  padding: 9px;
+}
+.mini-table span { color: var(--muted); font-size: 13px; }
 .empty-state {
   border: 1px dashed var(--line);
   border-radius: 12px;
@@ -219,6 +250,8 @@ input:focus, select:focus, textarea:focus {
     padding: 24px;
     color: #111827;
   }
+  body.workflow-print-mode #printArea { display: none !important; }
+  body:not(.workflow-print-mode) #workflowPrintArea { display: none !important; }
   .print-head {
     display: flex;
     justify-content: space-between;
@@ -239,4 +272,20 @@ input:focus, select:focus, textarea:focus {
   }
   .print-totals div { display: flex; justify-content: space-between; border-bottom: 1px solid #e2e8f0; padding: 6px 0; }
   .terms { margin-top: 20px; color: #475569; }
+  .print-box {
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: 10px;
+    margin-bottom: 12px;
+  }
+  .print-sign {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+    margin-top: 32px;
+  }
+  .print-sign span {
+    border-top: 1px solid #334155;
+    padding-top: 8px;
+  }
 }

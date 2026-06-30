@@ -1,6 +1,6 @@
 export const roles = ["Admin", "Secretary", "Sales", "Production", "Installer"];
 
-export const quotationStatuses = ["Draft", "Quoted", "Follow Up", "Won", "Lost", "Cancelled"];
+export const quotationStatuses = ["Draft", "Quoted", "Follow Up", "Won", "Ordered", "Lost", "Cancelled"];
 
 export const defaultProducts = [
   { id: "roller", name: "Roller", category: "Roller", sellingPrice: 33, costPrice: 0, calculationType: "sqft", minimumSqft: 11, active: true },
