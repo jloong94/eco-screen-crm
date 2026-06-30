@@ -22,11 +22,36 @@ export function chargeableSqft(item) {
   return Math.max(actualSqft(item), toNumber(item.minimumSqft));
 }
 
-export function lineTotal(item) {
+export function baseLineTotal(item) {
   const qty = toNumber(item.quantity);
   const price = toNumber(item.unitPrice);
   if (item.calculationType === "fixed") return price * qty;
   return chargeableSqft(item) * price * qty;
+}
+
+export function isPowdercoatSelected(item) {
+  return item.powdercoat === true || item.powdercoat === "true" || item.powdercoat === "Yes";
+}
+
+export function powdercoatAmount(item) {
+  return isPowdercoatSelected(item) ? baseLineTotal(item) * toNumber(item.powdercoatRate || 0.08) : 0;
+}
+
+export function lineTotal(item) {
+  return baseLineTotal(item) + powdercoatAmount(item);
+}
+
+export function itemWithCalculatedTotals(item) {
+  const base = baseLineTotal(item);
+  const powdercoat = powdercoatAmount(item);
+  return {
+    ...item,
+    powdercoat: isPowdercoatSelected(item),
+    powdercoatRate: toNumber(item.powdercoatRate || 0.08),
+    baseLineTotal: base,
+    powdercoatAmount: powdercoat,
+    lineTotal: base + powdercoat
+  };
 }
 
 export function quoteSubtotal(items) {

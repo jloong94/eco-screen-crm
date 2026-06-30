@@ -8,7 +8,7 @@ import {
   productById,
   state
 } from "./state.js";
-import { actualSqft, chargeableSqft, lineTotal, money, quoteTotals, toNumber } from "./calculations.js";
+import { baseLineTotal, chargeableSqft, itemWithCalculatedTotals, lineTotal, money, powdercoatAmount, quoteTotals, toNumber } from "./calculations.js";
 import { convertQuoteToOrder, renderWorkflowModules } from "./workflow.js";
 
 export function renderQuotationForm() {
@@ -91,6 +91,10 @@ function productOptions(selectedId) {
   return options.map((product) => `<option value="${product.id}" ${product.id === selectedId ? "selected" : ""}>${product.name}${product.active === false ? " (Inactive)" : ""}</option>`).join("");
 }
 
+function selectOptions(options, selectedValue) {
+  return options.map((option) => `<option value="${option}" ${option === selectedValue ? "selected" : ""}>${option}</option>`).join("");
+}
+
 export function renderItemCards() {
   const quote = ensureCurrentQuote();
   const container = document.querySelector("#quoteItems");
@@ -128,11 +132,26 @@ function itemCardHtml(item, index) {
         <label>Color
           <input data-item-id="${item.id}" data-field="color" value="${item.color || ""}" placeholder="White" />
         </label>
+        <label>Install Type / 内装外装
+          <select data-item-id="${item.id}" data-field="installType">${selectOptions(["Inside install", "Outside install", "Not sure / To confirm"], item.installType || "Not sure / To confirm")}</select>
+        </label>
+        <label>Installation Location / 安装位置
+          <input data-item-id="${item.id}" data-field="installationLocation" value="${item.installationLocation || ""}" placeholder="Living" />
+        </label>
+        <label>Opening Direction / 开向
+          <select data-item-id="${item.id}" data-field="openingDirection">${selectOptions(["Left", "Right", "Center", "Sliding Left", "Sliding Right", "Not sure"], item.openingDirection || "Not sure")}</select>
+        </label>
         <label>Handle Position
           <input data-item-id="${item.id}" data-field="handlePosition" value="${item.handlePosition || ""}" placeholder="Right" />
         </label>
         <label>Track / Opening
           <input data-item-id="${item.id}" data-field="trackOpening" value="${item.trackOpening || ""}" placeholder="2 Track / Left" />
+        </label>
+        <label>Track Size / 轨道尺寸
+          <input data-item-id="${item.id}" data-field="trackSize" value="${item.trackSize || ""}" placeholder="25mm" />
+        </label>
+        <label>Handle Height / 把手高度
+          <input data-item-id="${item.id}" data-field="handleHeight" value="${item.handleHeight || ""}" placeholder="1000mm" />
         </label>
         <label>Mesh / Material
           <input data-item-id="${item.id}" data-field="meshMaterial" value="${item.meshMaterial || ""}" placeholder="Stainless / Security mesh" />
@@ -140,12 +159,22 @@ function itemCardHtml(item, index) {
         <label>Unit Price
           <input inputmode="decimal" data-item-id="${item.id}" data-field="unitPrice" value="${item.unitPrice || ""}" />
         </label>
+        <label>Powdercoat / Powercoat
+          <select data-item-id="${item.id}" data-field="powdercoat">
+            <option value="false" ${item.powdercoat ? "" : "selected"}>No</option>
+            <option value="true" ${item.powdercoat ? "selected" : ""}>Yes</option>
+          </select>
+        </label>
         <label class="wide">Remark
           <textarea rows="2" data-item-id="${item.id}" data-field="remark" placeholder="Site note, special request">${item.remark || ""}</textarea>
         </label>
         <div class="line-metrics">
           <span>ft2 / Area</span>
           <strong data-line-id="${item.id}" data-line-field="area">${chargeableSqft(item).toFixed(2)}</strong>
+          <span>Base Total</span>
+          <strong data-line-id="${item.id}" data-line-field="base">${money(baseLineTotal(item))}</strong>
+          <span>Powdercoat 8%</span>
+          <strong data-line-id="${item.id}" data-line-field="powdercoat">${money(powdercoatAmount(item))}</strong>
           <span>Line Total</span>
           <strong data-line-id="${item.id}" data-line-field="total">${money(lineTotal(item))}</strong>
         </div>
@@ -170,24 +199,34 @@ function updateItemFromEvent(event) {
       category: product.category,
       calculationType: product.calculationType || "sqft",
       minimumSqft: Number(product.minimumSqft || 0),
-      unitPrice: Number(product.sellingPrice || 0)
+      unitPrice: Number(product.sellingPrice || 0),
+      powdercoatRate: Number(item.powdercoatRate || 0.08)
     });
     renderItemCards();
     updateQuoteSummary();
     return;
   }
 
-  item[field] = ["width", "height", "quantity", "unitPrice"].includes(field)
-    ? event.target.value.replace(/[^\d.]/g, "")
-    : event.target.value;
+  if (field === "powdercoat") {
+    item.powdercoat = event.target.value === "true";
+    item.powdercoatRate = Number(item.powdercoatRate || 0.08);
+  } else {
+    item[field] = ["width", "height", "quantity", "unitPrice"].includes(field)
+      ? event.target.value.replace(/[^\d.]/g, "")
+      : event.target.value;
+  }
   updateLineCalculation(item);
   updateQuoteSummary();
 }
 
 function updateLineCalculation(item) {
   const area = document.querySelector(`[data-line-id="${item.id}"][data-line-field="area"]`);
+  const base = document.querySelector(`[data-line-id="${item.id}"][data-line-field="base"]`);
+  const powdercoat = document.querySelector(`[data-line-id="${item.id}"][data-line-field="powdercoat"]`);
   const total = document.querySelector(`[data-line-id="${item.id}"][data-line-field="total"]`);
   if (area) area.textContent = chargeableSqft(item).toFixed(2);
+  if (base) base.textContent = money(baseLineTotal(item));
+  if (powdercoat) powdercoat.textContent = money(powdercoatAmount(item));
   if (total) total.textContent = money(lineTotal(item));
 }
 
@@ -217,7 +256,7 @@ export function saveQuote() {
     subtotal: totals.subtotal,
     total: totals.total,
     balance: totals.balance,
-    items: quote.items.map((item) => ({ ...item }))
+    items: quote.items.map((item) => itemWithCalculatedTotals(item))
   };
   state.quotations = state.quotations.some((row) => row.id === snapshot.id)
     ? state.quotations.map((row) => row.id === snapshot.id ? snapshot : row)
@@ -375,7 +414,7 @@ function quoteItemRowsHtml(items) {
       <tr>
         <td>
           <strong>${escapeHtml(description)}</strong>
-          <small>Colour: ${escapeHtml(item.color || "-")}</small>
+          ${quoteItemDetailLinesHtml(item)}
         </td>
         <td>${escapeHtml(item.productName || "-")}</td>
         <td class="right">${escapeHtml(item.width || 0)} x ${escapeHtml(item.height || 0)} mm</td>
@@ -386,6 +425,25 @@ function quoteItemRowsHtml(items) {
       </tr>
     `;
   }).join("");
+}
+
+function quoteItemDetailLinesHtml(item) {
+  const details = [
+    ["Colour", item.color],
+    ["Install Type", item.installType],
+    ["Location", item.installationLocation],
+    ["Opening Direction", item.openingDirection],
+    ["Track Size", item.trackSize],
+    ["Handle Height", item.handleHeight],
+    ["Handle Position", item.handlePosition],
+    ["Track / Opening", item.trackOpening],
+    ["Mesh / Material", item.meshMaterial],
+    ["Powdercoat / Powercoat", item.powdercoat ? `Yes (${money(powdercoatAmount(item))})` : ""]
+  ];
+  return details
+    .filter(([, value]) => value)
+    .map(([label, value]) => `<small>${label}: ${escapeHtml(value)}</small>`)
+    .join("") || `<small>Colour: -</small>`;
 }
 
 function quoteTermsHtml() {
