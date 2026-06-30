@@ -263,34 +263,365 @@ export function renderQuotationList() {
 
 export function printQuote() {
   const quote = ensureCurrentQuote();
-  document.querySelector("#printQuoteNumber").textContent = quote.quoteNumber;
-  document.querySelector("#printCustomer").innerHTML = `
-    <strong>${quote.customer.name || "-"}</strong><br />
-    ${quote.customer.phone || "-"}<br />
-    ${quote.customer.area || "-"}<br />
-    ${quote.customer.address || "-"}
-  `;
-  document.querySelector("#printItems").innerHTML = quote.items.map((item, index) => `
-    <tr>
-      <td>${index + 1}</td>
-      <td>${item.productName}</td>
-      <td>${item.width || 0} x ${item.height || 0}</td>
-      <td>${item.quantity || 0}</td>
-      <td>${item.color || "-"}</td>
-      <td>${item.handlePosition || "-"}</td>
-      <td>${item.meshMaterial || "-"}</td>
-      <td>${item.remark || "-"}</td>
-      <td class="right">${money(item.unitPrice)}</td>
-      <td class="right">${money(lineTotal(item))}</td>
-    </tr>
-  `).join("");
+  const printWindow = window.open("", "_blank");
+  if (!printWindow) {
+    window.print();
+    return;
+  }
+  printWindow.document.open();
+  printWindow.document.write(printableDocument(`Quotation ${quote.quoteNumber}`, quoteDocumentHtml(quote)));
+  printWindow.document.close();
+  setTimeout(() => {
+    printWindow.focus();
+    printWindow.print();
+  }, 150);
+}
+
+function printableDocument(title, bodyHtml) {
+  return `<!doctype html>
+    <html lang="en">
+      <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>${escapeHtml(title)}</title>
+        <style>${quotePrintStyles()}</style>
+      </head>
+      <body>${bodyHtml}</body>
+    </html>`;
+}
+
+function quoteDocumentHtml(quote) {
   const totals = quoteTotals(quote.items, quote.discount, quote.deposit);
-  document.querySelector("#printTotals").innerHTML = `
-    <div><span>Subtotal</span><strong>${money(totals.subtotal)}</strong></div>
-    <div><span>Discount</span><strong>${money(quote.discount)}</strong></div>
-    <div><span>Total</span><strong>${money(totals.total)}</strong></div>
-    <div><span>Deposit</span><strong>${money(quote.deposit)}</strong></div>
-    <div><span>Balance</span><strong>${money(totals.balance)}</strong></div>
+  const quoteDate = formatDate(quote.updatedAt || quote.createdAt || new Date().toISOString());
+  const discountRow = Number(quote.discount || 0) > 0
+    ? `<div class="total-row"><span>Discount</span><strong>- ${money(quote.discount)}</strong></div>`
+    : "";
+  return `
+    <main class="quotation-page">
+      <header class="quote-header">
+        <section class="company-block">
+          <div class="logo-row">
+            <div class="es-logo">ES</div>
+            <div>
+              <h1>Eco Screen Sdn Bhd</h1>
+              <p class="specialist">Screen and Security Mesh Specialist</p>
+            </div>
+          </div>
+          <p>24 Jalan Iks Bukit Tengah, Taman Iks Bukit Tengah, 14000 BM</p>
+          <p>Tel: 0197563499</p>
+          <p class="description">Supply and installation quotation for insect screen, roller screen, stainless steel net and security mesh products.</p>
+        </section>
+        <aside class="quote-card">
+          <p>QUOTATION</p>
+          <h2>${escapeHtml(quote.quoteNumber || "-")}</h2>
+          <div><span>Date</span><strong>${quoteDate}</strong></div>
+          <div><span>Status</span><strong>${escapeHtml(quote.status || "Quoted")}</strong></div>
+        </aside>
+      </header>
+
+      <div class="divider"></div>
+
+      <section class="customer-grid">
+        <div class="info-box">
+          <p class="section-label">BILL TO</p>
+          <h3>${escapeHtml(quote.customer.name || "-")}</h3>
+          <p>${escapeHtml(quote.customer.phone || "-")}</p>
+          <p>${escapeHtml(quote.customer.address || "-")}</p>
+        </div>
+        <div class="info-box">
+          <p class="section-label">JOB DETAILS</p>
+          <p><strong>Area:</strong> ${escapeHtml(quote.customer.area || "-")}</p>
+          <p><strong>Appointment:</strong> ${escapeHtml(quote.appointmentDate || "-")}</p>
+          ${quote.remark ? `<p><strong>Remark:</strong> ${escapeHtml(quote.remark)}</p>` : ""}
+        </div>
+      </section>
+
+      <table class="items-table">
+        <thead>
+          <tr>
+            <th>Description</th>
+            <th>Product</th>
+            <th class="right">Size</th>
+            <th class="right">Sqft</th>
+            <th class="right">Rate</th>
+            <th class="right">Qty</th>
+            <th class="right">Amount</th>
+          </tr>
+        </thead>
+        <tbody>${quoteItemRowsHtml(quote.items)}</tbody>
+      </table>
+
+      <section class="bottom-grid">
+        <div class="terms-box">
+          <h3>Terms & Conditions</h3>
+          ${quoteTermsHtml()}
+        </div>
+        <div class="totals-box">
+          <div class="total-row"><span>Subtotal</span><strong>${money(totals.subtotal)}</strong></div>
+          ${discountRow}
+          <div class="total-row"><span>Total</span><strong>${money(totals.total)}</strong></div>
+          <div class="total-row"><span>Deposit</span><strong>${money(quote.deposit)}</strong></div>
+          <div class="total-row balance"><span>Balance</span><strong>${money(totals.balance)}</strong></div>
+        </div>
+      </section>
+    </main>
   `;
-  window.print();
+}
+
+function quoteItemRowsHtml(items) {
+  return items.map((item, index) => {
+    const description = item.description || item.label || item.remark || `Item ${index + 1}`;
+    return `
+      <tr>
+        <td>
+          <strong>${escapeHtml(description)}</strong>
+          <small>Colour: ${escapeHtml(item.color || "-")}</small>
+        </td>
+        <td>${escapeHtml(item.productName || "-")}</td>
+        <td class="right">${escapeHtml(item.width || 0)} x ${escapeHtml(item.height || 0)} mm</td>
+        <td class="right">${chargeableSqft(item).toFixed(2)}</td>
+        <td class="right">${money(item.unitPrice)}</td>
+        <td class="right">${escapeHtml(item.quantity || 0)}</td>
+        <td class="right amount">${money(lineTotal(item))}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function quoteTermsHtml() {
+  return `
+    <p>i) Prices quoted are valid for a period of two (2) weeks from the quotation date.</p>
+    <p>ii) 50% deposit is required upon confirmation, balance of payment upon completion.</p>
+    <p>iii) Deposit paid is non-refundable.</p>
+    <p>iv) All cheques should not be crossed and make payable to:</p>
+    <p class="bank-details">ECO SCREEN SDN BHD<br>PUBLIC BANK<br>3242952413</p>
+  `;
+}
+
+function quotePrintStyles() {
+  return `
+    @page { size: A4 portrait; margin: 12mm; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #ffffff;
+      color: #111827;
+      font-family: Arial, Helvetica, sans-serif;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .quotation-page {
+      width: 100%;
+      max-width: 780px;
+      margin: 0 auto;
+      padding: 4px;
+    }
+    .quote-header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 230px;
+      gap: 22px;
+      align-items: start;
+    }
+    .logo-row {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .es-logo {
+      width: 48px;
+      height: 48px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      background: #047857;
+      color: white;
+      font-size: 18px;
+      font-weight: 900;
+      letter-spacing: .04em;
+    }
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: 24px; color: #0f172a; }
+    .specialist {
+      margin-top: 3px;
+      color: #475569;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .company-block > p {
+      margin-top: 5px;
+      color: #334155;
+      font-size: 12.5px;
+      line-height: 1.45;
+    }
+    .company-block .description {
+      max-width: 470px;
+      margin-top: 10px;
+      color: #64748b;
+    }
+    .quote-card {
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+      padding: 14px;
+      text-align: right;
+      background: #f8fafc;
+    }
+    .quote-card > p {
+      color: #047857;
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: .1em;
+    }
+    .quote-card h2 {
+      margin: 7px 0 12px;
+      font-size: 20px;
+      color: #0f172a;
+    }
+    .quote-card div {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      border-top: 1px solid #e2e8f0;
+      padding-top: 8px;
+      margin-top: 8px;
+      font-size: 12px;
+      text-align: left;
+    }
+    .quote-card span { color: #64748b; }
+    .divider {
+      height: 2px;
+      margin: 18px 0;
+      background: #0f172a;
+      opacity: .8;
+    }
+    .customer-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+    .info-box {
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 12px;
+      min-height: 110px;
+    }
+    .section-label {
+      color: #047857;
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: .08em;
+      margin-bottom: 7px;
+    }
+    .info-box h3 {
+      margin-bottom: 6px;
+      font-size: 16px;
+    }
+    .info-box p {
+      color: #334155;
+      font-size: 12.5px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+    .items-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 4px;
+    }
+    .items-table th {
+      background: #f1f5f9;
+      color: #0f172a;
+      font-size: 11px;
+      text-align: left;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    .items-table th,
+    .items-table td {
+      border: 1px solid #dbe4ea;
+      padding: 8px;
+      vertical-align: top;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .items-table td small {
+      display: block;
+      margin-top: 4px;
+      color: #64748b;
+      font-size: 11px;
+    }
+    .right { text-align: right; }
+    .amount {
+      font-weight: 900;
+      color: #0f172a;
+      white-space: nowrap;
+    }
+    .bottom-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 280px;
+      gap: 18px;
+      align-items: start;
+      margin-top: 18px;
+    }
+    .terms-box {
+      color: #334155;
+      font-size: 11.5px;
+      line-height: 1.45;
+    }
+    .terms-box h3 {
+      margin-bottom: 7px;
+      font-size: 13px;
+      color: #0f172a;
+    }
+    .terms-box p { margin-top: 5px; }
+    .bank-details {
+      margin-top: 7px !important;
+      font-weight: 900;
+      color: #0f172a;
+    }
+    .totals-box {
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+      padding: 12px;
+      background: #f8fafc;
+    }
+    .total-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      border-bottom: 1px solid #e2e8f0;
+      padding: 7px 0;
+      font-size: 13px;
+    }
+    .total-row:first-child { padding-top: 0; }
+    .total-row:last-child { border-bottom: 0; padding-bottom: 0; }
+    .total-row span { color: #475569; }
+    .total-row strong { color: #0f172a; white-space: nowrap; }
+    .total-row.balance strong {
+      color: #047857;
+      font-size: 16px;
+    }
+    @media screen and (max-width: 720px) {
+      body { background: #f8fafc; padding: 10px; }
+      .quotation-page { background: white; padding: 14px; }
+      .quote-header, .customer-grid, .bottom-grid { grid-template-columns: 1fr; }
+      .quote-card { text-align: left; }
+    }
+  `;
+}
+
+function formatDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return new Date().toLocaleDateString("en-MY");
+  return date.toLocaleDateString("en-MY", { year: "numeric", month: "short", day: "2-digit" });
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
