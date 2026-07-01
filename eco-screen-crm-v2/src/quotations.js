@@ -90,6 +90,35 @@ function selectOptions(options, selectedValue) {
   return options.map((option) => `<option value="${option}" ${option === selectedValue ? "selected" : ""}>${statusLabel(option)}</option>`).join("");
 }
 
+function trackTypeOptions(item) {
+  const options = ["Single Track", "Double Track", "Triple Track"];
+  const selectedValue = item.trackType || item.trackOpening || "Single Track";
+  const legacyOption = selectedValue && !options.includes(selectedValue)
+    ? `<option value="${escapeHtml(selectedValue)}" selected>${escapeHtml(selectedValue)}</option>`
+    : "";
+  return `${legacyOption}${selectOptions(options, selectedValue)}`;
+}
+
+function meshTypeOptions(item) {
+  const options = [
+    "0.6 Stainless Steel Net",
+    "1.0 Stainless Steel Net",
+    "PET Net",
+    "Soft Stainless Steel Net",
+    "Standard Mesh",
+    "Other / To Confirm"
+  ];
+  const selectedValue = meshValue(item) || "Other / To Confirm";
+  const legacyOption = selectedValue && !options.includes(selectedValue)
+    ? `<option value="${escapeHtml(selectedValue)}" selected>${escapeHtml(selectedValue)}</option>`
+    : "";
+  return `${legacyOption}${selectOptions(options, selectedValue)}`;
+}
+
+function meshValue(item) {
+  return item.meshType || item.meshMaterial || item.material || "";
+}
+
 export function renderItemCards() {
   const quote = ensureCurrentQuote();
   const container = document.querySelector("#quoteItems");
@@ -120,11 +149,11 @@ function itemCardHtml(item, index) {
         ${fieldSelect(t("Install Type / Inside Outside"), item.id, "installType", selectOptions(["Inside install", "Outside install", "Not sure / To confirm"], item.installType || "Not sure / To confirm"))}
         ${fieldInput(t("Installation Location"), item.id, "installationLocation", item.installationLocation, "Living")}
         ${fieldSelect(t("Opening Direction"), item.id, "openingDirection", selectOptions(["Left", "Right", "Center", "Sliding Left", "Sliding Right", "Not sure"], item.openingDirection || "Not sure"))}
-        ${fieldInput(t("Handle Position"), item.id, "handlePosition", item.handlePosition, "Right")}
-        ${fieldInput(t("Track / Opening"), item.id, "trackOpening", item.trackOpening, "2 Track / Left")}
+        ${fieldSelect(t("Handle Position"), item.id, "handlePosition", selectOptions(["Left", "Right"], item.handlePosition || "Left"))}
+        ${fieldSelect(t("Track Type"), item.id, "trackType", trackTypeOptions(item))}
         ${fieldInput(t("Track Size"), item.id, "trackSize", item.trackSize, "25mm")}
         ${fieldInput(t("Handle Height"), item.id, "handleHeight", item.handleHeight, "1000mm")}
-        ${fieldInput(t("Mesh / Material"), item.id, "meshMaterial", item.meshMaterial, "Stainless / Security mesh")}
+        ${fieldSelect(t("Mesh / Net Type"), item.id, "meshType", meshTypeOptions(item))}
         ${fieldInput(t("Unit Price"), item.id, "unitPrice", item.unitPrice, "", "decimal")}
         <label>${t("Powdercoat / Powercoat")}
           <select data-item-id="${item.id}" data-field="powdercoat">
@@ -352,8 +381,8 @@ function quoteItemDetailLinesHtml(item) {
     [t("Track Size"), item.trackSize],
     [t("Handle Height"), item.handleHeight],
     [t("Handle Position"), item.handlePosition],
-    [t("Track / Opening"), item.trackOpening],
-    [t("Mesh / Material"), item.meshMaterial],
+    [t("Track Type"), item.trackType || item.trackOpening],
+    [t("Mesh / Net Type"), meshValue(item)],
     [t("Powdercoat / Powercoat"), item.powdercoat ? `Yes (${money(powdercoatAmount(item))})` : ""]
   ];
   return details.filter(([, value]) => value).map(([label, value]) => `<small>${label}: ${escapeHtml(value)}</small>`).join("") || `<small>${t("Color")}: -</small>`;

@@ -25,6 +25,8 @@ export const defaultProducts = [
   { id: "magnetic-screen", name: "Magnetic Screen", category: "Magnetic", sellingPrice: 10, costPrice: 0, calculationType: "sqft", minimumSqft: 11, active: true },
   { id: "security-mesh-window", name: "Hinged Security Mesh Window", category: "Security Mesh", sellingPrice: 90, costPrice: 0, calculationType: "sqft", minimumSqft: 11, active: true },
   { id: "security-mesh-door", name: "Hinged Security Mesh Door", category: "Security Mesh", sellingPrice: 100, costPrice: 0, calculationType: "sqft", minimumSqft: 21, active: true },
+  { id: "fold-security-mesh", name: "Fold Security Mesh", category: "Security Mesh", sellingPrice: 129, costPrice: 0, calculationType: "sqft", minimumSqft: 0, active: true },
+  { id: "glass-with-security-mesh", name: "Glass with Security Mesh", category: "Security Mesh / Glass", sellingPrice: 190, costPrice: 0, calculationType: "sqft", minimumSqft: 0, active: true },
   { id: "hollow-1x1", name: "Hollow 1x1", category: "Hollow", sellingPrice: 5, ratePerSqft: 5, costPrice: 0, calculationType: "sqft", minimumSqft: 0, active: true },
   { id: "hollow-1x2", name: "Hollow 1x2", category: "Hollow", sellingPrice: 10, ratePerSqft: 10, costPrice: 0, calculationType: "sqft", minimumSqft: 0, active: true },
   { id: "hollow-1x3", name: "Hollow 1x3", category: "Hollow", sellingPrice: 15, ratePerSqft: 15, costPrice: 0, calculationType: "sqft", minimumSqft: 0, active: true },

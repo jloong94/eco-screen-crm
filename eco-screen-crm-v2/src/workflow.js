@@ -610,9 +610,13 @@ function itemsSummary(items) {
   return `<div class="mini-table">${items.map((item) => `
     <div>
       <strong>${item.productName}</strong>
-      <span>${item.width || 0} x ${item.height || 0} | ${t("Quantity")} ${item.quantity || 0} | ${t("Color")}: ${item.color || "-"} | ${t("Install Type / Inside Outside")}: ${item.installType || "-"} | ${t("Installation Location")}: ${item.installationLocation || "-"} | ${t("Opening Direction")}: ${item.openingDirection || "-"} | ${t("Track Size")}: ${item.trackSize || "-"} | ${t("Handle Height")}: ${item.handleHeight || "-"} | ${t("Handle Position")}: ${item.handlePosition || "-"} | ${t("Track / Opening")}: ${item.trackOpening || "-"} | ${t("Mesh / Material")}: ${item.meshMaterial || "-"} | ${t("Powdercoat / Powercoat")}: ${item.powdercoat ? `Yes ${money(powdercoatAmount(item))}` : "No"} | ${item.remark || "-"}</span>
+      <span>${item.width || 0} x ${item.height || 0} | ${t("Quantity")} ${item.quantity || 0} | ${t("Color")}: ${item.color || "-"} | ${t("Install Type / Inside Outside")}: ${item.installType || "-"} | ${t("Installation Location")}: ${item.installationLocation || "-"} | ${t("Opening Direction")}: ${item.openingDirection || "-"} | ${t("Track Size")}: ${item.trackSize || "-"} | ${t("Handle Height")}: ${item.handleHeight || "-"} | ${t("Handle Position")}: ${item.handlePosition || "-"} | ${t("Track Type")}: ${item.trackType || item.trackOpening || "-"} | ${t("Mesh / Net Type")}: ${meshValue(item) || "-"} | ${t("Powdercoat / Powercoat")}: ${item.powdercoat ? `Yes ${money(powdercoatAmount(item))}` : "No"} | ${item.remark || "-"}</span>
     </div>
   `).join("")}</div>`;
+}
+
+function meshValue(item) {
+  return item.meshType || item.meshMaterial || item.material || "";
 }
 
 function handleOrderClick(event) {
@@ -1150,7 +1154,11 @@ function generateWarrantyCard(jobId) {
     orderNo: job.orderNumber,
     installationJobNo: job.installationNumber,
     customer: { ...job.customer },
-    products: job.items.map((item) => ({ productName: item.productName, warrantyPeriod: warrantyPeriodForProduct(item.productName) })),
+    products: job.items.map((item) => ({
+      productName: item.productName,
+      meshType: meshValue(item),
+      warrantyPeriod: warrantyPeriodForProduct(item.productName)
+    })),
     startDate: (job.completionDate || new Date().toISOString()).slice(0, 10),
     warrantyPeriod: warrantySummary(job.items),
     warrantyTerms,
@@ -1179,8 +1187,8 @@ function printWarrantyCard(jobId) {
     <p><strong>${t("Installation Jobs")}:</strong> ${card.installationJobNo}</p>
     <p><strong>Start Date:</strong> ${card.startDate}</p>
     <p><strong>${t("Warranty Card")}:</strong> ${card.warrantyPeriod}</p>
-    <table><thead><tr><th>${t("Product")}</th><th>${t("Warranty Card")}</th></tr></thead><tbody>
-      ${card.products.map((product) => `<tr><td>${product.productName}</td><td>${product.warrantyPeriod}</td></tr>`).join("")}
+    <table><thead><tr><th>${t("Product")}</th><th>${t("Mesh / Net Type")}</th><th>${t("Warranty Card")}</th></tr></thead><tbody>
+      ${card.products.map((product) => `<tr><td>${product.productName}</td><td>${product.meshType || "-"}</td><td>${product.warrantyPeriod}</td></tr>`).join("")}
     </tbody></table>
     <div class="terms">
       <h3>Warranty Terms</h3>
@@ -1313,8 +1321,8 @@ function customerBlock(customer) {
 }
 
 function printItemsTable(items, showPrice) {
-  return `<table><thead><tr><th>${t("Product")}</th><th>${t("Installation Location")}</th><th>Size</th><th>${t("Quantity")}</th><th>${t("Color")}</th><th>${t("Install Type / Inside Outside")}</th><th>${t("Opening Direction")}</th><th>${t("Track Size")}</th><th>${t("Handle Height")}</th><th>${t("Handle Position")}</th><th>${t("Track / Opening")}</th><th>${t("Mesh / Material")}</th><th>${t("Powdercoat / Powercoat")}</th><th>${t("Remark")}</th>${showPrice ? `<th>${t("Unit Price")}</th><th>${t("Total")}</th>` : ""}</tr></thead><tbody>
-    ${items.map((item) => `<tr><td>${item.productName}</td><td>${item.installationLocation || "-"}</td><td>${item.width || 0} x ${item.height || 0}</td><td>${item.quantity || 0}</td><td>${item.color || "-"}</td><td>${item.installType || "-"}</td><td>${item.openingDirection || "-"}</td><td>${item.trackSize || "-"}</td><td>${item.handleHeight || "-"}</td><td>${item.handlePosition || "-"}</td><td>${item.trackOpening || "-"}</td><td>${item.meshMaterial || "-"}</td><td>${item.powdercoat ? `Yes ${money(powdercoatAmount(item))}` : "No"}</td><td>${item.remark || "-"}</td>${showPrice ? `<td>${money(item.unitPrice)}</td><td>${money(lineTotal(item))}</td>` : ""}</tr>`).join("")}
+  return `<table><thead><tr><th>${t("Product")}</th><th>${t("Installation Location")}</th><th>Size</th><th>${t("Quantity")}</th><th>${t("Color")}</th><th>${t("Install Type / Inside Outside")}</th><th>${t("Opening Direction")}</th><th>${t("Track Size")}</th><th>${t("Handle Height")}</th><th>${t("Handle Position")}</th><th>${t("Track Type")}</th><th>${t("Mesh / Net Type")}</th><th>${t("Powdercoat / Powercoat")}</th><th>${t("Remark")}</th>${showPrice ? `<th>${t("Unit Price")}</th><th>${t("Total")}</th>` : ""}</tr></thead><tbody>
+    ${items.map((item) => `<tr><td>${item.productName}</td><td>${item.installationLocation || "-"}</td><td>${item.width || 0} x ${item.height || 0}</td><td>${item.quantity || 0}</td><td>${item.color || "-"}</td><td>${item.installType || "-"}</td><td>${item.openingDirection || "-"}</td><td>${item.trackSize || "-"}</td><td>${item.handleHeight || "-"}</td><td>${item.handlePosition || "-"}</td><td>${item.trackType || item.trackOpening || "-"}</td><td>${meshValue(item) || "-"}</td><td>${item.powdercoat ? `Yes ${money(powdercoatAmount(item))}` : "No"}</td><td>${item.remark || "-"}</td>${showPrice ? `<td>${money(item.unitPrice)}</td><td>${money(lineTotal(item))}</td>` : ""}</tr>`).join("")}
   </tbody></table>`;
 }
 
