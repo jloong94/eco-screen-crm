@@ -14,7 +14,11 @@ export function saveJson(key, value) {
 export const storageKeys = {
   role: "ecoScreenV2.role",
   page: "ecoScreenV2.page",
+  language: "ecoScreenV2.language",
+  users: "ecoScreenV2.users",
+  currentUserId: "ecoScreenV2.currentUserId",
   products: "ecoScreenV2.products",
+  customers: "ecoScreenV2.customers",
   quotations: "ecoScreenV2.quotations",
   orders: "ecoScreenV2.orders",
   productionJobs: "ecoScreenV2.productionJobs",

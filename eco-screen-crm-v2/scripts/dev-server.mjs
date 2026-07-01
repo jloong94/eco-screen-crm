@@ -20,6 +20,14 @@ createServer(async (req, res) => {
     const rawPath = decodeURIComponent((req.url || "/").split("?")[0]);
     const requestPath = rawPath === "/" ? "index.html" : rawPath.replace(/^[/\\]+/, "");
     const safePath = normalize(requestPath).replace(/^(\.\.[/\\])+/, "");
+    if (safePath === "src/env.js") {
+      res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" });
+      res.end(`export const runtimeEnv = ${JSON.stringify({
+        VITE_SUPABASE_URL: process.env.VITE_SUPABASE_URL || "",
+        VITE_SUPABASE_ANON_KEY: process.env.VITE_SUPABASE_ANON_KEY || ""
+      }, null, 2)};\n`);
+      return;
+    }
     let filePath = join(root, safePath || "index.html");
     if (!existsSync(filePath)) filePath = join(root, "index.html");
     const body = await readFile(filePath);

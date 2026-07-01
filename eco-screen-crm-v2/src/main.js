@@ -1,57 +1,39 @@
-import { roles } from "./data.js";
+import { attachLoginEvents, attachUserManagementEvents, logout, renderLoginCard, renderUserManagement } from "./auth.js";
 import { renderAddProductForm, renderProducts, attachProductEvents } from "./products.js";
 import { attachQuotationEvents, renderQuotationForm } from "./quotations.js";
-import { setPage, setRole, state } from "./state.js";
+import { setLanguage, setPage, state } from "./state.js";
 import { money } from "./calculations.js";
 import { attachWorkflowEvents, renderWorkflowModules } from "./workflow.js";
+import { t } from "./i18n.js";
+import { canAccessPage, defaultPageForRole, pageDefinitions, role } from "./permissions.js";
+import { isCloudConfigured, syncFromCloud } from "./cloudSync.js";
+import { applyCloudSnapshot } from "./state.js";
 
-const pages = [
-  { id: "dashboard", label: "Dashboard", title: "Dashboard" },
-  { id: "quotation", label: "Quotation", title: "Quotation" },
-  { id: "customers", label: "Customers", title: "Customers" },
-  { id: "orders", label: "Orders", title: "Orders" },
-  { id: "production", label: "Production", title: "Production Jobs" },
-  { id: "installation", label: "Installation", title: "Installation Jobs" },
-  { id: "products", label: "Product Management / Settings", title: "Product Management" }
-];
-
-const rolePages = {
-  Admin: pages.map((page) => page.id),
-  Secretary: ["orders", "quotation", "customers"],
-  Sales: ["quotation", "customers", "orders"],
-  Production: ["production"],
-  Installer: ["installation"]
-};
-
-const defaultPages = {
-  Admin: "dashboard",
-  Secretary: "orders",
-  Sales: "quotation",
-  Production: "production",
-  Installer: "installation"
-};
-
-function canAccessPage(role, page) {
-  return (rolePages[role] || []).includes(page);
-}
-
-function defaultPageForRole(role) {
-  return defaultPages[role] || "quotation";
-}
+let cloudHydrated = false;
 
 function appHtml() {
+  if (!state.currentUser) return renderLoginCard();
   return `
     <header class="topbar">
       <div class="brand">
         <div class="logo">ES</div>
         <div>
-          <p>Eco Screen CRM V2</p>
-          <h1>${currentPageTitle()}</h1>
+          <p>${t("Eco Screen CRM V2")}</p>
+          <h1>${t(currentPageTitle())}</h1>
+          <span class="version-label">Eco Screen CRM V2 - Mobile Production</span>
         </div>
       </div>
-      <nav id="roleSelector" class="role-selector" aria-label="Role selector">
-        ${roles.map((role) => `<button class="role-btn ${state.role === role ? "active" : ""}" data-role="${role}" type="button">${role}</button>`).join("")}
-      </nav>
+      <div class="user-toolbar">
+        <label class="language-select">${t("Select Language")}
+          <select id="languageSwitcher">
+            <option value="en" ${state.language === "en" ? "selected" : ""}>English</option>
+            <option value="zh" ${state.language === "zh" ? "selected" : ""}>中文</option>
+          </select>
+        </label>
+        <span class="pill">${isCloudConfigured() ? "Cloud ready" : "Local mode"}</span>
+        <span class="pill">${t("Current User")}: ${state.currentUser.name} / ${state.currentUser.role}</span>
+        <button class="btn" id="logoutButton" type="button">${t("Logout")}</button>
+      </div>
     </header>
 
     <nav id="moduleNavigation" class="module-tabs" aria-label="Module navigation">
@@ -70,7 +52,7 @@ function appHtml() {
           <p>Tel: 0197563499</p>
         </div>
         <div>
-          <p>Quotation</p>
+          <p>${t("Quotation")}</p>
           <h2 id="printQuoteNumber"></h2>
         </div>
       </div>
@@ -78,7 +60,7 @@ function appHtml() {
       <table>
         <thead>
           <tr>
-            <th>#</th><th>Product</th><th>Size</th><th>Qty</th><th>Color</th><th>Handle</th><th>Material</th><th>Remark</th><th class="right">Unit</th><th class="right">Amount</th>
+            <th>#</th><th>${t("Product")}</th><th>Size</th><th>${t("Quantity")}</th><th>${t("Color")}</th><th>${t("Handle Position")}</th><th>${t("Mesh / Material")}</th><th>${t("Remark")}</th><th class="right">${t("Unit Price")}</th><th class="right">${t("Total")}</th>
           </tr>
         </thead>
         <tbody id="printItems"></tbody>
@@ -94,13 +76,16 @@ function appHtml() {
 }
 
 function renderNavigation() {
-  return pages
-    .filter((page) => canAccessPage(state.role, page.id))
-    .map((page) => `<button class="module-tab ${state.currentPage === page.id ? "active" : ""}" data-page="${page.id}" type="button">${page.label}</button>`)
+  return pageDefinitions
+    .filter((page) => canAccessPage(role(), page.id))
+    .map((page) => `<button class="module-tab ${state.currentPage === page.id ? "active" : ""}" data-page="${page.id}" type="button">${t(page.label)}</button>`)
     .join("");
 }
 
 function currentPageHtml() {
+  if (!canAccessPage(role(), state.currentPage)) {
+    return `<section class="panel page-panel"><p class="muted-text">${t("You do not have permission to access this page.")}</p></section>`;
+  }
   if (state.currentPage === "dashboard") return dashboardPageHtml();
   if (state.currentPage === "quotation") return quotationPageHtml();
   if (state.currentPage === "customers") return customersPageHtml();
@@ -108,7 +93,8 @@ function currentPageHtml() {
   if (state.currentPage === "production") return productionPageHtml();
   if (state.currentPage === "installation") return installationPageHtml();
   if (state.currentPage === "products") return productManagementPageHtml();
-  return quotationPageHtml();
+  if (state.currentPage === "users") return usersPageHtml();
+  return `<section class="panel page-panel"><p class="muted-text">${t("You do not have permission to access this page.")}</p></section>`;
 }
 
 function isCurrentPage(page) {
@@ -120,16 +106,18 @@ function dashboardPageHtml() {
     <section class="panel page-panel" data-page-panel="dashboard">
       <div class="panel-head">
         <div>
-          <p class="eyebrow">Overview</p>
-          <h2>Dashboard</h2>
+          <p class="eyebrow">${t("Overview")}</p>
+          <h2>${t("Order Progress Board")}</h2>
         </div>
       </div>
       <div class="dashboard-grid">
-        <div class="metric-card"><span>Quotations</span><strong>${state.quotations.length}</strong></div>
-        <div class="metric-card"><span>Orders</span><strong>${state.orders.length}</strong></div>
-        <div class="metric-card"><span>Production Jobs</span><strong>${state.productionJobs.length}</strong></div>
-        <div class="metric-card"><span>Installation Jobs</span><strong>${state.installationJobs.length}</strong></div>
+        <div class="metric-card"><span>${t("Quotations")}</span><strong>${state.quotations.length}</strong></div>
+        <div class="metric-card"><span>${t("Orders")}</span><strong>${state.orders.length}</strong></div>
+        <div class="metric-card"><span>${t("Production Jobs")}</span><strong>${state.productionJobs.length}</strong></div>
+        <div class="metric-card"><span>${t("Installation Jobs")}</span><strong>${state.installationJobs.length}</strong></div>
       </div>
+      <div id="orderProgressBoard" class="dashboard-progress"></div>
+      <span class="pill" id="workflowStatus">${t("Ready")}</span>
     </section>
   `;
 }
@@ -140,55 +128,55 @@ function quotationPageHtml() {
       <section class="panel quotation-panel">
         <div class="panel-head">
           <div>
-            <p class="eyebrow">Sales</p>
-            <h2>Quotation</h2>
+            <p class="eyebrow">${t("Sales")}</p>
+            <h2>${t("Quotation")}</h2>
           </div>
           <div class="actions">
-            <button class="btn" id="newQuoteButton" type="button">New Quote</button>
-            <button class="btn" id="printQuoteButton" type="button">Print Quote</button>
-            <button class="btn" id="pdfQuoteButton" type="button">PDF Quote</button>
-            <button class="btn primary" id="saveQuoteButton" type="button">Save Quote</button>
+            <button class="btn" id="newQuoteButton" type="button">${t("New Quote")}</button>
+            <button class="btn" id="printQuoteButton" type="button">${t("Print Quote")}</button>
+            <button class="btn" id="pdfQuoteButton" type="button">${t("PDF Quote")}</button>
+            <button class="btn primary" id="saveQuoteButton" type="button">${t("Save Quote")}</button>
           </div>
         </div>
 
         <form id="quotationForm" class="stack" onsubmit="return false">
           <div class="form-grid">
-            <label>Quotation Number<input id="quoteNumber" /></label>
-            <label>Quotation Status<select id="quoteStatus"></select></label>
-            <label>Customer Name<input id="customerName" placeholder="TEST CUSTOMER" /></label>
-            <label>Phone<input id="customerPhone" placeholder="0123456789" /></label>
-            <label>Area<input id="customerArea" placeholder="Bukit Tengah" /></label>
-            <label>Appointment Date<input id="appointmentDate" type="date" /></label>
-            <label class="wide">Address<textarea id="customerAddress" rows="3"></textarea></label>
-            <label class="wide">Customer Remark<textarea id="customerRemark" rows="2"></textarea></label>
-            <label class="wide">Quotation Remark<textarea id="quoteRemark" rows="2"></textarea></label>
+            <label>${t("Quotation Number")}<input id="quoteNumber" /></label>
+            <label>${t("Quotation Status")}<select id="quoteStatus"></select></label>
+            <label>${t("Customer Name")}<input id="customerName" placeholder="TEST CUSTOMER" /></label>
+            <label>${t("Phone")}<input id="customerPhone" placeholder="0123456789" /></label>
+            <label>${t("Area")}<input id="customerArea" placeholder="Bukit Tengah" /></label>
+            <label>${t("Appointment Date")}<input id="appointmentDate" type="date" /></label>
+            <label class="wide">${t("Address")}<textarea id="customerAddress" rows="3"></textarea></label>
+            <label class="wide">${t("Customer Remark")}<textarea id="customerRemark" rows="2"></textarea></label>
+            <label class="wide">${t("Quotation Remark")}<textarea id="quoteRemark" rows="2"></textarea></label>
           </div>
 
           <section class="products-editor">
             <div class="section-head">
               <div>
-                <h3>Products</h3>
-                <span id="itemsCount" class="pill">Items count: 0</span>
+                <h3>${t("Products")}</h3>
+                <span id="itemsCount" class="pill">${t("Items count")}: 0</span>
               </div>
-              <button class="btn primary" id="addItemButton" type="button">Add Item</button>
+              <button class="btn primary" id="addItemButton" type="button">${t("Add Item")}</button>
             </div>
             <div id="quoteItems" class="quote-items"></div>
           </section>
 
           <aside class="summary-box">
-            <label>Discount<input id="discount" inputmode="decimal" placeholder="0.00" /></label>
-            <label>Deposit<input id="deposit" inputmode="decimal" placeholder="0.00" /></label>
-            <div class="summary-row"><span>Subtotal</span><strong id="subtotalValue">RM 0.00</strong></div>
-            <div class="summary-row"><span>Total</span><strong id="totalValue">RM 0.00</strong></div>
-            <div class="summary-row balance"><span>Balance</span><strong id="balanceValue">RM 0.00</strong></div>
-            <p id="saveStatus" class="muted-text">Ready.</p>
+            <label>${t("Discount")}<input id="discount" inputmode="decimal" placeholder="0.00" /></label>
+            <label>${t("Deposit")}<input id="deposit" inputmode="decimal" placeholder="0.00" /></label>
+            <div class="summary-row"><span>${t("Subtotal")}</span><strong id="subtotalValue">RM 0.00</strong></div>
+            <div class="summary-row"><span>${t("Total")}</span><strong id="totalValue">RM 0.00</strong></div>
+            <div class="summary-row balance"><span>${t("Balance")}</span><strong id="balanceValue">RM 0.00</strong></div>
+            <p id="saveStatus" class="muted-text">${t("Ready.")}</p>
           </aside>
         </form>
       </section>
 
       <aside class="side-column">
         <section class="panel">
-          <div class="panel-head"><h2>Saved Quotations</h2></div>
+          <div class="panel-head"><h2>${t("Saved Quotations")}</h2></div>
           <div id="quotationList" class="quote-list"></div>
         </section>
       </aside>
@@ -201,8 +189,8 @@ function customersPageHtml() {
     <section class="panel page-panel" data-page-panel="customers">
       <div class="panel-head">
         <div>
-          <p class="eyebrow">Customer Records</p>
-          <h2>Customers</h2>
+          <p class="eyebrow">${t("Customer Records")}</p>
+          <h2>${t("Customers")}</h2>
         </div>
       </div>
       <div id="customerList" class="workflow-list"></div>
@@ -215,10 +203,10 @@ function ordersPageHtml() {
     <section class="panel page-panel workflow-panel" id="ordersPanel" data-page-panel="orders">
       <div class="panel-head">
         <div>
-          <p class="eyebrow">Confirmed Jobs</p>
-          <h2>Orders</h2>
+          <p class="eyebrow">${t("Confirmed Jobs")}</p>
+          <h2>${t("Orders")}</h2>
         </div>
-        <span class="pill" id="workflowStatus">Ready</span>
+        <span class="pill" id="workflowStatus">${t("Ready")}</span>
       </div>
       <div id="orderTools"></div>
       <div id="orderProgressBoard"></div>
@@ -232,10 +220,10 @@ function productionPageHtml() {
     <section class="panel page-panel workflow-panel" data-page-panel="production">
       <div class="panel-head">
         <div>
-          <p class="eyebrow">Factory</p>
-          <h2>Production Jobs</h2>
+          <p class="eyebrow">${t("Factory")}</p>
+          <h2>${t("Production Jobs")}</h2>
         </div>
-        <span class="pill" id="workflowStatus">Ready</span>
+        <span class="pill" id="workflowStatus">${t("Ready")}</span>
       </div>
       <div id="productionList" class="workflow-list"></div>
     </section>
@@ -247,10 +235,10 @@ function installationPageHtml() {
     <section class="panel page-panel workflow-panel" data-page-panel="installation">
       <div class="panel-head">
         <div>
-          <p class="eyebrow">Installer</p>
-          <h2>Installation Jobs</h2>
+          <p class="eyebrow">${t("Installer")}</p>
+          <h2>${t("Installation Jobs")}</h2>
         </div>
-        <span class="pill" id="workflowStatus">Ready</span>
+        <span class="pill" id="workflowStatus">${t("Ready")}</span>
       </div>
       <div id="installationList" class="workflow-list"></div>
     </section>
@@ -262,8 +250,8 @@ function productManagementPageHtml() {
     <section class="panel page-panel" data-page-panel="products">
       <div class="panel-head">
         <div>
-          <p class="eyebrow">Settings</p>
-          <h2>Product Management</h2>
+          <p class="eyebrow">${t("Settings")}</p>
+          <h2>${t("Product Management")}</h2>
         </div>
       </div>
       <div id="addProductPanel"></div>
@@ -273,10 +261,29 @@ function productManagementPageHtml() {
   `;
 }
 
+function usersPageHtml() {
+  return `
+    <section class="panel page-panel" data-page-panel="users" id="userManagementPanel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">${t("Settings")}</p>
+          <h2>${t("User Account Management")}</h2>
+        </div>
+      </div>
+      ${renderUserManagement()}
+    </section>
+  `;
+}
+
 function renderShell() {
-  if (!canAccessPage(state.role, state.currentPage)) setPage(defaultPageForRole(state.role));
+  if (state.currentUser && !canAccessPage(role(), state.currentPage)) setPage(defaultPageForRole(role()));
   document.querySelector("#app").innerHTML = appHtml();
-  attachRoleEvents();
+  if (!state.currentUser) {
+    attachLoginEvents(renderShell);
+    return;
+  }
+  syncCloudOnFirstLogin();
+  attachHeaderEvents();
   attachNavigationEvents();
   if (isCurrentPage("quotation")) {
     attachQuotationEvents();
@@ -287,20 +294,32 @@ function renderShell() {
     renderAddProductForm();
     renderProducts();
   }
-  if (["orders", "production", "installation"].includes(state.currentPage)) {
+  if (["dashboard", "orders", "production", "installation"].includes(state.currentPage)) {
     attachWorkflowEvents();
     renderWorkflowModules();
   }
   if (isCurrentPage("customers")) renderCustomers();
-  applyRoleAccess();
+  if (isCurrentPage("users")) attachUserManagementEvents(renderShell);
 }
 
-function attachRoleEvents() {
-  document.querySelector("#roleSelector").addEventListener("click", (event) => {
-    const role = event.target.dataset.role;
-    if (!role) return;
-    setRole(role);
-    setPage(defaultPageForRole(role));
+function syncCloudOnFirstLogin() {
+  if (cloudHydrated || !isCloudConfigured()) return;
+  cloudHydrated = true;
+  syncFromCloud().then((result) => {
+    if (result.data && Object.keys(result.data).length) {
+      applyCloudSnapshot(result.data);
+      renderShell();
+    }
+  });
+}
+
+function attachHeaderEvents() {
+  document.querySelector("#languageSwitcher")?.addEventListener("change", (event) => {
+    setLanguage(event.target.value);
+    renderShell();
+  });
+  document.querySelector("#logoutButton")?.addEventListener("click", () => {
+    logout();
     renderShell();
   });
 }
@@ -308,7 +327,7 @@ function attachRoleEvents() {
 function attachNavigationEvents() {
   document.querySelector("#moduleNavigation").addEventListener("click", (event) => {
     const page = event.target.dataset.page;
-    if (!page || !canAccessPage(state.role, page)) return;
+    if (!page || !canAccessPage(role(), page)) return;
     setPage(page);
     renderShell();
   });
@@ -335,25 +354,16 @@ function renderCustomers() {
           <strong>${customer.name}</strong>
           <p class="muted-text">${customer.phone} | ${customer.area}</p>
         </div>
-        <span class="pill">${customer.status}</span>
+        <span class="pill">${t(customer.status)}</span>
       </div>
       <p class="muted-text">${customer.address}</p>
-      <p class="muted-text">Order: ${customer.orderNumber} | Quote: ${customer.quoteNumber} | Total: ${money(customer.total)}</p>
+      <p class="muted-text">${t("Order")}: ${customer.orderNumber} | ${t("Quote")}: ${customer.quoteNumber} | ${t("Total")}: ${money(customer.total)}</p>
     </article>
-  `).join("") : `<p class="muted-text">No confirmed order customers yet. Convert a quotation to create a customer record here.</p>`;
-}
-
-function applyRoleAccess() {
-  const isAdmin = state.role === "Admin";
-  document.querySelector("#addProductPanel")?.classList.toggle("disabled-block", !isAdmin);
-  document.querySelectorAll("[data-product-field]").forEach((field) => {
-    if (field.tagName === "SELECT") field.disabled = !isAdmin;
-    else field.readOnly = !isAdmin;
-  });
+  `).join("") : `<p class="muted-text">${t("No confirmed order customers yet. Convert a quotation to create a customer record here.")}</p>`;
 }
 
 function currentPageTitle() {
-  return pages.find((page) => page.id === state.currentPage)?.title || "Quotation CRM";
+  return pageDefinitions.find((page) => page.id === state.currentPage)?.title || "Quotation CRM";
 }
 
 renderShell();

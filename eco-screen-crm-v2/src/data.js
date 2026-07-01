@@ -1,4 +1,14 @@
-export const roles = ["Admin", "Secretary", "Sales", "Production", "Installer"];
+export const roles = ["Boss", "Admin", "Secretary", "Sales", "Production", "Installer"];
+
+export const defaultUsers = [
+  { userId: "boss-1", name: "Boss 1", username: "boss1", pin: "1234", role: "Boss", active: true },
+  { userId: "boss-2", name: "Boss 2", username: "boss2", pin: "1234", role: "Boss", active: true },
+  { userId: "admin-1", name: "Admin", username: "admin", pin: "1234", role: "Admin", active: true },
+  { userId: "secretary-1", name: "Secretary", username: "secretary", pin: "1234", role: "Secretary", active: true },
+  { userId: "sales-1", name: "Sales", username: "sales", pin: "1234", role: "Sales", active: true },
+  { userId: "production-1", name: "Production", username: "production", pin: "1234", role: "Production", active: true },
+  { userId: "installer-1", name: "Installer", username: "installer", pin: "1234", role: "Installer", active: true }
+];
 
 export const quotationStatuses = ["Draft", "Quoted", "Follow Up", "Won", "Ordered", "Lost", "Cancelled"];
 

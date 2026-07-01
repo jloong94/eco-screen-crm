@@ -10,6 +10,7 @@ import {
 } from "./state.js";
 import { baseLineTotal, chargeableSqft, itemWithCalculatedTotals, lineTotal, money, powdercoatAmount, quoteTotals, toNumber } from "./calculations.js";
 import { convertQuoteToOrder, renderWorkflowModules } from "./workflow.js";
+import { statusLabel, t } from "./i18n.js";
 
 export function renderQuotationForm() {
   const quote = ensureCurrentQuote();
@@ -21,7 +22,7 @@ export function renderQuotationForm() {
   document.querySelector("#customerRemark").value = quote.customer.remark;
   document.querySelector("#appointmentDate").value = quote.appointmentDate;
   document.querySelector("#quoteStatus").innerHTML = quotationStatuses
-    .map((status) => `<option value="${status}" ${quote.status === status ? "selected" : ""}>${status}</option>`)
+    .map((status) => `<option value="${status}" ${quote.status === status ? "selected" : ""}>${statusLabel(status)}</option>`)
     .join("");
   document.querySelector("#quoteRemark").value = quote.remark;
   document.querySelector("#discount").value = quote.discount || "";
@@ -55,17 +56,12 @@ function updateQuoteHeaderFromEvent(event) {
     customerAddress: "address",
     customerRemark: "remark"
   };
-  if (customerMap[id]) {
-    quote.customer[customerMap[id]] = event.target.value;
-  } else if (id === "quoteNumber") {
-    quote.quoteNumber = event.target.value;
-  } else if (id === "appointmentDate") {
-    quote.appointmentDate = event.target.value;
-  } else if (id === "quoteStatus") {
-    quote.status = event.target.value;
-  } else if (id === "quoteRemark") {
-    quote.remark = event.target.value;
-  } else if (id === "discount") {
+  if (customerMap[id]) quote.customer[customerMap[id]] = event.target.value;
+  else if (id === "quoteNumber") quote.quoteNumber = event.target.value;
+  else if (id === "appointmentDate") quote.appointmentDate = event.target.value;
+  else if (id === "quoteStatus") quote.status = event.target.value;
+  else if (id === "quoteRemark") quote.remark = event.target.value;
+  else if (id === "discount") {
     quote.discount = toNumber(event.target.value);
     updateQuoteSummary();
   } else if (id === "deposit") {
@@ -80,29 +76,28 @@ export function addItem() {
   quote.items = [item, ...quote.items];
   renderItemCards();
   updateQuoteSummary();
-  const input = document.querySelector(`[data-item-id="${item.id}"][data-field="width"]`);
-  input?.focus();
+  document.querySelector(`[data-item-id="${item.id}"][data-field="width"]`)?.focus();
 }
 
 function productOptions(selectedId) {
   const options = activeProducts();
   const selected = state.products.find((product) => product.id === selectedId);
   if (selected && !options.some((product) => product.id === selected.id)) options.push(selected);
-  return options.map((product) => `<option value="${product.id}" ${product.id === selectedId ? "selected" : ""}>${product.name}${product.active === false ? " (Inactive)" : ""}</option>`).join("");
+  return options.map((product) => `<option value="${product.id}" ${product.id === selectedId ? "selected" : ""}>${escapeHtml(product.name)}${product.active === false ? ` (${t("Inactive")})` : ""}</option>`).join("");
 }
 
 function selectOptions(options, selectedValue) {
-  return options.map((option) => `<option value="${option}" ${option === selectedValue ? "selected" : ""}>${option}</option>`).join("");
+  return options.map((option) => `<option value="${option}" ${option === selectedValue ? "selected" : ""}>${statusLabel(option)}</option>`).join("");
 }
 
 export function renderItemCards() {
   const quote = ensureCurrentQuote();
   const container = document.querySelector("#quoteItems");
   const counter = document.querySelector("#itemsCount");
-  counter.textContent = `Items count: ${quote.items.length}`;
+  counter.textContent = `${t("Items count")}: ${quote.items.length}`;
   container.hidden = false;
   container.innerHTML = quote.items.length ? quote.items.map((item, index) => itemCardHtml(item, index)).join("") : `
-    <div class="empty-state">No product items yet. Click Add Item to create a product card.</div>
+    <div class="empty-state">${t("No product items yet. Click Add Item to create a product card.")}</div>
   `;
 }
 
@@ -111,76 +106,56 @@ function itemCardHtml(item, index) {
     <article class="item-card" data-card-id="${item.id}">
       <div class="item-head">
         <div>
-          <strong>Item ${index + 1}</strong>
-          <span class="muted-text">Full product details</span>
+          <strong>${t("Product")} ${index + 1}</strong>
+          <span class="muted-text">${t("Full product details")}</span>
         </div>
-        <button class="btn danger" data-remove-item="${item.id}" type="button">Remove item</button>
+        <button class="btn danger" data-remove-item="${item.id}" type="button">${t("Remove item")}</button>
       </div>
       <div class="item-grid">
-        <label>Product
-          <select data-item-id="${item.id}" data-field="productId">${productOptions(item.productId)}</select>
-        </label>
-        <label>Width mm
-          <input inputmode="numeric" data-item-id="${item.id}" data-field="width" value="${item.width || ""}" placeholder="1000" />
-        </label>
-        <label>Height mm
-          <input inputmode="numeric" data-item-id="${item.id}" data-field="height" value="${item.height || ""}" placeholder="1200" />
-        </label>
-        <label>Quantity
-          <input inputmode="numeric" data-item-id="${item.id}" data-field="quantity" value="${item.quantity || ""}" placeholder="1" />
-        </label>
-        <label>Color
-          <input data-item-id="${item.id}" data-field="color" value="${item.color || ""}" placeholder="White" />
-        </label>
-        <label>Install Type / 内装外装
-          <select data-item-id="${item.id}" data-field="installType">${selectOptions(["Inside install", "Outside install", "Not sure / To confirm"], item.installType || "Not sure / To confirm")}</select>
-        </label>
-        <label>Installation Location / 安装位置
-          <input data-item-id="${item.id}" data-field="installationLocation" value="${item.installationLocation || ""}" placeholder="Living" />
-        </label>
-        <label>Opening Direction / 开向
-          <select data-item-id="${item.id}" data-field="openingDirection">${selectOptions(["Left", "Right", "Center", "Sliding Left", "Sliding Right", "Not sure"], item.openingDirection || "Not sure")}</select>
-        </label>
-        <label>Handle Position
-          <input data-item-id="${item.id}" data-field="handlePosition" value="${item.handlePosition || ""}" placeholder="Right" />
-        </label>
-        <label>Track / Opening
-          <input data-item-id="${item.id}" data-field="trackOpening" value="${item.trackOpening || ""}" placeholder="2 Track / Left" />
-        </label>
-        <label>Track Size / 轨道尺寸
-          <input data-item-id="${item.id}" data-field="trackSize" value="${item.trackSize || ""}" placeholder="25mm" />
-        </label>
-        <label>Handle Height / 把手高度
-          <input data-item-id="${item.id}" data-field="handleHeight" value="${item.handleHeight || ""}" placeholder="1000mm" />
-        </label>
-        <label>Mesh / Material
-          <input data-item-id="${item.id}" data-field="meshMaterial" value="${item.meshMaterial || ""}" placeholder="Stainless / Security mesh" />
-        </label>
-        <label>Unit Price
-          <input inputmode="decimal" data-item-id="${item.id}" data-field="unitPrice" value="${item.unitPrice || ""}" />
-        </label>
-        <label>Powdercoat / Powercoat
+        ${fieldSelect(t("Product"), item.id, "productId", productOptions(item.productId))}
+        ${fieldInput(t("Width mm"), item.id, "width", item.width, "1000", "numeric")}
+        ${fieldInput(t("Height mm"), item.id, "height", item.height, "1200", "numeric")}
+        ${fieldInput(t("Quantity"), item.id, "quantity", item.quantity, "1", "numeric")}
+        ${fieldInput(t("Color"), item.id, "color", item.color, "White")}
+        ${fieldSelect(t("Install Type / Inside Outside"), item.id, "installType", selectOptions(["Inside install", "Outside install", "Not sure / To confirm"], item.installType || "Not sure / To confirm"))}
+        ${fieldInput(t("Installation Location"), item.id, "installationLocation", item.installationLocation, "Living")}
+        ${fieldSelect(t("Opening Direction"), item.id, "openingDirection", selectOptions(["Left", "Right", "Center", "Sliding Left", "Sliding Right", "Not sure"], item.openingDirection || "Not sure"))}
+        ${fieldInput(t("Handle Position"), item.id, "handlePosition", item.handlePosition, "Right")}
+        ${fieldInput(t("Track / Opening"), item.id, "trackOpening", item.trackOpening, "2 Track / Left")}
+        ${fieldInput(t("Track Size"), item.id, "trackSize", item.trackSize, "25mm")}
+        ${fieldInput(t("Handle Height"), item.id, "handleHeight", item.handleHeight, "1000mm")}
+        ${fieldInput(t("Mesh / Material"), item.id, "meshMaterial", item.meshMaterial, "Stainless / Security mesh")}
+        ${fieldInput(t("Unit Price"), item.id, "unitPrice", item.unitPrice, "", "decimal")}
+        <label>${t("Powdercoat / Powercoat")}
           <select data-item-id="${item.id}" data-field="powdercoat">
             <option value="false" ${item.powdercoat ? "" : "selected"}>No</option>
             <option value="true" ${item.powdercoat ? "selected" : ""}>Yes</option>
           </select>
         </label>
-        <label class="wide">Remark
-          <textarea rows="2" data-item-id="${item.id}" data-field="remark" placeholder="Site note, special request">${item.remark || ""}</textarea>
+        <label class="wide">${t("Remark")}
+          <textarea rows="2" data-item-id="${item.id}" data-field="remark" placeholder="Site note, special request">${escapeHtml(item.remark || "")}</textarea>
         </label>
         <div class="line-metrics">
           <span>ft2 / Area</span>
           <strong data-line-id="${item.id}" data-line-field="area">${chargeableSqft(item).toFixed(2)}</strong>
-          <span>Base Total</span>
+          <span>${t("Base Total")}</span>
           <strong data-line-id="${item.id}" data-line-field="base">${money(baseLineTotal(item))}</strong>
           <span>Powdercoat 8%</span>
           <strong data-line-id="${item.id}" data-line-field="powdercoat">${money(powdercoatAmount(item))}</strong>
-          <span>Line Total</span>
+          <span>${t("Line Total")}</span>
           <strong data-line-id="${item.id}" data-line-field="total">${money(lineTotal(item))}</strong>
         </div>
       </div>
     </article>
   `;
+}
+
+function fieldInput(label, itemId, field, value = "", placeholder = "", inputmode = "") {
+  return `<label>${label}<input ${inputmode ? `inputmode="${inputmode}"` : ""} data-item-id="${itemId}" data-field="${field}" value="${escapeHtml(value || "")}" placeholder="${escapeHtml(placeholder)}" /></label>`;
+}
+
+function fieldSelect(label, itemId, field, optionsHtml) {
+  return `<label>${label}<select data-item-id="${itemId}" data-field="${field}">${optionsHtml}</select></label>`;
 }
 
 function updateItemFromEvent(event) {
@@ -262,14 +237,14 @@ export function saveQuote() {
     ? state.quotations.map((row) => row.id === snapshot.id ? snapshot : row)
     : [snapshot, ...state.quotations];
   persistQuotations();
-  document.querySelector("#saveStatus").textContent = `Saved ${snapshot.quoteNumber}`;
+  document.querySelector("#saveStatus").textContent = `${t("Save Quote")} ${snapshot.quoteNumber}`;
   renderQuotationList();
 }
 
 export function newQuote() {
   state.currentQuote = makeQuote();
   renderQuotationForm();
-  document.querySelector("#saveStatus").textContent = "New quote ready.";
+  document.querySelector("#saveStatus").textContent = t("New quote ready.");
 }
 
 export function renderQuotationList() {
@@ -277,12 +252,12 @@ export function renderQuotationList() {
   list.innerHTML = state.quotations.length ? state.quotations.map((quote) => `
     <article class="quote-row">
       <button type="button" data-open-quote="${quote.id}">
-        <span><strong>${quote.quoteNumber}</strong><small>${quote.customer.name || "-"}</small></span>
+        <span><strong>${escapeHtml(quote.quoteNumber)}</strong><small>${escapeHtml(quote.customer.name || "-")}</small></span>
         <span>${money(quote.total || 0)}</span>
       </button>
-      <button class="btn primary" type="button" data-convert-quote="${quote.id}">Convert to Order</button>
+      <button class="btn primary" type="button" data-convert-quote="${quote.id}">${t("Convert to Order")}</button>
     </article>
-  `).join("") : `<p class="muted-text">No saved quotations yet.</p>`;
+  `).join("") : `<p class="muted-text">${t("No saved quotations yet.")}</p>`;
   list.querySelectorAll("[data-open-quote]").forEach((button) => {
     button.addEventListener("click", () => {
       const quote = state.quotations.find((row) => row.id === button.dataset.openQuote);
@@ -293,7 +268,7 @@ export function renderQuotationList() {
   list.querySelectorAll("[data-convert-quote]").forEach((button) => {
     button.addEventListener("click", () => {
       const result = convertQuoteToOrder(button.dataset.convertQuote);
-      document.querySelector("#saveStatus").textContent = result.ok ? "Order created successfully." : result.message;
+      document.querySelector("#saveStatus").textContent = result.ok ? t("Order created successfully.") : result.message;
       renderQuotationList();
       renderWorkflowModules();
     });
@@ -308,7 +283,7 @@ export function printQuote() {
     return;
   }
   printWindow.document.open();
-  printWindow.document.write(printableDocument(`Quotation ${quote.quoteNumber}`, quoteDocumentHtml(quote)));
+  printWindow.document.write(printableDocument(`${t("Quotation")} ${quote.quoteNumber}`, quoteDocumentHtml(quote)));
   printWindow.document.close();
   setTimeout(() => {
     printWindow.focus();
@@ -317,90 +292,44 @@ export function printQuote() {
 }
 
 function printableDocument(title, bodyHtml) {
-  return `<!doctype html>
-    <html lang="en">
-      <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>${escapeHtml(title)}</title>
-        <style>${quotePrintStyles()}</style>
-      </head>
-      <body>${bodyHtml}</body>
-    </html>`;
+  return `<!doctype html><html lang="${state.language === "zh" ? "zh" : "en"}"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>${escapeHtml(title)}</title><style>${quotePrintStyles()}</style></head><body>${bodyHtml}</body></html>`;
 }
 
 function quoteDocumentHtml(quote) {
   const totals = quoteTotals(quote.items, quote.discount, quote.deposit);
-  const quoteDate = formatDate(quote.updatedAt || quote.createdAt || new Date().toISOString());
   const discountRow = Number(quote.discount || 0) > 0
-    ? `<div class="total-row"><span>Discount</span><strong>- ${money(quote.discount)}</strong></div>`
+    ? `<div class="total-row"><span>${t("Discount")}</span><strong>- ${money(quote.discount)}</strong></div>`
     : "";
   return `
     <main class="quotation-page">
       <header class="quote-header">
         <section class="company-block">
-          <div class="logo-row">
-            <div class="es-logo">ES</div>
-            <div>
-              <h1>Eco Screen Sdn Bhd</h1>
-              <p class="specialist">Screen and Security Mesh Specialist</p>
-            </div>
-          </div>
+          <div class="logo-row"><div class="es-logo">ES</div><div><h1>Eco Screen Sdn Bhd</h1><p class="specialist">Screen and Security Mesh Specialist</p></div></div>
           <p>24 Jalan Iks Bukit Tengah, Taman Iks Bukit Tengah, 14000 BM</p>
           <p>Tel: 0197563499</p>
           <p class="description">Supply and installation quotation for insect screen, roller screen, stainless steel net and security mesh products.</p>
         </section>
         <aside class="quote-card">
-          <p>QUOTATION</p>
+          <p>${t("Quotation").toUpperCase()}</p>
           <h2>${escapeHtml(quote.quoteNumber || "-")}</h2>
-          <div><span>Date</span><strong>${quoteDate}</strong></div>
-          <div><span>Status</span><strong>${escapeHtml(quote.status || "Quoted")}</strong></div>
+          <div><span>Date</span><strong>${formatDate(quote.updatedAt || quote.createdAt || new Date().toISOString())}</strong></div>
+          <div><span>${t("Status")}</span><strong>${statusLabel(quote.status || "Quoted")}</strong></div>
         </aside>
       </header>
-
       <div class="divider"></div>
-
       <section class="customer-grid">
-        <div class="info-box">
-          <p class="section-label">BILL TO</p>
-          <h3>${escapeHtml(quote.customer.name || "-")}</h3>
-          <p>${escapeHtml(quote.customer.phone || "-")}</p>
-          <p>${escapeHtml(quote.customer.address || "-")}</p>
-        </div>
-        <div class="info-box">
-          <p class="section-label">JOB DETAILS</p>
-          <p><strong>Area:</strong> ${escapeHtml(quote.customer.area || "-")}</p>
-          <p><strong>Appointment:</strong> ${escapeHtml(quote.appointmentDate || "-")}</p>
-          ${quote.remark ? `<p><strong>Remark:</strong> ${escapeHtml(quote.remark)}</p>` : ""}
-        </div>
+        <div class="info-box"><p class="section-label">BILL TO</p><h3>${escapeHtml(quote.customer.name || "-")}</h3><p>${escapeHtml(quote.customer.phone || "-")}</p><p>${escapeHtml(quote.customer.address || "-")}</p></div>
+        <div class="info-box"><p class="section-label">JOB DETAILS</p><p><strong>${t("Area")}:</strong> ${escapeHtml(quote.customer.area || "-")}</p><p><strong>${t("Appointment Date")}:</strong> ${escapeHtml(quote.appointmentDate || "-")}</p>${quote.remark ? `<p><strong>${t("Remark")}:</strong> ${escapeHtml(quote.remark)}</p>` : ""}</div>
       </section>
-
-      <table class="items-table">
-        <thead>
-          <tr>
-            <th>Description</th>
-            <th>Product</th>
-            <th class="right">Size</th>
-            <th class="right">Sqft</th>
-            <th class="right">Rate</th>
-            <th class="right">Qty</th>
-            <th class="right">Amount</th>
-          </tr>
-        </thead>
-        <tbody>${quoteItemRowsHtml(quote.items)}</tbody>
-      </table>
-
+      <table class="items-table"><thead><tr><th>Description</th><th>${t("Product")}</th><th class="right">Size</th><th class="right">Sqft</th><th class="right">Rate</th><th class="right">${t("Quantity")}</th><th class="right">${t("Total")}</th></tr></thead><tbody>${quoteItemRowsHtml(quote.items)}</tbody></table>
       <section class="bottom-grid">
-        <div class="terms-box">
-          <h3>Terms & Conditions</h3>
-          ${quoteTermsHtml()}
-        </div>
+        <div class="terms-box"><h3>Terms & Conditions</h3>${quoteTermsHtml()}</div>
         <div class="totals-box">
-          <div class="total-row"><span>Subtotal</span><strong>${money(totals.subtotal)}</strong></div>
+          <div class="total-row"><span>${t("Subtotal")}</span><strong>${money(totals.subtotal)}</strong></div>
           ${discountRow}
-          <div class="total-row"><span>Total</span><strong>${money(totals.total)}</strong></div>
-          <div class="total-row"><span>Deposit</span><strong>${money(quote.deposit)}</strong></div>
-          <div class="total-row balance"><span>Balance</span><strong>${money(totals.balance)}</strong></div>
+          <div class="total-row"><span>${t("Total")}</span><strong>${money(totals.total)}</strong></div>
+          <div class="total-row"><span>${t("Deposit")}</span><strong>${money(quote.deposit)}</strong></div>
+          <div class="total-row balance"><span>${t("Balance")}</span><strong>${money(totals.balance)}</strong></div>
         </div>
       </section>
     </main>
@@ -409,41 +338,25 @@ function quoteDocumentHtml(quote) {
 
 function quoteItemRowsHtml(items) {
   return items.map((item, index) => {
-    const description = item.description || item.label || item.remark || `Item ${index + 1}`;
-    return `
-      <tr>
-        <td>
-          <strong>${escapeHtml(description)}</strong>
-          ${quoteItemDetailLinesHtml(item)}
-        </td>
-        <td>${escapeHtml(item.productName || "-")}</td>
-        <td class="right">${escapeHtml(item.width || 0)} x ${escapeHtml(item.height || 0)} mm</td>
-        <td class="right">${chargeableSqft(item).toFixed(2)}</td>
-        <td class="right">${money(item.unitPrice)}</td>
-        <td class="right">${escapeHtml(item.quantity || 0)}</td>
-        <td class="right amount">${money(lineTotal(item))}</td>
-      </tr>
-    `;
+    const description = item.description || item.label || item.remark || `${t("Product")} ${index + 1}`;
+    return `<tr><td><strong>${escapeHtml(description)}</strong>${quoteItemDetailLinesHtml(item)}</td><td>${escapeHtml(item.productName || "-")}</td><td class="right">${escapeHtml(item.width || 0)} x ${escapeHtml(item.height || 0)} mm</td><td class="right">${chargeableSqft(item).toFixed(2)}</td><td class="right">${money(item.unitPrice)}</td><td class="right">${escapeHtml(item.quantity || 0)}</td><td class="right amount">${money(lineTotal(item))}</td></tr>`;
   }).join("");
 }
 
 function quoteItemDetailLinesHtml(item) {
   const details = [
-    ["Colour", item.color],
-    ["Install Type", item.installType],
-    ["Location", item.installationLocation],
-    ["Opening Direction", item.openingDirection],
-    ["Track Size", item.trackSize],
-    ["Handle Height", item.handleHeight],
-    ["Handle Position", item.handlePosition],
-    ["Track / Opening", item.trackOpening],
-    ["Mesh / Material", item.meshMaterial],
-    ["Powdercoat / Powercoat", item.powdercoat ? `Yes (${money(powdercoatAmount(item))})` : ""]
+    [t("Color"), item.color],
+    [t("Install Type / Inside Outside"), item.installType],
+    [t("Installation Location"), item.installationLocation],
+    [t("Opening Direction"), item.openingDirection],
+    [t("Track Size"), item.trackSize],
+    [t("Handle Height"), item.handleHeight],
+    [t("Handle Position"), item.handlePosition],
+    [t("Track / Opening"), item.trackOpening],
+    [t("Mesh / Material"), item.meshMaterial],
+    [t("Powdercoat / Powercoat"), item.powdercoat ? `Yes (${money(powdercoatAmount(item))})` : ""]
   ];
-  return details
-    .filter(([, value]) => value)
-    .map(([label, value]) => `<small>${label}: ${escapeHtml(value)}</small>`)
-    .join("") || `<small>Colour: -</small>`;
+  return details.filter(([, value]) => value).map(([label, value]) => `<small>${label}: ${escapeHtml(value)}</small>`).join("") || `<small>${t("Color")}: -</small>`;
 }
 
 function quoteTermsHtml() {
@@ -460,212 +373,36 @@ function quotePrintStyles() {
   return `
     @page { size: A4 portrait; margin: 12mm; }
     * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      background: #ffffff;
-      color: #111827;
-      font-family: Arial, Helvetica, sans-serif;
-      -webkit-print-color-adjust: exact;
-      print-color-adjust: exact;
-    }
-    .quotation-page {
-      width: 100%;
-      max-width: 780px;
-      margin: 0 auto;
-      padding: 4px;
-    }
-    .quote-header {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) 230px;
-      gap: 22px;
-      align-items: start;
-    }
-    .logo-row {
-      display: flex;
-      gap: 12px;
-      align-items: center;
-      margin-bottom: 8px;
-    }
-    .es-logo {
-      width: 48px;
-      height: 48px;
-      display: grid;
-      place-items: center;
-      border-radius: 8px;
-      background: #047857;
-      color: white;
-      font-size: 18px;
-      font-weight: 900;
-      letter-spacing: .04em;
-    }
-    h1, h2, h3, p { margin: 0; }
-    h1 { font-size: 24px; color: #0f172a; }
-    .specialist {
-      margin-top: 3px;
-      color: #475569;
-      font-size: 12px;
-      font-weight: 700;
-      text-transform: uppercase;
-    }
-    .company-block > p {
-      margin-top: 5px;
-      color: #334155;
-      font-size: 12.5px;
-      line-height: 1.45;
-    }
-    .company-block .description {
-      max-width: 470px;
-      margin-top: 10px;
-      color: #64748b;
-    }
-    .quote-card {
-      border: 1px solid #cbd5e1;
-      border-radius: 10px;
-      padding: 14px;
-      text-align: right;
-      background: #f8fafc;
-    }
-    .quote-card > p {
-      color: #047857;
-      font-size: 12px;
-      font-weight: 900;
-      letter-spacing: .1em;
-    }
-    .quote-card h2 {
-      margin: 7px 0 12px;
-      font-size: 20px;
-      color: #0f172a;
-    }
-    .quote-card div {
-      display: flex;
-      justify-content: space-between;
-      gap: 14px;
-      border-top: 1px solid #e2e8f0;
-      padding-top: 8px;
-      margin-top: 8px;
-      font-size: 12px;
-      text-align: left;
-    }
-    .quote-card span { color: #64748b; }
-    .divider {
-      height: 2px;
-      margin: 18px 0;
-      background: #0f172a;
-      opacity: .8;
-    }
-    .customer-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 14px;
-      margin-bottom: 16px;
-    }
-    .info-box {
-      border: 1px solid #e2e8f0;
-      border-radius: 10px;
-      padding: 12px;
-      min-height: 110px;
-    }
-    .section-label {
-      color: #047857;
-      font-size: 11px;
-      font-weight: 900;
-      letter-spacing: .08em;
-      margin-bottom: 7px;
-    }
-    .info-box h3 {
-      margin-bottom: 6px;
-      font-size: 16px;
-    }
-    .info-box p {
-      color: #334155;
-      font-size: 12.5px;
-      line-height: 1.45;
-      white-space: pre-wrap;
-    }
-    .items-table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 4px;
-    }
-    .items-table th {
-      background: #f1f5f9;
-      color: #0f172a;
-      font-size: 11px;
-      text-align: left;
-      text-transform: uppercase;
-      letter-spacing: .04em;
-    }
-    .items-table th,
-    .items-table td {
-      border: 1px solid #dbe4ea;
-      padding: 8px;
-      vertical-align: top;
-      font-size: 12px;
-      line-height: 1.35;
-    }
-    .items-table td small {
-      display: block;
-      margin-top: 4px;
-      color: #64748b;
-      font-size: 11px;
-    }
-    .right { text-align: right; }
-    .amount {
-      font-weight: 900;
-      color: #0f172a;
-      white-space: nowrap;
-    }
-    .bottom-grid {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) 280px;
-      gap: 18px;
-      align-items: start;
-      margin-top: 18px;
-    }
-    .terms-box {
-      color: #334155;
-      font-size: 11.5px;
-      line-height: 1.45;
-    }
-    .terms-box h3 {
-      margin-bottom: 7px;
-      font-size: 13px;
-      color: #0f172a;
-    }
-    .terms-box p { margin-top: 5px; }
-    .bank-details {
-      margin-top: 7px !important;
-      font-weight: 900;
-      color: #0f172a;
-    }
-    .totals-box {
-      border: 1px solid #cbd5e1;
-      border-radius: 10px;
-      padding: 12px;
-      background: #f8fafc;
-    }
-    .total-row {
-      display: flex;
-      justify-content: space-between;
-      gap: 14px;
-      border-bottom: 1px solid #e2e8f0;
-      padding: 7px 0;
-      font-size: 13px;
-    }
-    .total-row:first-child { padding-top: 0; }
-    .total-row:last-child { border-bottom: 0; padding-bottom: 0; }
-    .total-row span { color: #475569; }
-    .total-row strong { color: #0f172a; white-space: nowrap; }
-    .total-row.balance strong {
-      color: #047857;
-      font-size: 16px;
-    }
-    @media screen and (max-width: 720px) {
-      body { background: #f8fafc; padding: 10px; }
-      .quotation-page { background: white; padding: 14px; }
-      .quote-header, .customer-grid, .bottom-grid { grid-template-columns: 1fr; }
-      .quote-card { text-align: left; }
-    }
+    body { margin: 0; background: #ffffff; color: #111827; font-family: Arial, Helvetica, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .quotation-page { width: 100%; max-width: 780px; margin: 0 auto; padding: 4px; }
+    .quote-header { display: grid; grid-template-columns: minmax(0, 1fr) 230px; gap: 22px; align-items: start; }
+    .logo-row { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; }
+    .es-logo { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 8px; background: #047857; color: white; font-size: 18px; font-weight: 900; }
+    h1, h2, h3, p { margin: 0; } h1 { font-size: 24px; color: #0f172a; }
+    .specialist { margin-top: 3px; color: #475569; font-size: 12px; font-weight: 700; text-transform: uppercase; }
+    .company-block > p { margin-top: 5px; color: #334155; font-size: 12.5px; line-height: 1.45; }
+    .company-block .description { max-width: 470px; margin-top: 10px; color: #64748b; }
+    .quote-card { border: 1px solid #cbd5e1; border-radius: 10px; padding: 14px; text-align: right; background: #f8fafc; }
+    .quote-card > p { color: #047857; font-size: 12px; font-weight: 900; letter-spacing: .1em; }
+    .quote-card h2 { margin: 7px 0 12px; font-size: 20px; color: #0f172a; }
+    .quote-card div { display: flex; justify-content: space-between; gap: 14px; border-top: 1px solid #e2e8f0; padding-top: 8px; margin-top: 8px; font-size: 12px; text-align: left; }
+    .divider { height: 2px; margin: 18px 0; background: #0f172a; opacity: .8; }
+    .customer-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px; }
+    .info-box { border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; min-height: 110px; }
+    .section-label { color: #047857; font-size: 11px; font-weight: 900; letter-spacing: .08em; margin-bottom: 7px; }
+    .info-box h3 { margin-bottom: 6px; font-size: 16px; } .info-box p { color: #334155; font-size: 12.5px; line-height: 1.45; white-space: pre-wrap; }
+    .items-table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+    .items-table th { background: #f1f5f9; color: #0f172a; font-size: 11px; text-align: left; text-transform: uppercase; letter-spacing: .04em; }
+    .items-table th, .items-table td { border: 1px solid #dbe4ea; padding: 8px; vertical-align: top; font-size: 12px; line-height: 1.35; }
+    .items-table td small { display: block; margin-top: 4px; color: #64748b; font-size: 11px; }
+    .right { text-align: right; } .amount { font-weight: 900; color: #0f172a; white-space: nowrap; }
+    .bottom-grid { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 18px; align-items: start; margin-top: 18px; }
+    .terms-box { color: #334155; font-size: 11.5px; line-height: 1.45; } .terms-box h3 { margin-bottom: 7px; font-size: 13px; color: #0f172a; }
+    .terms-box p { margin-top: 5px; } .bank-details { margin-top: 7px !important; font-weight: 900; color: #0f172a; }
+    .totals-box { border: 1px solid #cbd5e1; border-radius: 10px; padding: 12px; background: #f8fafc; }
+    .total-row { display: flex; justify-content: space-between; gap: 14px; border-bottom: 1px solid #e2e8f0; padding: 7px 0; font-size: 13px; }
+    .total-row:last-child { border-bottom: 0; padding-bottom: 0; } .total-row.balance strong { color: #047857; font-size: 16px; }
+    @media screen and (max-width: 720px) { body { background: #f8fafc; padding: 10px; } .quotation-page { background: white; padding: 14px; } .quote-header, .customer-grid, .bottom-grid { grid-template-columns: 1fr; } .quote-card { text-align: left; } }
   `;
 }
 

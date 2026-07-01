@@ -12,6 +12,18 @@ import {
   uid
 } from "./state.js";
 import { itemWithCalculatedTotals, lineTotal, money, powdercoatAmount, quoteTotals } from "./calculations.js";
+import { statusLabel, t } from "./i18n.js";
+import {
+  canCompleteInstallation,
+  canDeleteOrders,
+  canEditOrder,
+  canEditProduction,
+  canScheduleInstallation,
+  canSendOrder,
+  canViewPrice,
+  isBossOrAdmin,
+  role
+} from "./permissions.js";
 
 const orderStatuses = [
   "Confirmed",
@@ -205,7 +217,7 @@ function failConversion(message) {
 function showWorkflowMessage(message, type = "info") {
   const status = document.querySelector("#workflowStatus");
   if (!status) return;
-  status.textContent = message;
+  status.textContent = t(message);
   status.dataset.type = type;
 }
 
@@ -245,30 +257,29 @@ function renderOrderList() {
       <div class="card-head">
         <div>
           <strong>${order.orderNumber}</strong>
-          <p class="muted-text">Quote: ${order.quoteNumber} | ${order.customer.name || "-"} | ${order.customer.phone || "-"}</p>
+          <p class="muted-text">${t("Quote")}: ${order.quoteNumber} | ${order.customer.name || "-"} | ${order.customer.phone || "-"}</p>
         </div>
-        <span class="pill">${order.status}${order.isArchived ? " / Archived" : ""}</span>
+        <span class="pill">${statusLabel(order.status)}${order.isArchived ? " / Archived" : ""}</span>
       </div>
       <div class="order-facts">
-        <span>Total: <strong>${money(order.total || 0)}</strong></span>
-        <span>Deposit: <strong>${money(order.deposit || 0)}</strong></span>
-        <span>Balance: <strong>${money(order.balance || 0)}</strong></span>
+        ${canViewPrice() ? `<span>${t("Total")}: <strong>${money(order.total || 0)}</strong></span><span>${t("Deposit")}: <strong>${money(order.deposit || 0)}</strong></span>` : ""}
+        <span>${t("Balance")}: <strong>${money(order.balance || 0)}</strong></span>
       </div>
       <div class="form-grid compact">
-        <label>Status<select data-order-id="${order.id}" data-order-field="status" ${state.role === "Admin" ? "" : "disabled"}>${orderStatuses.map((status) => `<option value="${status}" ${order.status === status ? "selected" : ""}>${status}</option>`).join("")}</select></label>
-        <label>Installation Date<input type="date" data-order-id="${order.id}" data-order-field="installationDate" value="${order.installationDate || ""}" ${state.role === "Admin" ? "" : "readonly"} /></label>
-        <label class="wide">Remark<textarea rows="2" data-order-id="${order.id}" data-order-field="remark" ${state.role === "Admin" ? "" : "readonly"}>${order.remark || ""}</textarea></label>
+        <label>${t("Status")}<select data-order-id="${order.id}" data-order-field="status" ${canEditOrder() ? "" : "disabled"}>${orderStatuses.map((status) => `<option value="${status}" ${order.status === status ? "selected" : ""}>${statusLabel(status)}</option>`).join("")}</select></label>
+        <label>${t("Installation Date")}<input type="date" data-order-id="${order.id}" data-order-field="installationDate" value="${order.installationDate || ""}" ${canEditOrder() ? "" : "readonly"} /></label>
+        <label class="wide">${t("Remark")}<textarea rows="2" data-order-id="${order.id}" data-order-field="remark" ${canEditOrder() ? "" : "readonly"}>${order.remark || ""}</textarea></label>
       </div>
       ${itemsSummary(order.items)}
       ${orderActionsHtml(order)}
     </article>
-  `).join("") : `<p class="muted-text">${state.orders.length ? "No order found" : "No orders yet. Convert a saved quote to create an order."}</p>`;
+  `).join("") : `<p class="muted-text">${state.orders.length ? t("No order found") : t("No orders yet. Convert a saved quote to create an order.")}</p>`;
 }
 
 function renderOrderProgressBoard() {
   const board = document.querySelector("#orderProgressBoard");
   if (!board) return;
-  if (!["Admin", "Secretary"].includes(state.role)) {
+  if (!["Boss", "Admin", "Secretary"].includes(role())) {
     board.innerHTML = "";
     return;
   }
@@ -281,8 +292,8 @@ function renderOrderProgressBoard() {
     <section class="progress-board">
       <div class="section-head">
         <div>
-          <h3>Order Progress Board</h3>
-          <p class="muted-text">Production and installation progress for every order.</p>
+          <h3>${t("Order Progress Board")}</h3>
+          <p class="muted-text">${t("Production and installation progress for every order.")}</p>
         </div>
       </div>
       <div class="progress-columns">
@@ -292,7 +303,7 @@ function renderOrderProgressBoard() {
             <section class="progress-column">
               <h3>${category.shortTitle} <span>${rows.length}</span></h3>
               <div class="progress-card-list">
-                ${rows.length ? rows.map((order) => renderOrderProgressCard(order)).join("") : `<p class="muted-text">No orders.</p>`}
+                ${rows.length ? rows.map((order) => renderOrderProgressCard(order)).join("") : `<p class="muted-text">${t("No orders.")}</p>`}
               </div>
             </section>
           `;
@@ -308,41 +319,31 @@ function renderOrderTools() {
   tools.innerHTML = `
     <section class="order-tools">
       <div class="form-grid compact">
-        <label>Search Order Number<input data-order-search="orderNumber" value="${orderSearch.orderNumber}" placeholder="ESO-2026-0001 or 0001" /></label>
-        <label>Search Customer Name<input data-order-search="customerName" value="${orderSearch.customerName}" placeholder="Customer name" /></label>
-        <label>Search Phone Number<input data-order-search="phone" value="${orderSearch.phone}" placeholder="0123456789" /></label>
+        <label>${t("Search Order Number")}<input data-order-search="orderNumber" value="${orderSearch.orderNumber}" placeholder="ESO-2026-0001 or 0001" /></label>
+        <label>${t("Search Customer Name")}<input data-order-search="customerName" value="${orderSearch.customerName}" placeholder="Customer name" /></label>
+        <label>${t("Search Phone Number")}<input data-order-search="phone" value="${orderSearch.phone}" placeholder="0123456789" /></label>
       </div>
       <div class="actions">
-        <button class="btn primary" type="button" data-order-tool="search">Search</button>
-        <button class="btn" type="button" data-order-tool="clear">Clear Search</button>
-        <button class="btn" type="button" data-order-tool="find">Find Order</button>
+        <button class="btn primary" type="button" data-order-tool="search">${t("Search")}</button>
+        <button class="btn" type="button" data-order-tool="clear">${t("Clear Search")}</button>
+        <button class="btn" type="button" data-order-tool="find">${t("Find Order")}</button>
       </div>
       <div class="filter-tabs">
-        ${orderFilters.map((filter) => `<button class="filter-tab ${orderSearch.filter === filter.id ? "active" : ""}" type="button" data-order-filter="${filter.id}">${filter.label}</button>`).join("")}
+        ${orderFilters.map((filter) => `<button class="filter-tab ${orderSearch.filter === filter.id ? "active" : ""}" type="button" data-order-filter="${filter.id}">${t(filter.label)}</button>`).join("")}
       </div>
     </section>
   `;
 }
 
 function orderActionsHtml(order) {
-  if (state.role === "Admin") {
-    return `
-      <div class="actions">
-        <button class="btn" type="button" data-view-order="${order.id}">View Order</button>
-        <button class="btn primary" type="button" data-print-order="${order.id}">Print Order</button>
-        <button class="btn" type="button" data-send-production="${order.id}">Send to Production</button>
-        <button class="btn" type="button" data-send-installer="${order.id}">Send to Installer</button>
-        <button class="btn" type="button" data-update-order-status="${order.id}">Update Status</button>
-        <button class="btn danger" type="button" data-delete-order="${order.id}">Delete Order</button>
-      </div>
-    `;
-  }
   return `
     <div class="actions">
-      <button class="btn" type="button" data-view-order="${order.id}">View Order</button>
-      <button class="btn primary" type="button" data-print-order="${order.id}">Print Order</button>
-      <button class="btn" type="button" data-whatsapp-order="${order.id}">WhatsApp Customer</button>
-      <button class="btn" type="button" data-highlight-order="${order.id}">Search / Open Customer</button>
+      <button class="btn" type="button" data-view-order="${order.id}">${t("View Order")}</button>
+      <button class="btn primary" type="button" data-print-order="${order.id}">${t("Print Order")}</button>
+      ${canSendOrder() ? `<button class="btn" type="button" data-send-production="${order.id}">${t("Send to Production")}</button><button class="btn" type="button" data-send-installer="${order.id}">${t("Send to Installer")}</button><button class="btn" type="button" data-update-order-status="${order.id}">${t("Update Status")}</button>` : ""}
+      <button class="btn" type="button" data-whatsapp-order="${order.id}">${t("WhatsApp Customer")}</button>
+      <button class="btn" type="button" data-highlight-order="${order.id}">${t("Search / Open Customer")}</button>
+      ${canDeleteOrders() ? `<button class="btn danger" type="button" data-delete-order="${order.id}">${t("Delete Order")}</button>` : ""}
     </div>
   `;
 }
@@ -353,16 +354,16 @@ function renderOrderProgressCard(order) {
   return `
     <article class="progress-card ${orderSearch.highlightId === order.id ? "highlight-card" : ""}" data-order-card="${order.id}">
       <strong>${order.orderNumber}</strong>
-      <p class="muted-text">Quote: ${order.quoteNumber || "-"}</p>
+      <p class="muted-text">${t("Quote")}: ${order.quoteNumber || "-"}</p>
       <p>${order.customer?.name || "-"} | ${order.customer?.phone || "-"}</p>
       <p class="muted-text">${order.customer?.area || "-"} | ${order.customer?.address || "-"}</p>
       <p class="muted-text">${productSummary(order.items)}</p>
       <div class="progress-meta">
-        <span>Install: ${order.installationDate || installationJob?.installationDate || "-"}</span>
-        <span>Order: ${order.status || "-"}</span>
-        <span>Production: ${productionJob?.status || "Not sent"}</span>
-        <span>Installation: ${installationJob?.status || "Not sent"}</span>
-        <span>Balance: ${money(getOrderBalance(order))}</span>
+        <span>${t("Installation Date")}: ${order.installationDate || installationJob?.installationDate || "-"}</span>
+        <span>${t("Order")}: ${statusLabel(order.status || "-")}</span>
+        <span>${t("Production")}: ${statusLabel(productionJob?.status || "Not sent")}</span>
+        <span>${t("Installation")}: ${statusLabel(installationJob?.status || "Not sent")}</span>
+        <span>${t("Balance")}: ${money(getOrderBalance(order))}</span>
         <span>Updated: ${formatShortDate(order.updatedAt || order.createdAt)}</span>
       </div>
       ${orderActionsHtml(order)}
@@ -466,22 +467,21 @@ function renderProductionJobs() {
       <div class="card-head">
         <div>
           <strong>${job.productionNumber}</strong>
-          <p class="muted-text">Order: ${job.orderNumber} | ${job.customerName || "-"}</p>
-          <p class="muted-text">Installation date: ${job.installationDate || "-"}</p>
+          <p class="muted-text">${t("Order")}: ${job.orderNumber} | ${job.customerName || "-"}</p>
+          <p class="muted-text">${t("Installation Date")}: ${job.installationDate || "-"}</p>
         </div>
-        <span class="pill">${job.status}</span>
+        <span class="pill">${statusLabel(job.status)}</span>
       </div>
-      <label>Production Status<select data-production-id="${job.id}" data-production-field="status">${productionStatuses.map((status) => `<option value="${status}" ${job.status === status ? "selected" : ""}>${status}</option>`).join("")}</select></label>
-      <label>Production Remark<textarea rows="2" data-production-id="${job.id}" data-production-field="remark">${job.remark || ""}</textarea></label>
+      <label>${t("Production Status")}<select data-production-id="${job.id}" data-production-field="status" ${canEditProduction() ? "" : "disabled"}>${productionStatuses.map((status) => `<option value="${status}" ${job.status === status ? "selected" : ""}>${statusLabel(status)}</option>`).join("")}</select></label>
+      <label>${t("Production Remark")}<textarea rows="2" data-production-id="${job.id}" data-production-field="remark" ${canEditProduction() ? "" : "readonly"}>${job.remark || ""}</textarea></label>
       ${itemsSummary(job.items)}
       <div class="actions">
-        <button class="btn" type="button" data-view-production="${job.id}">View Production Job</button>
-        <button class="btn primary" type="button" data-print-production="${job.id}">Print Production Sheet</button>
-        <button class="btn" type="button" data-mark-production-status="${job.id}" data-status="In Production">Mark In Production</button>
-        <button class="btn" type="button" data-mark-production-status="${job.id}" data-status="Completed">Mark Production Completed</button>
+        <button class="btn" type="button" data-view-production="${job.id}">${t("View Production Job")}</button>
+        <button class="btn primary" type="button" data-print-production="${job.id}">${t("Print Production Sheet")}</button>
+        ${canEditProduction() ? `<button class="btn" type="button" data-mark-production-status="${job.id}" data-status="In Production">${t("Mark In Production")}</button><button class="btn" type="button" data-mark-production-status="${job.id}" data-status="Completed">${t("Mark Production Completed")}</button>` : ""}
       </div>
     </article>
-  `).join("") : `<p class="muted-text">No production jobs yet.</p>`;
+  `).join("") : `<p class="muted-text">${t("No production jobs yet.")}</p>`;
 }
 
 function renderInstallationJobs() {
@@ -492,32 +492,30 @@ function renderInstallationJobs() {
       <div class="card-head">
         <div>
           <strong>${job.installationNumber}</strong>
-          <p class="muted-text">Order: ${job.orderNumber} | ${job.customer.name || "-"}</p>
+          <p class="muted-text">${t("Order")}: ${job.orderNumber} | ${job.customer.name || "-"}</p>
           <p class="muted-text">${job.customer.phone || "-"} | ${job.customer.address || "-"}</p>
         </div>
-        <span class="pill">${money(job.balance)} to collect</span>
+        <span class="pill">${money(job.balance)} ${t("Pending Collection")}</span>
       </div>
       <div class="form-grid compact">
-        <label>Installation Date<input type="date" data-installation-id="${job.id}" data-installation-field="installationDate" value="${job.installationDate || ""}" /></label>
-        <label>Status<select data-installation-id="${job.id}" data-installation-field="status">${installationStatuses.map((status) => `<option value="${status}" ${job.status === status ? "selected" : ""}>${status}</option>`).join("")}</select></label>
-        <label class="wide">Installer Remark<textarea rows="2" data-installation-id="${job.id}" data-installation-field="installerRemark">${job.installerRemark || ""}</textarea></label>
+        <label>${t("Installation Date")}<input type="date" data-installation-id="${job.id}" data-installation-field="installationDate" value="${job.installationDate || ""}" ${canScheduleInstallation() ? "" : "readonly"} /></label>
+        <label>${t("Status")}<select data-installation-id="${job.id}" data-installation-field="status" ${canScheduleInstallation() ? "" : "disabled"}>${installationStatuses.map((status) => `<option value="${status}" ${job.status === status ? "selected" : ""}>${statusLabel(status)}</option>`).join("")}</select></label>
+        <label class="wide">${t("Installer Remark")}<textarea rows="2" data-installation-id="${job.id}" data-installation-field="installerRemark" ${canScheduleInstallation() ? "" : "readonly"}>${job.installerRemark || ""}</textarea></label>
       </div>
       ${itemsSummary(job.items)}
       ${completionSummaryHtml(job)}
       <div class="actions">
-        <button class="btn" type="button" data-view-installation="${job.id}">View Installation Job</button>
-        <button class="btn primary" type="button" data-print-installation="${job.id}">Print Installation Sheet</button>
-        <button class="btn" type="button" data-whatsapp-installation="${job.id}">WhatsApp Customer</button>
-        <button class="btn" type="button" data-mark-installation-status="${job.id}" data-status="Scheduled">Mark Scheduled</button>
-        <button class="btn" type="button" data-mark-installation-status="${job.id}" data-status="Installing">Mark Installing</button>
-        <button class="btn" type="button" data-complete-installation="${job.id}">Complete Installation</button>
-        <button class="btn" type="button" data-generate-warranty="${job.id}">Generate Warranty Card</button>
-        <button class="btn" type="button" data-print-warranty="${job.id}">Print Warranty Card</button>
-        <button class="btn" type="button" data-print-warranty="${job.id}">PDF Warranty Card</button>
+        <button class="btn" type="button" data-view-installation="${job.id}">${t("View Installation Job")}</button>
+        <button class="btn primary" type="button" data-print-installation="${job.id}">${t("Print Installation Sheet")}</button>
+        <button class="btn" type="button" data-whatsapp-installation="${job.id}">${t("WhatsApp Customer")}</button>
+        ${canScheduleInstallation() ? `<button class="btn" type="button" data-mark-installation-status="${job.id}" data-status="Scheduled">${t("Mark Scheduled")}</button><button class="btn" type="button" data-mark-installation-status="${job.id}" data-status="Installing">${t("Mark Installing")}</button>` : ""}
+        ${canCompleteInstallation() ? `<button class="btn" type="button" data-complete-installation="${job.id}">${t("Complete Installation")}</button><button class="btn" type="button" data-generate-warranty="${job.id}">${t("Generate Warranty Card")}</button>` : ""}
+        <button class="btn" type="button" data-print-warranty="${job.id}">${t("Print Warranty Card")}</button>
+        <button class="btn" type="button" data-print-warranty="${job.id}">${t("PDF Warranty Card")}</button>
       </div>
       ${activeCompletionJobId === job.id ? completionFormHtml(job) : ""}
     </article>
-  `).join("") : `<p class="muted-text">No installation jobs yet.</p>`;
+  `).join("") : `<p class="muted-text">${t("No installation jobs yet.")}</p>`;
   if (activeCompletionJobId) setupSignatureCanvas(activeCompletionJobId);
 }
 
@@ -525,11 +523,11 @@ function completionSummaryHtml(job) {
   if (!job.completionDate && !job.afterPhoto && !job.customerSignature) return "";
   return `
     <div class="completion-summary">
-      <strong>Completion Record</strong>
-      <span>Installer: ${job.installerName || "-"}</span>
-      <span>Completion: ${job.completionDate || "-"}</span>
-      <span>Collected: ${money(job.amountCollected || 0)} / ${money(job.balanceToCollect ?? job.balance ?? 0)}</span>
-      <span>Warranty: ${job.warrantyNo || "-"}</span>
+      <strong>${t("Completed / Serviced")}</strong>
+      <span>${t("Installer")}: ${job.installerName || "-"}</span>
+      <span>${t("Installation Date")}: ${job.completionDate || "-"}</span>
+      <span>${t("Amount collected")}: ${money(job.amountCollected || 0)} / ${money(job.balanceToCollect ?? job.balance ?? 0)}</span>
+      <span>${t("Warranty Card")}: ${job.warrantyNo || "-"}</span>
     </div>
   `;
 }
@@ -541,15 +539,15 @@ function completionFormHtml(job) {
     <section class="completion-panel" data-completion-panel="${job.id}">
       <div class="section-head">
         <div>
-          <h3>Complete Installation</h3>
+          <h3>${t("Complete Installation")}</h3>
           <p class="muted-text">Photo, checklist, collection and customer signature are required.</p>
         </div>
         <button class="btn" type="button" data-close-completion="${job.id}">Close</button>
       </div>
       <div class="form-grid">
-        <label>Installer Name<input data-completion-field="installerName" value="${job.installerName || ""}" placeholder="Installer name" /></label>
-        <label>Completion Date / Time<input type="datetime-local" data-completion-field="completionDate" value="${job.completionDate || currentDateTimeLocal()}" /></label>
-        <label class="wide">Installation Remark<textarea rows="2" data-completion-field="installationRemark" placeholder="Installation remark">${job.installationRemark || job.installerRemark || ""}</textarea></label>
+        <label>${t("Installer")}<input data-completion-field="installerName" value="${job.installerName || ""}" placeholder="Installer name" /></label>
+        <label>${t("Installation Date")} / Time<input type="datetime-local" data-completion-field="completionDate" value="${job.completionDate || currentDateTimeLocal()}" /></label>
+        <label class="wide">${t("Installer Remark")}<textarea rows="2" data-completion-field="installationRemark" placeholder="Installation remark">${job.installationRemark || job.installerRemark || ""}</textarea></label>
       </div>
 
       <div class="photo-grid">
@@ -568,9 +566,9 @@ function completionFormHtml(job) {
       </div>
 
       <div class="form-grid">
-        <label>Balance to collect<input inputmode="decimal" data-completion-field="balanceToCollect" value="${balance}" /></label>
-        <label>Amount collected<input inputmode="decimal" data-completion-field="amountCollected" value="${job.amountCollected || ""}" placeholder="0.00" /></label>
-        <label>Payment Method<select data-completion-field="paymentMethod">
+        <label>${t("Balance")}<input inputmode="decimal" data-completion-field="balanceToCollect" value="${balance}" /></label>
+        <label>${t("Amount collected")}<input inputmode="decimal" data-completion-field="amountCollected" value="${job.amountCollected || ""}" placeholder="0.00" /></label>
+        <label>${t("Payment Method")}<select data-completion-field="paymentMethod">
           ${["Cash", "Bank Transfer", "DuitNow", "TNG", "Other"].map((method) => `<option value="${method}" ${job.paymentMethod === method ? "selected" : ""}>${method}</option>`).join("")}
         </select></label>
         <label>Balance collected?<select data-completion-field="balanceCollected">
@@ -583,7 +581,7 @@ function completionFormHtml(job) {
       <div class="signature-box">
         <div class="section-head">
           <div>
-            <h3>Customer Signature</h3>
+            <h3>${t("Customer Signature")}</h3>
             <p class="muted-text">Customer signs here with finger or mouse.</p>
           </div>
           <button class="btn" type="button" data-clear-signature="${job.id}">Clear Signature</button>
@@ -593,7 +591,7 @@ function completionFormHtml(job) {
 
       <p class="muted-text" data-completion-error="${job.id}"></p>
       <div class="actions">
-        <button class="btn primary" type="button" data-save-completion="${job.id}">Save Completion</button>
+        <button class="btn primary" type="button" data-save-completion="${job.id}">${t("Save Completion")}</button>
       </div>
     </section>
   `;
@@ -612,7 +610,7 @@ function itemsSummary(items) {
   return `<div class="mini-table">${items.map((item) => `
     <div>
       <strong>${item.productName}</strong>
-      <span>${item.width || 0} x ${item.height || 0} | Qty ${item.quantity || 0} | ${item.color || "-"} | ${item.installType || "-"} | ${item.installationLocation || "-"} | ${item.openingDirection || "-"} | ${item.trackSize || "-"} | ${item.handleHeight || "-"} | ${item.handlePosition || "-"} | ${item.trackOpening || "-"} | ${item.meshMaterial || "-"} | Powdercoat: ${item.powdercoat ? `Yes ${money(powdercoatAmount(item))}` : "No"} | ${item.remark || "-"}</span>
+      <span>${item.width || 0} x ${item.height || 0} | ${t("Quantity")} ${item.quantity || 0} | ${t("Color")}: ${item.color || "-"} | ${t("Install Type / Inside Outside")}: ${item.installType || "-"} | ${t("Installation Location")}: ${item.installationLocation || "-"} | ${t("Opening Direction")}: ${item.openingDirection || "-"} | ${t("Track Size")}: ${item.trackSize || "-"} | ${t("Handle Height")}: ${item.handleHeight || "-"} | ${t("Handle Position")}: ${item.handlePosition || "-"} | ${t("Track / Opening")}: ${item.trackOpening || "-"} | ${t("Mesh / Material")}: ${item.meshMaterial || "-"} | ${t("Powdercoat / Powercoat")}: ${item.powdercoat ? `Yes ${money(powdercoatAmount(item))}` : "No"} | ${item.remark || "-"}</span>
     </div>
   `).join("")}</div>`;
 }
@@ -637,6 +635,7 @@ function handleOrderClick(event) {
 }
 
 function handleOrderChange(event) {
+  if (!canEditOrder()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
   const id = event.target.dataset.orderId;
   const field = event.target.dataset.orderField;
   if (!id || !field) return;
@@ -721,7 +720,7 @@ function updateOrderStatus(orderId) {
 
 function deleteOrderFlow(orderId) {
   if (orderActionRunning) return showWorkflowMessage("Another order action is running. Please wait.", "warning");
-  if (state.role !== "Admin") return showWorkflowMessage("Only Admin can delete orders.", "error");
+  if (!canDeleteOrders()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
   const order = findOrder(orderId);
   if (!order) return showWorkflowMessage("Order not found.", "error");
   const confirmed = window.confirm("Are you sure you want to delete this order? This will also affect related production and installation jobs.");
@@ -786,6 +785,7 @@ function permanentDeleteOrder(orderId) {
 }
 
 function sendOrderToProduction(orderId) {
+  if (!canSendOrder()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
   const order = findOrder(orderId);
   if (!order) return showWorkflowMessage("Order not found.", "error");
   const existing = state.productionJobs.find((job) => job.orderId === order.id);
@@ -811,6 +811,7 @@ function sendOrderToProduction(orderId) {
 }
 
 function sendOrderToInstaller(orderId) {
+  if (!canSendOrder()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
   const order = findOrder(orderId);
   if (!order) return showWorkflowMessage("Order not found.", "error");
   const existing = state.installationJobs.find((job) => job.orderId === order.id);
@@ -855,6 +856,7 @@ function handleProductionClick(event) {
 }
 
 function handleProductionChange(event) {
+  if (!canEditProduction()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
   const id = event.target.dataset.productionId;
   const field = event.target.dataset.productionField;
   if (!id || !field) return;
@@ -868,6 +870,7 @@ function handleProductionChange(event) {
 }
 
 function markProductionStatus(jobId, status) {
+  if (!canEditProduction()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
   const job = state.productionJobs.find((row) => row.id === jobId);
   if (!job || !status) return;
   job.status = status;
@@ -910,12 +913,14 @@ function handleInstallationChange(event) {
   const photoJobId = event.target.dataset.installationPhotoId;
   const photoField = event.target.dataset.photoField;
   if (photoJobId && photoField) {
+    if (!canCompleteInstallation()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
     handlePhotoUpload(photoJobId, photoField, event.target.files?.[0]);
     return;
   }
   const id = event.target.dataset.installationId;
   const field = event.target.dataset.installationField;
   if (!id || !field) return;
+  if (!canScheduleInstallation()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
   if (field === "status") {
     markInstallationStatus(id, event.target.value);
     return;
@@ -925,6 +930,7 @@ function handleInstallationChange(event) {
 }
 
 function markInstallationStatus(jobId, status) {
+  if (!canScheduleInstallation()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
   const job = state.installationJobs.find((row) => row.id === jobId);
   if (!job || !status) return;
   if (status === "Completed" && job.completionStatus !== "Completed") {
@@ -962,6 +968,7 @@ function findOrder(orderId) {
 }
 
 function openCompletionForm(jobId) {
+  if (!canCompleteInstallation()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
   activeCompletionJobId = jobId;
   renderInstallationJobs();
 }
@@ -980,12 +987,14 @@ async function handlePhotoUpload(jobId, field, file) {
     job.updatedAt = new Date().toISOString();
     persistInstallationJobs();
     renderInstallationJobs();
+    if (job[field].length > 850000) showWorkflowMessage("Photo compressed, but still large. Cloud sync may take longer on mobile.", "warning");
   } catch (error) {
     showWorkflowMessage(error.message || "Photo upload failed.", "error");
   }
 }
 
 function saveInstallationCompletion(jobId) {
+  if (!canCompleteInstallation()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
   const job = state.installationJobs.find((row) => row.id === jobId);
   if (!job) return;
   const panel = document.querySelector(`[data-completion-panel="${jobId}"]`);
@@ -1120,6 +1129,7 @@ function signatureDataUrl(jobId) {
 }
 
 function generateWarrantyCard(jobId) {
+  if (!canCompleteInstallation() && !isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
   const job = state.installationJobs.find((row) => row.id === jobId);
   if (!job) return showWorkflowMessage("Installation job not found.", "error");
   if (!["Completed", "Pending Collection"].includes(job.status)) {
@@ -1163,13 +1173,13 @@ function printWarrantyCard(jobId) {
     card = state.warrantyCards.find((row) => row.installationJobNo === job.installationNumber);
   }
   if (!card) return;
-  openPrint("Warranty Card", card.warrantyNo, `
+  openPrint(t("Warranty Card"), card.warrantyNo, `
     <div class="print-box"><strong>${card.customer.name || "-"}</strong><br>${card.customer.phone || "-"}<br>${card.customer.address || "-"}</div>
-    <p><strong>Order:</strong> ${card.orderNo}</p>
-    <p><strong>Installation Job:</strong> ${card.installationJobNo}</p>
+    <p><strong>${t("Order")}:</strong> ${card.orderNo}</p>
+    <p><strong>${t("Installation Jobs")}:</strong> ${card.installationJobNo}</p>
     <p><strong>Start Date:</strong> ${card.startDate}</p>
-    <p><strong>Warranty Period:</strong> ${card.warrantyPeriod}</p>
-    <table><thead><tr><th>Product</th><th>Warranty</th></tr></thead><tbody>
+    <p><strong>${t("Warranty Card")}:</strong> ${card.warrantyPeriod}</p>
+    <table><thead><tr><th>${t("Product")}</th><th>${t("Warranty Card")}</th></tr></thead><tbody>
       ${card.products.map((product) => `<tr><td>${product.productName}</td><td>${product.warrantyPeriod}</td></tr>`).join("")}
     </tbody></table>
     <div class="terms">
@@ -1213,14 +1223,14 @@ function imageFileToDataUrl(file) {
       const image = new Image();
       image.onerror = () => reject(new Error("Unable to load image file."));
       image.onload = () => {
-        const maxSize = 1200;
+        const maxSize = 900;
         const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
         const canvas = document.createElement("canvas");
         canvas.width = Math.max(1, Math.round(image.width * scale));
         canvas.height = Math.max(1, Math.round(image.height * scale));
         const context = canvas.getContext("2d");
         context.drawImage(image, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL("image/jpeg", 0.78));
+        resolve(canvas.toDataURL("image/jpeg", 0.68));
       };
       image.src = reader.result;
     };
@@ -1231,26 +1241,26 @@ function imageFileToDataUrl(file) {
 function printOrder(id) {
   const order = state.orders.find((row) => row.id === id);
   if (!order) return;
-  openPrint("Order", order.orderNumber, `
+  openPrint(t("Order"), order.orderNumber, `
     ${customerBlock(order.customer)}
-    <p><strong>Quote:</strong> ${order.quoteNumber}</p>
-    <p><strong>Status:</strong> ${order.status}</p>
-    <p><strong>Installation Date:</strong> ${order.installationDate || "-"}</p>
+    <p><strong>${t("Quote")}:</strong> ${order.quoteNumber}</p>
+    <p><strong>${t("Status")}:</strong> ${statusLabel(order.status)}</p>
+    <p><strong>${t("Installation Date")}:</strong> ${order.installationDate || "-"}</p>
     ${printItemsTable(order.items, true)}
     ${totalsBlock(order)}
-    <p><strong>Remark:</strong> ${order.remark || "-"}</p>
+    <p><strong>${t("Remark")}:</strong> ${order.remark || "-"}</p>
   `);
 }
 
 function printProduction(id) {
   const job = state.productionJobs.find((row) => row.id === id);
   if (!job) return;
-  openPrint("Production Job Sheet", job.productionNumber, `
-    <p><strong>Order:</strong> ${job.orderNumber}</p>
-    <p><strong>Customer:</strong> ${job.customerName || "-"}</p>
-    <p><strong>Status:</strong> ${job.status}</p>
+  openPrint(t("Print Production Sheet"), job.productionNumber, `
+    <p><strong>${t("Order")}:</strong> ${job.orderNumber}</p>
+    <p><strong>${t("Customer Name")}:</strong> ${job.customerName || "-"}</p>
+    <p><strong>${t("Status")}:</strong> ${statusLabel(job.status)}</p>
     ${printItemsTable(job.items, false)}
-    <p><strong>Production Remark:</strong> ${job.remark || "-"}</p>
+    <p><strong>${t("Production Remark")}:</strong> ${job.remark || "-"}</p>
     <div class="print-sign"><span>Prepared by</span><span>Checked by</span></div>
   `);
 }
@@ -1258,14 +1268,14 @@ function printProduction(id) {
 function printInstallation(id) {
   const job = state.installationJobs.find((row) => row.id === id);
   if (!job) return;
-  openPrint("Installation Job Sheet", job.installationNumber, `
+  openPrint(t("Print Installation Sheet"), job.installationNumber, `
     ${customerBlock(job.customer)}
-    <p><strong>Order:</strong> ${job.orderNumber}</p>
-    <p><strong>Installation Date:</strong> ${job.installationDate || "-"}</p>
-    <p><strong>Status:</strong> ${job.status}</p>
-    <p><strong>Balance to Collect:</strong> ${money(job.balance)}</p>
+    <p><strong>${t("Order")}:</strong> ${job.orderNumber}</p>
+    <p><strong>${t("Installation Date")}:</strong> ${job.installationDate || "-"}</p>
+    <p><strong>${t("Status")}:</strong> ${statusLabel(job.status)}</p>
+    <p><strong>${t("Balance")}:</strong> ${money(job.balance)}</p>
     ${printItemsTable(job.items, false)}
-    <p><strong>Installer Remark:</strong> ${job.installerRemark || "-"}</p>
+    <p><strong>${t("Installer Remark")}:</strong> ${job.installerRemark || "-"}</p>
     ${installationCompletionPrintHtml(job)}
   `);
 }
@@ -1274,22 +1284,22 @@ function installationCompletionPrintHtml(job) {
   const checklist = job.checklist || {};
   return `
     <div class="print-box">
-      <h3>Installation Completion</h3>
-      <p><strong>Installer:</strong> ${job.installerName || "-"}</p>
-      <p><strong>Completion Date:</strong> ${job.completionDate || "-"}</p>
-      <p><strong>Installation Remark:</strong> ${job.installationRemark || "-"}</p>
-      <p><strong>Amount Collected:</strong> ${money(job.amountCollected || 0)}</p>
-      <p><strong>Payment Method:</strong> ${job.paymentMethod || "-"}</p>
+      <h3>${t("Complete Installation")}</h3>
+      <p><strong>${t("Installer")}:</strong> ${job.installerName || "-"}</p>
+      <p><strong>${t("Installation Date")}:</strong> ${job.completionDate || "-"}</p>
+      <p><strong>${t("Installer Remark")}:</strong> ${job.installationRemark || "-"}</p>
+      <p><strong>${t("Amount collected")}:</strong> ${money(job.amountCollected || 0)}</p>
+      <p><strong>${t("Payment Method")}:</strong> ${job.paymentMethod || "-"}</p>
       <p><strong>Payment Reference:</strong> ${job.paymentReference || "-"}</p>
     </div>
     <table><thead><tr><th>Checklist</th><th>Status</th></tr></thead><tbody>
-      ${checklistLabels.map((label) => `<tr><td>${label}</td><td>${checklist[label] ? "Done" : "Pending"}</td></tr>`).join("")}
+      ${checklistLabels.map((label) => `<tr><td>${t(label)}</td><td>${checklist[label] ? "Done" : "Pending"}</td></tr>`).join("")}
     </tbody></table>
     <div class="print-photo-grid">
-      ${printImageBox("Before photo", job.beforePhoto)}
-      ${printImageBox("After photo", job.afterPhoto)}
-      ${printImageBox("Problem / defect photo", job.defectPhoto)}
-      ${printImageBox("Customer signature", job.customerSignature)}
+      ${printImageBox(t("Before installation photo"), job.beforePhoto)}
+      ${printImageBox(t("After installation photo"), job.afterPhoto)}
+      ${printImageBox(t("Problem / defect photo"), job.defectPhoto)}
+      ${printImageBox(t("Customer Signature"), job.customerSignature)}
     </div>
   `;
 }
@@ -1303,18 +1313,18 @@ function customerBlock(customer) {
 }
 
 function printItemsTable(items, showPrice) {
-  return `<table><thead><tr><th>Product</th><th>Location</th><th>Size</th><th>Qty</th><th>Color</th><th>Install Type</th><th>Opening</th><th>Track Size</th><th>Handle Height</th><th>Handle Position</th><th>Track / Opening</th><th>Mesh / Material</th><th>Powdercoat</th><th>Remark</th>${showPrice ? "<th>Unit</th><th>Amount</th>" : ""}</tr></thead><tbody>
+  return `<table><thead><tr><th>${t("Product")}</th><th>${t("Installation Location")}</th><th>Size</th><th>${t("Quantity")}</th><th>${t("Color")}</th><th>${t("Install Type / Inside Outside")}</th><th>${t("Opening Direction")}</th><th>${t("Track Size")}</th><th>${t("Handle Height")}</th><th>${t("Handle Position")}</th><th>${t("Track / Opening")}</th><th>${t("Mesh / Material")}</th><th>${t("Powdercoat / Powercoat")}</th><th>${t("Remark")}</th>${showPrice ? `<th>${t("Unit Price")}</th><th>${t("Total")}</th>` : ""}</tr></thead><tbody>
     ${items.map((item) => `<tr><td>${item.productName}</td><td>${item.installationLocation || "-"}</td><td>${item.width || 0} x ${item.height || 0}</td><td>${item.quantity || 0}</td><td>${item.color || "-"}</td><td>${item.installType || "-"}</td><td>${item.openingDirection || "-"}</td><td>${item.trackSize || "-"}</td><td>${item.handleHeight || "-"}</td><td>${item.handlePosition || "-"}</td><td>${item.trackOpening || "-"}</td><td>${item.meshMaterial || "-"}</td><td>${item.powdercoat ? `Yes ${money(powdercoatAmount(item))}` : "No"}</td><td>${item.remark || "-"}</td>${showPrice ? `<td>${money(item.unitPrice)}</td><td>${money(lineTotal(item))}</td>` : ""}</tr>`).join("")}
   </tbody></table>`;
 }
 
 function totalsBlock(order) {
   return `<div class="print-totals">
-    <div><span>Subtotal</span><strong>${money(order.subtotal)}</strong></div>
-    <div><span>Discount</span><strong>${money(order.discount)}</strong></div>
-    <div><span>Total</span><strong>${money(order.total)}</strong></div>
-    <div><span>Deposit</span><strong>${money(order.deposit)}</strong></div>
-    <div><span>Balance</span><strong>${money(order.balance)}</strong></div>
+    <div><span>${t("Subtotal")}</span><strong>${money(order.subtotal)}</strong></div>
+    <div><span>${t("Discount")}</span><strong>${money(order.discount)}</strong></div>
+    <div><span>${t("Total")}</span><strong>${money(order.total)}</strong></div>
+    <div><span>${t("Deposit")}</span><strong>${money(order.deposit)}</strong></div>
+    <div><span>${t("Balance")}</span><strong>${money(order.balance)}</strong></div>
   </div>`;
 }
 
