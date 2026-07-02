@@ -197,7 +197,7 @@ export function makeQuote() {
       remark: ""
     },
     appointmentDate: today(),
-    status: "Draft",
+    status: "quoted",
     remark: "",
     items: [],
     discount: 0,
