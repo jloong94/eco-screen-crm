@@ -38,7 +38,7 @@ const orderStatuses = [
   "Serviced",
   "Cancelled"
 ];
-const productionStatuses = ["Pending", "In Production", "Completed", "Cancelled"];
+const productionStatuses = ["Not Sent", "Pending Production", "In Production", "Completed", "Cancelled"];
 const installationStatuses = ["Pending", "Scheduled", "Installing", "Installed", "Pending Collection", "Completed", "Cancelled"];
 const checklistLabels = [
   "Product installed correctly",
@@ -160,6 +160,7 @@ export function createOrderFromQuote(quote) {
     deposit: Number(quote.deposit || 0),
     balance: totals.balance,
     status: "Confirmed",
+    sentToProduction: false,
     installationDate: quote.appointmentDate || "",
     remark: quote.remark || "",
     createdAt: new Date().toISOString(),
@@ -176,7 +177,7 @@ export function createProductionJobFromOrder(order) {
     customerName: order.customer.name,
     items: order.items.map((item) => itemWithCalculatedTotals(item)),
     installationDate: order.installationDate || "",
-    status: "Pending",
+    status: order.sentToProduction ? "Pending Production" : "Not Sent",
     remark: "",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
@@ -450,11 +451,12 @@ function getOrderProgressCategory(order) {
   const productionJob = getOrderProductionJob(order);
   const installationJob = getOrderInstallationJob(order);
   const balance = getOrderBalance(order);
+  const sentToProduction = order.sentToProduction === true || ["Sent to Production", "In Production", "Production Completed"].includes(order.status);
   if (order.isArchived || order.status === "Cancelled") return "archived";
   if ((installationJob?.status === "Completed" || ["Completed", "Serviced"].includes(order.status)) && balance <= 0) return "completed";
   if ((installationJob?.status === "Completed" || ["Pending Collection", "Serviced"].includes(order.status)) && balance > 0) return "pending-collection";
   if (productionJob?.status === "Completed" && installationJob?.status !== "Completed") return "waiting-installation";
-  if (["Sent to Production", "In Production"].includes(order.status) || ["Pending", "In Production"].includes(productionJob?.status)) return "in-production";
+  if (sentToProduction && (["Sent to Production", "In Production"].includes(order.status) || ["Pending", "Pending Production", "In Production"].includes(productionJob?.status))) return "in-production";
   return "new";
 }
 
@@ -820,12 +822,14 @@ function sendOrderToProduction(orderId) {
   const order = findOrder(orderId);
   if (!order) return showWorkflowMessage("Order not found.", "error");
   const existing = state.productionJobs.find((job) => job.orderId === order.id);
-  const wasAlreadySent = ["Sent to Production", "Production Completed"].includes(order.status);
+  const wasAlreadySent = order.sentToProduction === true || ["Sent to Production", "Production Completed"].includes(order.status);
   order.status = "Sent to Production";
+  order.sentToProduction = true;
   order.updatedAt = new Date().toISOString();
 
   if (existing) {
     existing.installationDate = order.installationDate || existing.installationDate || "";
+    if (!["In Production", "Completed", "Cancelled"].includes(existing.status)) existing.status = "Pending Production";
     existing.updatedAt = new Date().toISOString();
     persistOrders();
     persistProductionJobs();
@@ -834,7 +838,7 @@ function sendOrderToProduction(orderId) {
     return;
   }
 
-  state.productionJobs = [createProductionJobFromOrder(order), ...state.productionJobs];
+  state.productionJobs = [{ ...createProductionJobFromOrder(order), status: "Pending Production" }, ...state.productionJobs];
   persistOrders();
   persistProductionJobs();
   renderWorkflowModules();
@@ -909,6 +913,7 @@ function markProductionStatus(jobId, status) {
   const order = findOrder(job.orderId);
   if (order) {
     order.status = status === "Completed" ? "Production Completed" : "Sent to Production";
+    order.sentToProduction = true;
     order.updatedAt = new Date().toISOString();
   }
   persistProductionJobs();
