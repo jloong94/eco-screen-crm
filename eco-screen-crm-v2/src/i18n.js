@@ -234,13 +234,29 @@ export function statusLabel(value) {
       quoted: "Quoted",
       follow_up: "Follow Up",
       won: "Won",
-      lost: "Lost"
+      lost: "Lost",
+      not_produced: "Not Produced",
+      in_production: "In Production",
+      completed: "Completed",
+      not_scheduled: "Not Scheduled",
+      scheduled: "Scheduled",
+      installed: "Installed",
+      pending_collection: "Pending Collection",
+      touch_up: "Touch Up"
     },
     zh: {
       quoted: "报价",
       follow_up: "Follow Up",
       won: "成交",
-      lost: "不成交"
+      lost: "不成交",
+      not_produced: "未生产",
+      in_production: "生产中",
+      completed: "已完成",
+      not_scheduled: "未安排",
+      scheduled: "已安排",
+      installed: "已安装",
+      pending_collection: "等待收款",
+      touch_up: "手尾"
     }
   };
   return labels[state.language === "zh" ? "zh" : "en"][normalized] || t(value || "-");
@@ -257,10 +273,32 @@ export function normalizeStatus(value) {
     Converted: "won",
     Lost: "lost",
     Cancelled: "lost",
+    "Not Sent": "not_produced",
+    Pending: "not_produced",
+    "Pending Production": "not_produced",
+    "Not Produced": "not_produced",
+    "In Production": "in_production",
+    "Production Completed": "completed",
+    Completed: "completed",
+    "Not Scheduled": "not_scheduled",
+    Scheduled: "scheduled",
+    Installing: "scheduled",
+    Installed: "installed",
+    "Installation Completed": "installed",
+    "Pending Collection": "pending_collection",
+    "Touch Up": "touch_up",
     quoted: "quoted",
     follow_up: "follow_up",
     won: "won",
-    lost: "lost"
+    lost: "lost",
+    not_produced: "not_produced",
+    in_production: "in_production",
+    completed: "completed",
+    not_scheduled: "not_scheduled",
+    scheduled: "scheduled",
+    installed: "installed",
+    pending_collection: "pending_collection",
+    touch_up: "touch_up"
   };
   return map[value] || value || "quoted";
 }

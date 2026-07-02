@@ -27,6 +27,7 @@ import {
 
 const orderStatuses = [
   "Confirmed",
+  "Touch Up",
   "Sent to Production",
   "Production Completed",
   "Sent to Installer",
@@ -38,8 +39,8 @@ const orderStatuses = [
   "Serviced",
   "Cancelled"
 ];
-const productionStatuses = ["Not Sent", "Pending Production", "In Production", "Completed", "Cancelled"];
-const installationStatuses = ["Pending", "Scheduled", "Installing", "Installed", "Pending Collection", "Completed", "Cancelled"];
+const productionStatuses = ["not_produced", "in_production", "completed"];
+const installationStatuses = ["not_scheduled", "scheduled", "installed", "pending_collection", "touch_up"];
 const checklistLabels = [
   "Product installed correctly",
   "Door/window tested",
@@ -60,6 +61,7 @@ const orderFilters = [
   { id: "in-production", label: "In Production" },
   { id: "waiting-installation", label: "Waiting Installation" },
   { id: "pending-collection", label: "Pending Collection" },
+  { id: "touch-up", label: "Touch Up" },
   { id: "completed", label: "Completed / Serviced" },
   { id: "archived", label: "Cancelled / Archived" },
   { id: "today-installation", label: "Today Installation" },
@@ -74,6 +76,7 @@ const progressCategories = [
   { id: "waiting-installation", title: "Production Done / Waiting Installation", shortTitle: "Waiting Installation" },
   { id: "pending-collection", title: "Installed / Pending Collection", shortTitle: "Pending Collection" },
   { id: "completed", title: "Completed / Serviced", shortTitle: "Completed / Serviced" },
+  { id: "touch-up", title: "Touch Up", shortTitle: "Touch Up" },
   { id: "archived", title: "Cancelled / Archived", shortTitle: "Cancelled / Archived" }
 ];
 
@@ -84,6 +87,10 @@ let orderSearch = {
   customerName: "",
   phone: "",
   filter: "active",
+  status: "",
+  installationDate: "",
+  sort: "updated",
+  page: 1,
   highlightId: ""
 };
 
@@ -161,6 +168,8 @@ export function createOrderFromQuote(quote) {
     balance: totals.balance,
     status: "Confirmed",
     sentToProduction: false,
+    productionStatus: "not_produced",
+    installationStatus: "not_scheduled",
     installationDate: quote.appointmentDate || "",
     remark: quote.remark || "",
     createdAt: new Date().toISOString(),
@@ -177,7 +186,7 @@ export function createProductionJobFromOrder(order) {
     customerName: order.customer.name,
     items: order.items.map((item) => itemWithCalculatedTotals(item)),
     installationDate: order.installationDate || "",
-    status: order.sentToProduction ? "Pending Production" : "Not Sent",
+    status: order.sentToProduction ? "in_production" : "not_produced",
     remark: "",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
@@ -202,6 +211,15 @@ export function createInstallationJobFromOrder(order) {
     beforePhoto: "",
     afterPhoto: "",
     defectPhoto: "",
+    beforePhotos: [],
+    afterPhotos: [],
+    defectPhotos: [],
+    touchUpPhotos: [],
+    installationVideos: [],
+    mediaRemarks: "",
+    touchUpRequired: false,
+    touchUpRemark: "",
+    touchUpStatus: "Pending",
     installerName: "",
     completionDate: "",
     installationRemark: "",
@@ -210,7 +228,7 @@ export function createInstallationJobFromOrder(order) {
     completionStatus: "Open",
     warrantyNo: "",
     installerRemark: "",
-    status: "Pending",
+    status: order.installationDate ? "scheduled" : "not_scheduled",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
@@ -262,6 +280,7 @@ export function renderWorkflowModules() {
 export function attachWorkflowEvents() {
   document.querySelector("#orderTools")?.addEventListener("input", handleOrderSearchInput);
   document.querySelector("#orderTools")?.addEventListener("click", handleOrderToolsClick);
+  document.querySelector("#orderProgressBoard")?.addEventListener("click", handleOrderToolsClick);
   document.querySelector("#orderList")?.addEventListener("click", handleOrderClick);
   document.querySelector("#orderList")?.addEventListener("change", handleOrderChange);
   document.querySelector("#productionList")?.addEventListener("click", handleProductionClick);
@@ -279,29 +298,20 @@ export function renderOrders() {
 function renderOrderList() {
   const list = document.querySelector("#orderList");
   if (!list) return;
-  const orders = filteredOrders();
-  list.innerHTML = orders.length ? orders.map((order) => `
-    <article class="card ${orderSearch.highlightId === order.id ? "highlight-card" : ""}" data-order-card="${order.id}">
-      <div class="card-head">
-        <div>
-          <strong>${order.orderNumber}</strong>
-          <p class="muted-text">${t("Quote")}: ${order.quoteNumber} | ${order.customer.name || "-"} | ${order.customer.phone || "-"}</p>
-        </div>
-        <span class="pill">${statusLabel(order.status)}${order.isArchived ? " / Archived" : ""}</span>
-      </div>
-      <div class="order-facts">
-        ${canViewPrice() ? `<span>${t("Total")}: <strong>${money(order.total || 0)}</strong></span><span>${t("Deposit")}: <strong>${money(order.deposit || 0)}</strong></span>` : ""}
-        <span>${t("Balance")}: <strong>${money(order.balance || 0)}</strong></span>
-      </div>
-      <div class="form-grid compact">
-        <label>${t("Status")}<select data-order-id="${order.id}" data-order-field="status" ${canEditOrder() ? "" : "disabled"}>${orderStatuses.map((status) => `<option value="${status}" ${order.status === status ? "selected" : ""}>${statusLabel(status)}</option>`).join("")}</select></label>
-        <label>${t("Installation Date")}<input type="date" data-order-id="${order.id}" data-order-field="installationDate" value="${order.installationDate || ""}" ${canEditOrder() ? "" : "readonly"} /></label>
-        <label class="wide">${t("Remark")}<textarea rows="2" data-order-id="${order.id}" data-order-field="remark" ${canEditOrder() ? "" : "readonly"}>${order.remark || ""}</textarea></label>
-      </div>
-      ${itemsSummary(order.items)}
-      ${orderActionsHtml(order)}
-    </article>
-  `).join("") : `<p class="muted-text">${state.orders.length ? t("No order found") : t("No orders yet. Convert a saved quote to create an order.")}</p>`;
+  const orders = sortedOrders(filteredOrders());
+  const totalPages = Math.max(1, Math.ceil(orders.length / 20));
+  orderSearch.page = Math.min(Math.max(1, Number(orderSearch.page || 1)), totalPages);
+  const pageRows = orders.slice((orderSearch.page - 1) * 20, orderSearch.page * 20);
+  list.innerHTML = `
+    <div class="compact-order-list">
+      ${pageRows.length ? pageRows.map((order) => renderCompactOrderRow(order)).join("") : `<p class="muted-text">${state.orders.length ? t("No order found") : t("No orders yet. Convert a saved quote to create an order.")}</p>`}
+    </div>
+    <div class="pagination-row">
+      <button class="btn" type="button" data-order-page="${orderSearch.page - 1}" ${orderSearch.page <= 1 ? "disabled" : ""}>Previous</button>
+      <span>${orders.length} orders | Page ${orderSearch.page} / ${totalPages}</span>
+      <button class="btn" type="button" data-order-page="${orderSearch.page + 1}" ${orderSearch.page >= totalPages ? "disabled" : ""}>Next</button>
+    </div>
+  `;
 }
 
 function renderOrderProgressBoard() {
@@ -311,10 +321,6 @@ function renderOrderProgressBoard() {
     board.innerHTML = "";
     return;
   }
-  const activeCategories = progressCategories.filter((category) => {
-    if (orderSearch.filter === "all") return true;
-    return orderSearch.filter === "archived" ? category.id === "archived" : category.id !== "archived";
-  });
   const filtered = state.orders.filter((order) => matchesOrderSearch(order) && matchesBoardDateFilter(order));
   board.innerHTML = `
     <section class="progress-board">
@@ -324,17 +330,10 @@ function renderOrderProgressBoard() {
           <p class="muted-text">${t("Production and installation progress for every order.")}</p>
         </div>
       </div>
-      <div class="progress-columns">
-        ${activeCategories.map((category) => {
-          const rows = filtered.filter((order) => getOrderProgressCategory(order) === category.id && matchesProgressFilter(category.id, order));
-          return `
-            <section class="progress-column">
-              <h3>${category.shortTitle} <span>${rows.length}</span></h3>
-              <div class="progress-card-list">
-                ${rows.length ? rows.map((order) => renderOrderProgressCard(order)).join("") : `<p class="muted-text">${t("No orders.")}</p>`}
-              </div>
-            </section>
-          `;
+      <div class="progress-summary-grid">
+        ${progressCategories.map((category) => {
+          const rows = filtered.filter((order) => getOrderProgressCategory(order) === category.id);
+          return `<button class="metric-card progress-summary-card ${orderSearch.filter === category.id ? "active" : ""}" type="button" data-order-filter="${category.id}"><span>${t(category.shortTitle)}</span><strong>${rows.length}</strong></button>`;
         }).join("")}
       </div>
     </section>
@@ -350,6 +349,11 @@ function renderOrderTools() {
         <label>${t("Search Order Number")}<input data-order-search="orderNumber" value="${orderSearch.orderNumber}" placeholder="ESO-2026-0001 or 0001" /></label>
         <label>${t("Search Customer Name")}<input data-order-search="customerName" value="${orderSearch.customerName}" placeholder="Customer name" /></label>
         <label>${t("Search Phone Number")}<input data-order-search="phone" value="${orderSearch.phone}" placeholder="0123456789" /></label>
+        <label>${t("Status")}<select data-order-search="status"><option value="">All status</option>${orderFilters.map((filter) => `<option value="${filter.id}" ${orderSearch.status === filter.id ? "selected" : ""}>${t(filter.label)}</option>`).join("")}</select></label>
+        <label>${t("Installation Date")}<input type="date" data-order-search="installationDate" value="${orderSearch.installationDate}" /></label>
+        <label>Sort by<select data-order-search="sort">
+          ${[["updated", "Latest Updated"], ["installationDate", "Installation Date"], ["orderNumber", "Order Number"]].map(([value, label]) => `<option value="${value}" ${orderSearch.sort === value ? "selected" : ""}>${label}</option>`).join("")}
+        </select></label>
       </div>
       <div class="actions">
         <button class="btn primary" type="button" data-order-tool="search">${t("Search")}</button>
@@ -360,6 +364,20 @@ function renderOrderTools() {
         ${orderFilters.map((filter) => `<button class="filter-tab ${orderSearch.filter === filter.id ? "active" : ""}" type="button" data-order-filter="${filter.id}">${t(filter.label)}</button>`).join("")}
       </div>
     </section>
+  `;
+}
+
+function renderCompactOrderRow(order) {
+  const productionJob = getOrderProductionJob(order);
+  const installationJob = getOrderInstallationJob(order);
+  return `
+    <article class="compact-order-row ${orderSearch.highlightId === order.id ? "highlight-card" : ""}" data-order-card="${order.id}">
+      <div><strong>${order.orderNumber}</strong><span>${order.customer?.name || "-"} | ${order.customer?.phone || "-"}</span></div>
+      <div><span>${order.customer?.area || "-"}</span><span>${order.installationDate || installationJob?.installationDate || "-"}</span></div>
+      <div><span>${t("Production")}: ${statusLabel(getOrderProductionStatus(order, productionJob))}</span><span>${t("Installation")}: ${statusLabel(getOrderInstallationStatus(order, installationJob))}</span></div>
+      <div><span>${t("Remaining Balance")}: ${money(getRemainingBalance(order, installationJob))}</span><span>Updated: ${formatShortDate(order.updatedAt || order.createdAt)}</span></div>
+      ${orderActionsHtml(order)}
+    </article>
   `;
 }
 
@@ -411,9 +429,13 @@ function matchesOrderSearch(order) {
   const orderNumber = normalizeText(order.orderNumber);
   const customerName = normalizeText(order.customer?.name);
   const phone = normalizeText(order.customer?.phone);
+  const installationJob = getOrderInstallationJob(order);
+  const installDate = installationJob?.installationDate || order.installationDate || "";
   return (!orderSearch.orderNumber || orderNumber.includes(normalizeText(orderSearch.orderNumber)))
     && (!orderSearch.customerName || customerName.includes(normalizeText(orderSearch.customerName)))
-    && (!orderSearch.phone || phone.includes(normalizeText(orderSearch.phone)));
+    && (!orderSearch.phone || phone.includes(normalizeText(orderSearch.phone)))
+    && (!orderSearch.status || getOrderProgressCategory(order) === orderSearch.status)
+    && (!orderSearch.installationDate || installDate === orderSearch.installationDate);
 }
 
 function matchesOrderFilter(order) {
@@ -430,6 +452,14 @@ function matchesProgressFilter(categoryId, order) {
   return categoryId === orderSearch.filter;
 }
 
+function sortedOrders(rows) {
+  return [...rows].sort((a, b) => {
+    if (orderSearch.sort === "installationDate") return String(a.installationDate || "").localeCompare(String(b.installationDate || ""));
+    if (orderSearch.sort === "orderNumber") return String(a.orderNumber || "").localeCompare(String(b.orderNumber || ""));
+    return Date.parse(b.updatedAt || b.createdAt || 0) - Date.parse(a.updatedAt || a.createdAt || 0);
+  });
+}
+
 function normalizeText(value) {
   return String(value || "").toLowerCase().trim();
 }
@@ -444,25 +474,81 @@ function getOrderInstallationJob(order) {
 
 function getOrderBalance(order) {
   const installationJob = getOrderInstallationJob(order);
-  return Number(installationJob?.balance ?? order.balance ?? 0);
+  return getRemainingBalance(order, installationJob);
+}
+
+function normalizeProductionStatus(value, sentToProduction = false) {
+  const map = {
+    "Not Sent": "not_produced",
+    "Pending": sentToProduction ? "in_production" : "not_produced",
+    "Pending Production": sentToProduction ? "in_production" : "not_produced",
+    "In Production": "in_production",
+    "Production Completed": "completed",
+    Completed: "completed",
+    not_produced: "not_produced",
+    in_production: "in_production",
+    completed: "completed"
+  };
+  return map[value] || "not_produced";
+}
+
+function normalizeInstallationStatus(value) {
+  const map = {
+    Pending: "not_scheduled",
+    "Not Scheduled": "not_scheduled",
+    Scheduled: "scheduled",
+    Installing: "scheduled",
+    Installed: "installed",
+    Completed: "installed",
+    "Installation Completed": "installed",
+    "Pending Collection": "pending_collection",
+    "Touch Up": "touch_up",
+    not_scheduled: "not_scheduled",
+    scheduled: "scheduled",
+    installed: "installed",
+    pending_collection: "pending_collection",
+    touch_up: "touch_up"
+  };
+  return map[value] || "not_scheduled";
+}
+
+function getOrderProductionStatus(order, productionJob = getOrderProductionJob(order)) {
+  return normalizeProductionStatus(order.productionStatus || productionJob?.status, order.sentToProduction === true);
+}
+
+function getOrderInstallationStatus(order, installationJob = getOrderInstallationJob(order)) {
+  return normalizeInstallationStatus(order.installationStatus || installationJob?.status);
+}
+
+function getRemainingBalance(order, installationJob = getOrderInstallationJob(order)) {
+  const baseBalance = Number(installationJob?.balanceToCollect ?? order.balance ?? 0);
+  const collected = Number(installationJob?.amountCollected || 0);
+  if (installationJob?.balanceCollected && collected >= baseBalance) return 0;
+  const explicitBalance = Number(installationJob?.balance ?? Number.NaN);
+  if (Number.isFinite(explicitBalance) && installationJob?.completionStatus === "Completed") return Math.max(0, explicitBalance);
+  return Math.max(0, baseBalance - collected);
 }
 
 function getOrderProgressCategory(order) {
   const productionJob = getOrderProductionJob(order);
   const installationJob = getOrderInstallationJob(order);
-  const balance = getOrderBalance(order);
+  const productionStatus = getOrderProductionStatus(order, productionJob);
+  const installationStatus = getOrderInstallationStatus(order, installationJob);
+  const balance = getRemainingBalance(order, installationJob);
   const sentToProduction = order.sentToProduction === true || ["Sent to Production", "In Production", "Production Completed"].includes(order.status);
   if (order.isArchived || order.status === "Cancelled") return "archived";
-  if ((installationJob?.status === "Completed" || ["Completed", "Serviced"].includes(order.status)) && balance <= 0) return "completed";
-  if ((installationJob?.status === "Completed" || ["Pending Collection", "Serviced"].includes(order.status)) && balance > 0) return "pending-collection";
-  if (productionJob?.status === "Completed" && installationJob?.status !== "Completed") return "waiting-installation";
-  if (sentToProduction && (["Sent to Production", "In Production"].includes(order.status) || ["Pending", "Pending Production", "In Production"].includes(productionJob?.status))) return "in-production";
+  if (installationStatus === "touch_up" || order.status === "Touch Up") return "touch-up";
+  if (installationStatus === "installed" && balance <= 0) return "completed";
+  if (installationStatus === "pending_collection" || (["installed", "pending_collection"].includes(installationStatus) && balance > 0)) return "pending-collection";
+  if (productionStatus === "completed" && !["installed", "pending_collection", "touch_up"].includes(installationStatus)) return "waiting-installation";
+  if (sentToProduction && productionStatus === "in_production") return "in-production";
   return "new";
 }
 
 function matchesBoardDateFilter(order) {
   const installationJob = getOrderInstallationJob(order);
   const dateValue = installationJob?.installationDate || order.installationDate;
+  if (!["today-installation", "week-installation", "overdue-installation"].includes(orderSearch.filter)) return true;
   if (!dateValue) return false;
   const today = startOfDay(new Date());
   const date = startOfDay(new Date(dateValue));
@@ -501,13 +587,13 @@ function renderProductionJobs() {
         </div>
         <span class="pill">${statusLabel(job.status)}</span>
       </div>
-      <label>${t("Production Status")}<select data-production-id="${job.id}" data-production-field="status" ${canEditProduction() ? "" : "disabled"}>${productionStatuses.map((status) => `<option value="${status}" ${job.status === status ? "selected" : ""}>${statusLabel(status)}</option>`).join("")}</select></label>
+      <label>${t("Production Status")}<select data-production-id="${job.id}" data-production-field="status" ${canEditProduction() ? "" : "disabled"}>${productionStatuses.map((status) => `<option value="${status}" ${normalizeProductionStatus(job.status, true) === status ? "selected" : ""}>${statusLabel(status)}</option>`).join("")}</select></label>
       <label>${t("Production Remark")}<textarea rows="2" data-production-id="${job.id}" data-production-field="remark" ${canEditProduction() ? "" : "readonly"}>${job.remark || ""}</textarea></label>
       ${itemsSummary(job.items)}
       <div class="actions">
         <button class="btn" type="button" data-view-production="${job.id}">${t("View Production Job")}</button>
         <button class="btn primary" type="button" data-print-production="${job.id}">${t("Print Production Sheet")}</button>
-        ${canEditProduction() ? `<button class="btn" type="button" data-mark-production-status="${job.id}" data-status="In Production">${t("Mark In Production")}</button><button class="btn" type="button" data-mark-production-status="${job.id}" data-status="Completed">${t("Mark Production Completed")}</button>` : ""}
+        ${canEditProduction() ? `<button class="btn" type="button" data-mark-production-status="${job.id}" data-status="in_production">${t("Mark In Production")}</button><button class="btn" type="button" data-mark-production-status="${job.id}" data-status="completed">${t("Mark Production Completed")}</button>` : ""}
       </div>
     </article>
   `).join("") : `<p class="muted-text">${t("No production jobs yet.")}</p>`;
@@ -524,11 +610,11 @@ function renderInstallationJobs() {
           <p class="muted-text">${t("Order")}: ${job.orderNumber} | ${job.customer.name || "-"}</p>
           <p class="muted-text">${job.customer.phone || "-"} | ${job.customer.address || "-"}</p>
         </div>
-        <span class="pill">${money(job.balance)} ${t("Pending Collection")}</span>
+        <span class="pill">${money(getRemainingBalance(findOrder(job.orderId) || {}, job))} ${t("Remaining Balance")}</span>
       </div>
       <div class="form-grid compact">
         <label>${t("Installation Date")}<input type="date" data-installation-id="${job.id}" data-installation-field="installationDate" value="${job.installationDate || ""}" ${canScheduleInstallation() ? "" : "readonly"} /></label>
-        <label>${t("Status")}<select data-installation-id="${job.id}" data-installation-field="status" ${canScheduleInstallation() ? "" : "disabled"}>${installationStatuses.map((status) => `<option value="${status}" ${job.status === status ? "selected" : ""}>${statusLabel(status)}</option>`).join("")}</select></label>
+        <label>${t("Status")}<select data-installation-id="${job.id}" data-installation-field="status" ${canScheduleInstallation() ? "" : "disabled"}>${installationStatuses.map((status) => `<option value="${status}" ${normalizeInstallationStatus(job.status) === status ? "selected" : ""}>${statusLabel(status)}</option>`).join("")}</select></label>
         <label class="wide">${t("Installer Remark")}<textarea rows="2" data-installation-id="${job.id}" data-installation-field="installerRemark" ${canScheduleInstallation() ? "" : "readonly"}>${job.installerRemark || ""}</textarea></label>
       </div>
       ${itemsSummary(job.items)}
@@ -537,7 +623,8 @@ function renderInstallationJobs() {
         <button class="btn" type="button" data-view-installation="${job.id}">${t("View Installation Job")}</button>
         <button class="btn primary" type="button" data-print-installation="${job.id}">${t("Print Installation Sheet")}</button>
         <button class="btn" type="button" data-whatsapp-installation="${job.id}">${t("WhatsApp Customer")}</button>
-        ${canScheduleInstallation() ? `<button class="btn" type="button" data-mark-installation-status="${job.id}" data-status="Scheduled">${t("Mark Scheduled")}</button><button class="btn" type="button" data-mark-installation-status="${job.id}" data-status="Installing">${t("Mark Installing")}</button>` : ""}
+        ${canScheduleInstallation() ? `<button class="btn" type="button" data-mark-installation-status="${job.id}" data-status="scheduled">${t("Mark Scheduled")}</button>` : ""}
+        ${job.status === "touch_up" && canCompleteInstallation() ? `<button class="btn" type="button" data-mark-touchup-completed="${job.id}">${t("Mark Touch Up Completed")}</button>` : ""}
         ${canCompleteInstallation() ? `<button class="btn" type="button" data-complete-installation="${job.id}">${t("Complete Installation")}</button><button class="btn" type="button" data-generate-warranty="${job.id}">${t("Generate Warranty Card")}</button>` : ""}
         <button class="btn" type="button" data-print-warranty="${job.id}">${t("Print Warranty Card")}</button>
         <button class="btn" type="button" data-print-warranty="${job.id}">${t("PDF Warranty Card")}</button>
@@ -549,7 +636,7 @@ function renderInstallationJobs() {
 }
 
 function completionSummaryHtml(job) {
-  if (!job.completionDate && !job.afterPhoto && !job.customerSignature) return "";
+  if (!job.completionDate && !job.afterPhoto && !job.afterPhotos?.length && !job.customerSignature) return "";
   return `
     <div class="completion-summary">
       <strong>${t("Completed / Serviced")}</strong>
@@ -580,10 +667,13 @@ function completionFormHtml(job) {
       </div>
 
       <div class="photo-grid">
-        ${photoUploadHtml(job, "beforePhoto", "Before installation photo")}
-        ${photoUploadHtml(job, "afterPhoto", "After installation photo")}
-        ${photoUploadHtml(job, "defectPhoto", "Problem / defect photo")}
+        ${mediaUploadHtml(job, "beforePhotos", "Before Photos", "image/*")}
+        ${mediaUploadHtml(job, "afterPhotos", "After Photos", "image/*")}
+        ${mediaUploadHtml(job, "defectPhotos", "Defect Photos", "image/*")}
+        ${mediaUploadHtml(job, "touchUpPhotos", "Touch-up Photos", "image/*")}
+        ${mediaUploadHtml(job, "installationVideos", "Installation Videos", "video/*")}
       </div>
+      <label>${t("Installation Videos")} / ${t("Remark")}<textarea rows="2" data-completion-field="mediaRemarks" placeholder="Media note">${job.mediaRemarks || ""}</textarea></label>
 
       <div class="checklist-box">
         <h3>Customer Inspection Checklist</h3>
@@ -605,6 +695,14 @@ function completionFormHtml(job) {
           <option value="true" ${job.balanceCollected ? "selected" : ""}>Yes</option>
         </select></label>
         <label class="wide">Payment Reference / Remark<textarea rows="2" data-completion-field="paymentReference" placeholder="Transfer ref, cash note, collection remark">${job.paymentReference || ""}</textarea></label>
+        <label>${t("Touch up required?")}<select data-completion-field="touchUpRequired">
+          <option value="false" ${job.touchUpRequired ? "" : "selected"}>No</option>
+          <option value="true" ${job.touchUpRequired ? "selected" : ""}>Yes</option>
+        </select></label>
+        <label>Touch up status<select data-completion-field="touchUpStatus">
+          ${["Pending", "Completed"].map((status) => `<option value="${status}" ${job.touchUpStatus === status ? "selected" : ""}>${status}</option>`).join("")}
+        </select></label>
+        <label class="wide">${t("Touch up remark")}<textarea rows="2" data-completion-field="touchUpRemark" placeholder="Touch-up issue / action needed">${job.touchUpRemark || ""}</textarea></label>
       </div>
 
       <div class="signature-box">
@@ -626,11 +724,35 @@ function completionFormHtml(job) {
   `;
 }
 
-function photoUploadHtml(job, field, label) {
+function mediaUploadHtml(job, field, label, accept) {
+  const rows = mediaRows(job, field);
   return `
     <div class="photo-box">
-      <label>${label}<input type="file" accept="image/*" data-photo-field="${field}" data-installation-photo-id="${job.id}" /></label>
-      ${job[field] ? `<img src="${job[field]}" alt="${label}" />` : `<p class="muted-text">No photo uploaded.</p>`}
+      <label>${t(label)}<input type="file" accept="${accept}" multiple capture="environment" data-photo-field="${field}" data-installation-photo-id="${job.id}" /></label>
+      <div class="media-preview-grid">
+        ${rows.length ? rows.map((item, index) => mediaPreviewHtml(item, job.id, field, index)).join("") : `<p class="muted-text">No media uploaded.</p>`}
+      </div>
+    </div>
+  `;
+}
+
+function mediaRows(job, field) {
+  if (Array.isArray(job[field])) return job[field];
+  const legacy = {
+    beforePhotos: job.beforePhoto,
+    afterPhotos: job.afterPhoto,
+    defectPhotos: job.defectPhoto
+  }[field];
+  return legacy ? [{ type: "image", dataUrl: legacy, name: "legacy-photo" }] : [];
+}
+
+function mediaPreviewHtml(item, jobId, field, index) {
+  const source = item.dataUrl || item.url || item;
+  const type = item.type || (String(source).startsWith("data:video") ? "video" : "image");
+  return `
+    <div class="media-preview">
+      ${type === "video" ? `<video src="${source}" controls></video>` : `<img src="${source}" alt="${field}" />`}
+      <button class="btn danger" type="button" data-remove-media-job="${jobId}" data-remove-media-field="${field}" data-remove-media-index="${index}">Remove</button>
     </div>
   `;
 }
@@ -649,6 +771,7 @@ function meshValue(item) {
 }
 
 function handleOrderClick(event) {
+  const page = event.target.dataset.orderPage;
   const printId = event.target.dataset.printOrder;
   const viewId = event.target.dataset.viewOrder;
   const sendProductionId = event.target.dataset.sendProduction;
@@ -657,6 +780,10 @@ function handleOrderClick(event) {
   const deleteId = event.target.dataset.deleteOrder;
   const whatsappId = event.target.dataset.whatsappOrder;
   const highlightId = event.target.dataset.highlightOrder;
+  if (page) {
+    orderSearch = { ...orderSearch, page: Number(page) || 1 };
+    renderOrderList();
+  }
   if (printId) printOrder(printId);
   if (viewId) printOrder(viewId);
   if (sendProductionId) sendOrderToProduction(sendProductionId);
@@ -687,7 +814,7 @@ function handleOrderChange(event) {
 function handleOrderSearchInput(event) {
   const field = event.target.dataset.orderSearch;
   if (!field) return;
-  orderSearch = { ...orderSearch, [field]: event.target.value, highlightId: "" };
+  orderSearch = { ...orderSearch, [field]: event.target.value, page: 1, highlightId: "" };
   renderOrderProgressBoard();
   renderOrderList();
 }
@@ -696,12 +823,12 @@ function handleOrderToolsClick(event) {
   const filter = event.target.dataset.orderFilter;
   const tool = event.target.dataset.orderTool;
   if (filter) {
-    orderSearch = { ...orderSearch, filter, highlightId: "" };
+    orderSearch = { ...orderSearch, filter, status: "", page: 1, highlightId: "" };
     renderOrders();
   }
   if (tool === "search") renderOrders();
   if (tool === "clear") {
-    orderSearch = { orderNumber: "", customerName: "", phone: "", filter: "active", highlightId: "" };
+    orderSearch = { orderNumber: "", customerName: "", phone: "", filter: "active", status: "", installationDate: "", sort: "updated", page: 1, highlightId: "" };
     renderOrders();
   }
   if (tool === "find") quickFindOrder();
@@ -825,11 +952,12 @@ function sendOrderToProduction(orderId) {
   const wasAlreadySent = order.sentToProduction === true || ["Sent to Production", "Production Completed"].includes(order.status);
   order.status = "Sent to Production";
   order.sentToProduction = true;
+  order.productionStatus = "in_production";
   order.updatedAt = new Date().toISOString();
 
   if (existing) {
     existing.installationDate = order.installationDate || existing.installationDate || "";
-    if (!["In Production", "Completed", "Cancelled"].includes(existing.status)) existing.status = "Pending Production";
+    if (normalizeProductionStatus(existing.status, true) !== "completed") existing.status = "in_production";
     existing.updatedAt = new Date().toISOString();
     persistOrders();
     persistProductionJobs();
@@ -838,7 +966,7 @@ function sendOrderToProduction(orderId) {
     return;
   }
 
-  state.productionJobs = [{ ...createProductionJobFromOrder(order), status: "Pending Production" }, ...state.productionJobs];
+  state.productionJobs = [{ ...createProductionJobFromOrder(order), status: "in_production" }, ...state.productionJobs];
   persistOrders();
   persistProductionJobs();
   renderWorkflowModules();
@@ -852,11 +980,13 @@ function sendOrderToInstaller(orderId) {
   const existing = state.installationJobs.find((job) => job.orderId === order.id);
   const wasAlreadySent = ["Sent to Installer", "Installation Scheduled", "Installing", "Installation Completed", "Pending Collection", "Completed"].includes(order.status);
   order.status = "Sent to Installer";
+  order.installationStatus = order.installationDate ? "scheduled" : "not_scheduled";
   order.updatedAt = new Date().toISOString();
 
   if (existing) {
     existing.installationDate = order.installationDate || existing.installationDate || "";
     existing.balance = order.balance;
+    existing.status = order.installationStatus;
     existing.updatedAt = new Date().toISOString();
     persistOrders();
     persistInstallationJobs();
@@ -874,7 +1004,8 @@ function sendOrderToInstaller(orderId) {
 
 function syncJobInstallationDate(orderId, installationDate) {
   state.productionJobs = state.productionJobs.map((job) => job.orderId === orderId ? { ...job, installationDate, updatedAt: new Date().toISOString() } : job);
-  state.installationJobs = state.installationJobs.map((job) => job.orderId === orderId ? { ...job, installationDate, updatedAt: new Date().toISOString() } : job);
+  state.installationJobs = state.installationJobs.map((job) => job.orderId === orderId ? { ...job, installationDate, status: normalizeInstallationStatus(job.status) === "not_scheduled" && installationDate ? "scheduled" : job.status, updatedAt: new Date().toISOString() } : job);
+  state.orders = state.orders.map((order) => order.id === orderId ? { ...order, installationStatus: order.installationStatus === "not_scheduled" && installationDate ? "scheduled" : order.installationStatus, updatedAt: new Date().toISOString() } : order);
   persistProductionJobs();
   persistInstallationJobs();
   renderProductionJobs();
@@ -908,18 +1039,20 @@ function markProductionStatus(jobId, status) {
   if (!canEditProduction()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
   const job = state.productionJobs.find((row) => row.id === jobId);
   if (!job || !status) return;
-  job.status = status;
+  const normalizedStatus = normalizeProductionStatus(status, true);
+  job.status = normalizedStatus;
   job.updatedAt = new Date().toISOString();
   const order = findOrder(job.orderId);
   if (order) {
-    order.status = status === "Completed" ? "Production Completed" : "Sent to Production";
-    order.sentToProduction = true;
+    order.status = normalizedStatus === "completed" ? "Production Completed" : normalizedStatus === "in_production" ? "Sent to Production" : "Confirmed";
+    order.sentToProduction = normalizedStatus !== "not_produced";
+    order.productionStatus = normalizedStatus;
     order.updatedAt = new Date().toISOString();
   }
   persistProductionJobs();
   persistOrders();
   renderWorkflowModules();
-  showWorkflowMessage(status === "Completed" ? "Production marked completed" : "Production marked in progress", "success");
+  showWorkflowMessage(normalizedStatus === "completed" ? "Production marked completed" : "Production marked in progress", "success");
 }
 
 function handleInstallationClick(event) {
@@ -928,9 +1061,11 @@ function handleInstallationClick(event) {
   const whatsappId = event.target.dataset.whatsappInstallation;
   const markId = event.target.dataset.markInstallationStatus;
   const completeId = event.target.dataset.completeInstallation;
+  const touchupCompletedId = event.target.dataset.markTouchupCompleted;
   const closeId = event.target.dataset.closeCompletion;
   const saveId = event.target.dataset.saveCompletion;
   const clearSignatureId = event.target.dataset.clearSignature;
+  const removeMediaJobId = event.target.dataset.removeMediaJob;
   const warrantyId = event.target.dataset.generateWarranty;
   const printWarrantyId = event.target.dataset.printWarranty;
   if (printId) printInstallation(printId);
@@ -938,9 +1073,11 @@ function handleInstallationClick(event) {
   if (whatsappId) whatsappInstallationCustomer(whatsappId);
   if (markId) markInstallationStatus(markId, event.target.dataset.status);
   if (completeId) openCompletionForm(completeId);
+  if (touchupCompletedId) markTouchUpCompleted(touchupCompletedId);
   if (closeId) closeCompletionForm();
   if (saveId) saveInstallationCompletion(saveId);
   if (clearSignatureId) clearSignature(clearSignatureId);
+  if (removeMediaJobId) removeInstallationMedia(removeMediaJobId, event.target.dataset.removeMediaField, event.target.dataset.removeMediaIndex);
   if (warrantyId) generateWarrantyCard(warrantyId);
   if (printWarrantyId) printWarrantyCard(printWarrantyId);
 }
@@ -950,7 +1087,7 @@ function handleInstallationChange(event) {
   const photoField = event.target.dataset.photoField;
   if (photoJobId && photoField) {
     if (!canCompleteInstallation()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
-    handlePhotoUpload(photoJobId, photoField, event.target.files?.[0]);
+    handlePhotoUpload(photoJobId, photoField, [...(event.target.files || [])]);
     return;
   }
   const id = event.target.dataset.installationId;
@@ -969,25 +1106,28 @@ function markInstallationStatus(jobId, status) {
   if (!canScheduleInstallation()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
   const job = state.installationJobs.find((row) => row.id === jobId);
   if (!job || !status) return;
-  if (status === "Completed" && job.completionStatus !== "Completed") {
+  const normalizedStatus = normalizeInstallationStatus(status);
+  if (normalizedStatus === "installed" && job.completionStatus !== "Completed") {
     activeCompletionJobId = jobId;
     renderInstallationJobs();
     showWorkflowMessage("Please complete the installation form before marking completed.", "warning");
     return;
   }
-  job.status = status;
+  job.status = normalizedStatus;
   job.updatedAt = new Date().toISOString();
   const order = findOrder(job.orderId);
   if (order) {
-    if (status === "Scheduled") order.status = "Installation Scheduled";
-    if (status === "Installing") order.status = "Installing";
-    if (status === "Completed") order.status = Number(order.balance || 0) > 0 ? "Pending Collection" : "Completed";
+    order.installationStatus = normalizedStatus;
+    if (normalizedStatus === "scheduled") order.status = "Installation Scheduled";
+    if (normalizedStatus === "installed") order.status = getRemainingBalance(order, job) > 0 ? "Pending Collection" : "Completed";
+    if (normalizedStatus === "pending_collection") order.status = "Pending Collection";
+    if (normalizedStatus === "touch_up") order.status = "Touch Up";
     order.updatedAt = new Date().toISOString();
   }
   persistInstallationJobs();
   persistOrders();
   renderWorkflowModules();
-  showWorkflowMessage(status === "Completed" ? "Installation marked completed" : `Installation marked ${status}`, "success");
+  showWorkflowMessage(normalizedStatus === "installed" ? "Installation marked completed" : `Installation marked ${statusLabel(normalizedStatus)}`, "success");
 }
 
 function whatsappInstallationCustomer(jobId) {
@@ -1014,19 +1154,32 @@ function closeCompletionForm() {
   renderInstallationJobs();
 }
 
-async function handlePhotoUpload(jobId, field, file) {
-  if (!file) return;
+async function handlePhotoUpload(jobId, field, files) {
+  if (!files?.length) return;
   const job = state.installationJobs.find((row) => row.id === jobId);
   if (!job) return;
   try {
-    job[field] = await imageFileToDataUrl(file);
+    const existing = mediaRows(job, field);
+    const converted = await Promise.all(files.map((file) => mediaFileToRecord(file)));
+    job[field] = [...existing, ...converted].slice(0, 12);
     job.updatedAt = new Date().toISOString();
     persistInstallationJobs();
     renderInstallationJobs();
-    if (job[field].length > 850000) showWorkflowMessage("Photo compressed, but still large. Cloud sync may take longer on mobile.", "warning");
+    if (JSON.stringify(job[field]).length > 1800000) showWorkflowMessage("Media saved, but it is large. Cloud sync may take longer on mobile.", "warning");
   } catch (error) {
-    showWorkflowMessage(error.message || "Photo upload failed.", "error");
+    showWorkflowMessage(error.message || "Media upload failed.", "error");
   }
+}
+
+function removeInstallationMedia(jobId, field, index) {
+  const job = state.installationJobs.find((row) => row.id === jobId);
+  if (!job || !field) return;
+  const rows = mediaRows(job, field);
+  rows.splice(Number(index), 1);
+  job[field] = rows;
+  job.updatedAt = new Date().toISOString();
+  persistInstallationJobs();
+  renderInstallationJobs();
 }
 
 function saveInstallationCompletion(jobId) {
@@ -1041,6 +1194,7 @@ function saveInstallationCompletion(jobId) {
   Object.assign(job, completionData.fields);
   job.checklist = completionData.checklist;
   job.balanceCollected = completionData.fields.balanceCollected === "true";
+  job.touchUpRequired = completionData.fields.touchUpRequired === "true";
 
   const signature = signatureDataUrl(jobId);
   const validationError = validateCompletion(job, completionData, signature);
@@ -1053,13 +1207,15 @@ function saveInstallationCompletion(jobId) {
   job.completionStatus = "Completed";
   job.balanceToCollect = parseAmount(job.balanceToCollect);
   job.amountCollected = parseAmount(job.amountCollected);
-  job.status = job.amountCollected >= job.balanceToCollect ? "Completed" : "Pending Collection";
+  if (job.balanceCollected && job.amountCollected < job.balanceToCollect) job.amountCollected = job.balanceToCollect;
   job.balance = Math.max(0, job.balanceToCollect - job.amountCollected);
+  job.status = job.touchUpRequired ? "touch_up" : job.balance <= 0 ? "installed" : "pending_collection";
   job.updatedAt = new Date().toISOString();
 
   const order = findOrder(job.orderId);
   if (order) {
-    order.status = job.status === "Completed" ? "Completed" : "Pending Collection";
+    order.installationStatus = job.status;
+    order.status = job.status === "touch_up" ? "Touch Up" : job.status === "installed" ? "Completed" : "Pending Collection";
     order.balance = job.balance;
     order.updatedAt = new Date().toISOString();
     persistOrders();
@@ -1068,7 +1224,7 @@ function saveInstallationCompletion(jobId) {
   persistInstallationJobs();
   activeCompletionJobId = null;
   renderWorkflowModules();
-  showWorkflowMessage(job.status === "Completed" ? "Installation completed" : "Installation completed with pending collection", "success");
+  showWorkflowMessage(job.status === "touch_up" ? "Installation saved with touch up required" : job.status === "installed" ? "Installation completed" : "Installation completed with pending collection", "success");
 }
 
 function readCompletionForm(panel) {
@@ -1084,12 +1240,35 @@ function readCompletionForm(panel) {
 }
 
 function validateCompletion(job, completionData, signature) {
-  if (!job.afterPhoto) return "Please upload after installation photo";
+  if (!mediaRows(job, "afterPhotos").length) return "Please upload after installation photo";
   if (!completionData.fields.completionDate) return "Please fill completion date";
   if (completionData.fields.amountCollected === "") return "Please fill collection amount";
   if (!checklistLabels.every((label) => completionData.checklist[label])) return "Please complete customer inspection checklist";
   if (!signature) return "Please get customer signature";
   return "";
+}
+
+function markTouchUpCompleted(jobId) {
+  if (!canCompleteInstallation()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+  const job = state.installationJobs.find((row) => row.id === jobId);
+  if (!job) return;
+  job.touchUpStatus = "Completed";
+  job.touchUpRequired = false;
+  const order = findOrder(job.orderId);
+  const remaining = getRemainingBalance(order || {}, job);
+  job.status = remaining <= 0 ? "installed" : "pending_collection";
+  job.balance = remaining;
+  job.updatedAt = new Date().toISOString();
+  if (order) {
+    order.installationStatus = job.status;
+    order.status = remaining <= 0 ? "Completed" : "Pending Collection";
+    order.balance = remaining;
+    order.updatedAt = new Date().toISOString();
+    persistOrders();
+  }
+  persistInstallationJobs();
+  renderWorkflowModules();
+  showWorkflowMessage("Touch up completed", "success");
 }
 
 function setupSignatureCanvas(jobId) {
@@ -1168,7 +1347,7 @@ function generateWarrantyCard(jobId) {
   if (!canCompleteInstallation() && !isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
   const job = state.installationJobs.find((row) => row.id === jobId);
   if (!job) return showWorkflowMessage("Installation job not found.", "error");
-  if (!["Completed", "Pending Collection"].includes(job.status)) {
+  if (!["installed", "pending_collection", "Completed", "Pending Collection"].includes(job.status)) {
     showWorkflowMessage("Complete installation before generating warranty card.", "error");
     return;
   }
@@ -1276,6 +1455,32 @@ function imageFileToDataUrl(file) {
     };
     reader.readAsDataURL(file);
   });
+}
+
+function mediaFileToRecord(file) {
+  if (file.type.startsWith("image/")) {
+    return imageFileToDataUrl(file).then((dataUrl) => ({
+      type: "image",
+      name: file.name,
+      dataUrl,
+      createdAt: new Date().toISOString()
+    }));
+  }
+  if (file.type.startsWith("video/")) {
+    if (file.size > 4 * 1024 * 1024) return Promise.reject(new Error("Video is too large for browser storage. Please upload a shorter video."));
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("Unable to read video file."));
+      reader.onload = () => resolve({
+        type: "video",
+        name: file.name,
+        dataUrl: reader.result,
+        createdAt: new Date().toISOString()
+      });
+      reader.readAsDataURL(file);
+    });
+  }
+  return Promise.reject(new Error("Please upload image or video files."));
 }
 
 function printOrder(id) {
