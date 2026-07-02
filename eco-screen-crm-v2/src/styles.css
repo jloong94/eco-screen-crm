@@ -150,6 +150,15 @@ h3 { font-size: 17px; }
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
 }
+.ads-page-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+  gap: 18px;
+}
+.ads-summary-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 14px;
+}
 .metric-card {
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -503,6 +512,65 @@ input:focus, select:focus, textarea:focus {
   padding: 18px;
   text-align: center;
 }
+.ads-live-preview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.ads-live-preview div {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--soft);
+  padding: 10px;
+}
+.ads-live-preview span,
+.ads-table small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+.ads-live-preview strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 18px;
+}
+.ads-decision-preview {
+  display: grid;
+  align-content: center;
+  gap: 6px;
+}
+.ads-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: white;
+}
+.ads-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 1180px;
+}
+.ads-table th,
+.ads-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 10px;
+  text-align: left;
+  vertical-align: top;
+  font-size: 13px;
+}
+.ads-table th {
+  background: var(--soft);
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+.ads-table tr:last-child td { border-bottom: 0; }
+.compact-btn {
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 8px;
+}
 .disabled-block { opacity: .72; }
 .print-area { display: none; }
 .right { text-align: right; }
@@ -511,6 +579,8 @@ input:focus, select:focus, textarea:focus {
   .topbar { align-items: flex-start; flex-direction: column; }
   .module-tabs { top: 126px; padding: 10px 12px; }
   .layout, .quotation-page-grid { grid-template-columns: 1fr; padding: 12px; }
+  .ads-page-grid { grid-template-columns: 1fr; }
+  .ads-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dashboard-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .progress-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
@@ -648,6 +718,8 @@ input:focus, select:focus, textarea:focus {
     height: 260px;
   }
   .dashboard-grid { grid-template-columns: 1fr; }
+  .ads-summary-grid,
+  .ads-live-preview { grid-template-columns: 1fr; }
   .progress-columns, .progress-meta { grid-template-columns: 1fr; }
 }
 

@@ -265,8 +265,14 @@ export function saveQuote() {
   state.quotations = state.quotations.some((row) => row.id === snapshot.id)
     ? state.quotations.map((row) => row.id === snapshot.id ? snapshot : row)
     : [snapshot, ...state.quotations];
-  persistQuotations();
-  document.querySelector("#saveStatus").textContent = `${t("Save Quote")} ${snapshot.quoteNumber}`;
+  const cloudSave = persistQuotations();
+  const saveStatus = document.querySelector("#saveStatus");
+  saveStatus.textContent = `${t("Save Quote")} ${snapshot.quoteNumber} - saved locally. Syncing cloud...`;
+  cloudSave.then((result) => {
+    saveStatus.textContent = result.ok
+      ? `${t("Save Quote")} ${snapshot.quoteNumber} - cloud synced.`
+      : `${t("Save Quote")} ${snapshot.quoteNumber} - saved locally. Cloud sync failed: ${result.reason}`;
+  });
   renderQuotationList();
 }
 
