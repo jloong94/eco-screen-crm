@@ -228,5 +228,39 @@ export function languageName(code = state.language) {
 }
 
 export function statusLabel(value) {
-  return t(value || "-");
+  const normalized = normalizeStatus(value);
+  const labels = {
+    en: {
+      quoted: "Quoted",
+      follow_up: "Follow Up",
+      won: "Won",
+      lost: "Lost"
+    },
+    zh: {
+      quoted: "报价",
+      follow_up: "Follow Up",
+      won: "成交",
+      lost: "不成交"
+    }
+  };
+  return labels[state.language === "zh" ? "zh" : "en"][normalized] || t(value || "-");
+}
+
+export function normalizeStatus(value) {
+  const map = {
+    Draft: "quoted",
+    Quoted: "quoted",
+    "Follow Up": "follow_up",
+    "Follow-up": "follow_up",
+    Won: "won",
+    Ordered: "won",
+    Converted: "won",
+    Lost: "lost",
+    Cancelled: "lost",
+    quoted: "quoted",
+    follow_up: "follow_up",
+    won: "won",
+    lost: "lost"
+  };
+  return map[value] || value || "quoted";
 }

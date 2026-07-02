@@ -1,6 +1,6 @@
 import { defaultProducts, defaultUsers } from "./data.js";
 import { loadJson, saveJson, storageKeys } from "./storage.js";
-import { syncToCloud } from "./cloudSync.js";
+import { isCloudConfigured, saveData, syncToCloud } from "./cloudSync.js";
 
 const users = normalizeUsers(loadJson(storageKeys.users, defaultUsers));
 const currentUserId = localStorage.getItem(storageKeys.currentUserId) || "";
@@ -16,9 +16,17 @@ export const state = {
   customers: loadJson(storageKeys.customers, []),
   quotations: loadJson(storageKeys.quotations, []),
   orders: loadJson(storageKeys.orders, []),
+  adsEntries: loadJson(storageKeys.adsEntries, []),
   productionJobs: loadJson(storageKeys.productionJobs, []),
   installationJobs: loadJson(storageKeys.installationJobs, []),
   warrantyCards: loadJson(storageKeys.warrantyCards, []),
+  cloud: {
+    status: isCloudConfigured() ? "Checking cloud..." : "Local Mode Only",
+    connected: false,
+    lastSyncAt: "",
+    lastError: "",
+    counts: {}
+  },
   currentQuote: null
 };
 
@@ -60,42 +68,47 @@ function normalizeProducts(products) {
 
 export function persistProducts() {
   saveJson(storageKeys.products, state.products);
-  queueCloudSync();
+  syncCollectionNow("products");
 }
 
 export function persistCustomers() {
   saveJson(storageKeys.customers, state.customers);
-  queueCloudSync();
+  syncCollectionNow("customers");
 }
 
 export function persistQuotations() {
   saveJson(storageKeys.quotations, state.quotations);
-  queueCloudSync();
+  return syncCollectionNow("quotations");
 }
 
 export function persistOrders() {
   saveJson(storageKeys.orders, state.orders);
-  queueCloudSync();
+  return syncCollectionNow("orders");
+}
+
+export function persistAdsEntries() {
+  saveJson(storageKeys.adsEntries, state.adsEntries);
+  syncCollectionNow("adsEntries");
 }
 
 export function persistProductionJobs() {
   saveJson(storageKeys.productionJobs, state.productionJobs);
-  queueCloudSync();
+  return syncCollectionNow("productionJobs");
 }
 
 export function persistInstallationJobs() {
   saveJson(storageKeys.installationJobs, state.installationJobs);
-  queueCloudSync();
+  return syncCollectionNow("installationJobs");
 }
 
 export function persistWarrantyCards() {
   saveJson(storageKeys.warrantyCards, state.warrantyCards);
-  queueCloudSync();
+  return syncCollectionNow("warrantyCards");
 }
 
 export function persistUsers() {
   saveJson(storageKeys.users, state.users);
-  queueCloudSync();
+  return syncCollectionNow("users");
 }
 
 export function setLanguage(language) {
@@ -184,7 +197,7 @@ export function makeQuote() {
       remark: ""
     },
     appointmentDate: today(),
-    status: "Draft",
+    status: "quoted",
     remark: "",
     items: [],
     discount: 0,
@@ -240,6 +253,7 @@ export function stateSnapshot() {
     products: state.products,
     quotations: state.quotations,
     orders: state.orders,
+    adsEntries: state.adsEntries,
     productionJobs: state.productionJobs,
     installationJobs: state.installationJobs,
     warrantyCards: state.warrantyCards
@@ -247,47 +261,110 @@ export function stateSnapshot() {
 }
 
 export function applyCloudSnapshot(snapshot = {}) {
-  if (Array.isArray(snapshot.users) && snapshot.users.length) {
-    state.users = normalizeUsers(snapshot.users);
-    saveJson(storageKeys.users, state.users);
+  applyCollection("users", snapshot.users, normalizeUsers);
+  applyCollection("products", snapshot.products, normalizeProducts);
+  applyCollection("customers", snapshot.customers);
+  applyCollection("quotations", snapshot.quotations);
+  applyCollection("orders", snapshot.orders);
+  applyCollection("adsEntries", snapshot.adsEntries);
+  applyCollection("productionJobs", snapshot.productionJobs);
+  applyCollection("installationJobs", snapshot.installationJobs);
+  applyCollection("warrantyCards", snapshot.warrantyCards);
+}
+
+export function replaceStateFromBackup(snapshot = {}) {
+  state.users = normalizeUsers(Array.isArray(snapshot.users) ? snapshot.users : []);
+  state.products = normalizeProducts(Array.isArray(snapshot.products) ? snapshot.products : []);
+  state.customers = Array.isArray(snapshot.customers) ? snapshot.customers : [];
+  state.quotations = Array.isArray(snapshot.quotations) ? snapshot.quotations : [];
+  state.orders = Array.isArray(snapshot.orders) ? snapshot.orders : [];
+  state.adsEntries = Array.isArray(snapshot.adsEntries) ? snapshot.adsEntries : [];
+  state.productionJobs = Array.isArray(snapshot.productionJobs) ? snapshot.productionJobs : [];
+  state.installationJobs = Array.isArray(snapshot.installationJobs) ? snapshot.installationJobs : [];
+  state.warrantyCards = Array.isArray(snapshot.warrantyCards) ? snapshot.warrantyCards : [];
+  persistLocalSnapshot();
+}
+
+export async function syncCollectionNow(collection) {
+  if (!isCloudConfigured()) {
+    updateCloudStatus({
+      status: "Local Mode Only",
+      connected: false,
+      lastError: ""
+    });
+    return { ok: false, reason: "Local Mode Only" };
   }
-  if (Array.isArray(snapshot.products) && snapshot.products.length) {
-    state.products = normalizeProducts(snapshot.products);
-    saveJson(storageKeys.products, state.products);
+  const result = await saveData(collection, stateSnapshot()[collection] || []);
+  if (result.ok) {
+    updateCloudStatus({
+      status: "Cloud Connected",
+      connected: true,
+      lastSyncAt: result.syncedAt || new Date().toISOString(),
+      lastError: "",
+      counts: {
+        ...state.cloud.counts,
+        [collection]: stateSnapshot()[collection]?.length || 0
+      }
+    });
+  } else {
+    updateCloudStatus({
+      status: "Cloud Sync Failed",
+      connected: false,
+      lastError: result.reason || "Cloud sync failed."
+    });
   }
-  if (Array.isArray(snapshot.customers)) {
-    state.customers = snapshot.customers;
-    saveJson(storageKeys.customers, state.customers);
-  }
-  if (Array.isArray(snapshot.quotations)) {
-    state.quotations = snapshot.quotations;
-    saveJson(storageKeys.quotations, state.quotations);
-  }
-  if (Array.isArray(snapshot.orders)) {
-    state.orders = snapshot.orders;
-    saveJson(storageKeys.orders, state.orders);
-  }
-  if (Array.isArray(snapshot.productionJobs)) {
-    state.productionJobs = snapshot.productionJobs;
-    saveJson(storageKeys.productionJobs, state.productionJobs);
-  }
-  if (Array.isArray(snapshot.installationJobs)) {
-    state.installationJobs = snapshot.installationJobs;
-    saveJson(storageKeys.installationJobs, state.installationJobs);
-  }
-  if (Array.isArray(snapshot.warrantyCards)) {
-    state.warrantyCards = snapshot.warrantyCards;
-    saveJson(storageKeys.warrantyCards, state.warrantyCards);
-  }
+  return result;
 }
 
 let cloudSyncTimer = null;
 
-function queueCloudSync() {
+export function queueCloudSync() {
   clearTimeout(cloudSyncTimer);
   cloudSyncTimer = setTimeout(() => {
     syncToCloud(stateSnapshot()).then((result) => {
-      state.cloudStatus = result.ok ? "Cloud synced" : result.reason;
+      updateCloudStatus(result.ok
+        ? {
+          status: "Cloud Connected",
+          connected: true,
+          lastSyncAt: result.syncedAt || new Date().toISOString(),
+          lastError: ""
+        }
+        : {
+          status: "Cloud Sync Failed",
+          connected: false,
+          lastError: result.reason || "Cloud sync failed."
+        });
     });
   }, 800);
+}
+
+export function updateCloudStatus(update = {}) {
+  state.cloud = {
+    ...state.cloud,
+    ...update,
+    counts: {
+      ...state.cloud.counts,
+      ...(update.counts || {})
+    }
+  };
+}
+
+function applyCollection(collection, incoming, normalizer) {
+  if (!Array.isArray(incoming)) return;
+  const localRows = Array.isArray(state[collection]) ? state[collection] : [];
+  if (localRows.length > 0 && incoming.length === 0) return;
+  state[collection] = normalizer ? normalizer(incoming) : incoming;
+  saveJson(storageKeys[collection], state[collection]);
+}
+
+function persistLocalSnapshot() {
+  saveJson(storageKeys.users, state.users);
+  saveJson(storageKeys.products, state.products);
+  saveJson(storageKeys.customers, state.customers);
+  saveJson(storageKeys.quotations, state.quotations);
+  saveJson(storageKeys.orders, state.orders);
+  saveJson(storageKeys.adsEntries, state.adsEntries);
+  saveJson(storageKeys.productionJobs, state.productionJobs);
+  saveJson(storageKeys.installationJobs, state.installationJobs);
+  saveJson(storageKeys.warrantyCards, state.warrantyCards);
 }

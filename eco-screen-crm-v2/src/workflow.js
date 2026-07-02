@@ -11,8 +11,8 @@ import {
   state,
   uid
 } from "./state.js";
-import { itemWithCalculatedTotals, lineTotal, money, powdercoatAmount, quoteTotals } from "./calculations.js";
-import { statusLabel, t } from "./i18n.js";
+import { itemWithCalculatedTotals, lineTotal, money, powdercoatAmount, quoteTotals, toNumber } from "./calculations.js";
+import { normalizeStatus, statusLabel, t } from "./i18n.js";
 import {
   canCompleteInstallation,
   canDeleteOrders,
@@ -88,43 +88,57 @@ let orderSearch = {
 };
 
 export function convertQuoteToOrder(quoteId) {
-  const quote = getQuoteById(quoteId);
-  if (!quote) return failConversion("Quote not found.");
-  if (!quote.items || !quote.items.length) return failConversion("Quote has no items.");
-  const existing = state.orders.find((order) => order.quoteId === quote.id);
-  if (existing) {
-    showWorkflowMessage(`Order already exists: ${existing.orderNumber}`, "warning");
-    renderWorkflowModules();
-    scrollToOrders();
-    return { ok: false, message: "Order already exists.", order: existing };
-  }
-
-  const order = createOrderFromQuote(quote);
-  if (!order) return failConversion("Failed to create order.");
-  const productionJob = createProductionJobFromOrder(order);
-  if (!productionJob) return failConversion("Failed to create production job.");
-  const installationJob = createInstallationJobFromOrder(order);
-  if (!installationJob) return failConversion("Failed to create installation job.");
-
   try {
+    const quote = getQuoteById(quoteId);
+    const validation = validateQuoteForOrder(quote);
+    if (!validation.ok) return failConversion(validation.message);
+
+    const existing = state.orders.find((order) => order.quoteId === quote.id);
+    if (existing) {
+      const message = `Order already exists: ${existing.orderNumber}`;
+      showWorkflowMessage(message, "warning");
+      renderWorkflowModules();
+      scrollToOrders();
+      return { ok: false, message, order: existing };
+    }
+
+    const order = createOrderFromQuote(quote);
+    if (!order) return failConversion("Failed to create order.");
+    const productionJob = createProductionJobFromOrder(order);
+    if (!productionJob) return failConversion("Failed to create production job.");
+    const installationJob = createInstallationJobFromOrder(order);
+    if (!installationJob) return failConversion("Failed to create installation job.");
+
     state.orders = [order, ...state.orders];
     state.productionJobs = [productionJob, ...state.productionJobs];
     state.installationJobs = [installationJob, ...state.installationJobs];
-    quote.status = "Ordered";
+    quote.status = "won";
     quote.orderNumber = order.orderNumber;
     quote.updatedAt = new Date().toISOString();
-    saveOrders();
-    persistProductionJobs();
-    persistInstallationJobs();
-    persistQuotations();
-  } catch {
+
+    const cloudSaves = [
+      persistOrders(),
+      persistProductionJobs(),
+      persistInstallationJobs(),
+      persistQuotations()
+    ];
+    Promise.all(cloudSaves).then((results) => {
+      const failed = results.find((result) => result && !result.ok && result.reason !== "Local Mode Only");
+      if (failed) showWorkflowMessage("Order saved locally but cloud sync failed", "warning");
+    }).catch((error) => {
+      console.error("Convert to Order cloud sync failed", error);
+      showWorkflowMessage("Order saved locally but cloud sync failed", "warning");
+    });
+
+    const message = `Order created successfully: ${order.orderNumber}`;
+    showWorkflowMessage(message, "success");
+    renderWorkflowModules();
+    scrollToOrders();
+    return { ok: true, message, order };
+  } catch (error) {
+    console.error("Convert to Order failed", error);
     return failConversion("Failed to save order.");
   }
-
-  showWorkflowMessage(`Order created successfully: ${order.orderNumber}`, "success");
-  renderWorkflowModules();
-  scrollToOrders();
-  return { ok: true, message: "Order created successfully", order };
 }
 
 export function getQuoteById(quoteId) {
@@ -139,7 +153,7 @@ export function createOrderFromQuote(quote) {
     quoteId: quote.id,
     quoteNumber: quote.quoteNumber,
     customer: { ...quote.customer },
-    items: quote.items.map((item) => itemWithCalculatedTotals(item)),
+    items: quote.items.map((item) => ({ ...itemWithCalculatedTotals(item) })),
     subtotal: totals.subtotal,
     discount: Number(quote.discount || 0),
     total: totals.total,
@@ -202,7 +216,7 @@ export function createInstallationJobFromOrder(order) {
 }
 
 export function saveOrders() {
-  persistOrders();
+  return persistOrders();
 }
 
 export function loadOrders() {
@@ -210,8 +224,21 @@ export function loadOrders() {
 }
 
 function failConversion(message) {
+  console.error("Convert to Order:", message);
   showWorkflowMessage(message, "error");
   return { ok: false, message };
+}
+
+function validateQuoteForOrder(quote) {
+  if (!quote) return { ok: false, message: "Please save quotation first" };
+  if (!String(quote.customer?.name || "").trim()) return { ok: false, message: "Customer name is required" };
+  if (!String(quote.customer?.phone || "").trim()) return { ok: false, message: "Phone number is required" };
+  if (!Array.isArray(quote.items) || !quote.items.length) return { ok: false, message: "Please add at least one product item" };
+  const totals = quoteTotals(quote.items, quote.discount, quote.deposit);
+  const total = toNumber(quote.total || totals.total);
+  if (total <= 0) return { ok: false, message: "Quote total must be more than 0" };
+  quote.status = normalizeStatus(quote.status);
+  return { ok: true };
 }
 
 function showWorkflowMessage(message, type = "info") {

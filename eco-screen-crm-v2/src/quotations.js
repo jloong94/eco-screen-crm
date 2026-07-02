@@ -10,7 +10,7 @@ import {
 } from "./state.js";
 import { baseLineTotal, chargeableSqft, itemWithCalculatedTotals, lineTotal, money, powdercoatAmount, quoteTotals, toNumber } from "./calculations.js";
 import { convertQuoteToOrder, renderWorkflowModules } from "./workflow.js";
-import { statusLabel, t } from "./i18n.js";
+import { normalizeStatus, statusLabel, t } from "./i18n.js";
 
 export function renderQuotationForm() {
   const quote = ensureCurrentQuote();
@@ -21,6 +21,7 @@ export function renderQuotationForm() {
   document.querySelector("#customerAddress").value = quote.customer.address;
   document.querySelector("#customerRemark").value = quote.customer.remark;
   document.querySelector("#appointmentDate").value = quote.appointmentDate;
+  quote.status = normalizeStatus(quote.status);
   document.querySelector("#quoteStatus").innerHTML = quotationStatuses
     .map((status) => `<option value="${status}" ${quote.status === status ? "selected" : ""}>${statusLabel(status)}</option>`)
     .join("");
@@ -257,6 +258,7 @@ export function saveQuote() {
   const totals = quoteTotals(quote.items, quote.discount, quote.deposit);
   const snapshot = {
     ...quote,
+    status: normalizeStatus(quote.status),
     subtotal: totals.subtotal,
     total: totals.total,
     balance: totals.balance,
@@ -265,8 +267,14 @@ export function saveQuote() {
   state.quotations = state.quotations.some((row) => row.id === snapshot.id)
     ? state.quotations.map((row) => row.id === snapshot.id ? snapshot : row)
     : [snapshot, ...state.quotations];
-  persistQuotations();
-  document.querySelector("#saveStatus").textContent = `${t("Save Quote")} ${snapshot.quoteNumber}`;
+  const cloudSave = persistQuotations();
+  const saveStatus = document.querySelector("#saveStatus");
+  saveStatus.textContent = `${t("Save Quote")} ${snapshot.quoteNumber} - saved locally. Syncing cloud...`;
+  cloudSave.then((result) => {
+    saveStatus.textContent = result.ok
+      ? `${t("Save Quote")} ${snapshot.quoteNumber} - cloud synced.`
+      : `${t("Save Quote")} ${snapshot.quoteNumber} - saved locally. Cloud sync failed: ${result.reason}`;
+  });
   renderQuotationList();
 }
 
@@ -281,7 +289,7 @@ export function renderQuotationList() {
   list.innerHTML = state.quotations.length ? state.quotations.map((quote) => `
     <article class="quote-row">
       <button type="button" data-open-quote="${quote.id}">
-        <span><strong>${escapeHtml(quote.quoteNumber)}</strong><small>${escapeHtml(quote.customer.name || "-")}</small></span>
+        <span><strong>${escapeHtml(quote.quoteNumber)}</strong><small>${escapeHtml(quote.customer.name || "-")} | ${statusLabel(quote.status)}</small></span>
         <span>${money(quote.total || 0)}</span>
       </button>
       <button class="btn primary" type="button" data-convert-quote="${quote.id}">${t("Convert to Order")}</button>
@@ -297,7 +305,9 @@ export function renderQuotationList() {
   list.querySelectorAll("[data-convert-quote]").forEach((button) => {
     button.addEventListener("click", () => {
       const result = convertQuoteToOrder(button.dataset.convertQuote);
-      document.querySelector("#saveStatus").textContent = result.ok ? t("Order created successfully.") : result.message;
+      const status = document.querySelector("#saveStatus");
+      status.textContent = result.ok ? result.message : result.message;
+      status.dataset.type = result.ok ? "success" : "error";
       renderQuotationList();
       renderWorkflowModules();
     });
@@ -348,7 +358,7 @@ function quoteDocumentHtml(quote) {
       <div class="divider"></div>
       <section class="customer-grid">
         <div class="info-box"><p class="section-label">BILL TO</p><h3>${escapeHtml(quote.customer.name || "-")}</h3><p>${escapeHtml(quote.customer.phone || "-")}</p><p>${escapeHtml(quote.customer.address || "-")}</p></div>
-        <div class="info-box"><p class="section-label">JOB DETAILS</p><p><strong>${t("Area")}:</strong> ${escapeHtml(quote.customer.area || "-")}</p><p><strong>${t("Appointment Date")}:</strong> ${escapeHtml(quote.appointmentDate || "-")}</p>${quote.remark ? `<p><strong>${t("Remark")}:</strong> ${escapeHtml(quote.remark)}</p>` : ""}</div>
+        <div class="info-box"><p class="section-label">JOB DETAILS</p><p><strong>${t("Area")}:</strong> ${escapeHtml(quote.customer.area || "-")}</p><p><strong>${t("Appointment Date")}:</strong> ${escapeHtml(quote.appointmentDate || "-")}</p><p><strong>${t("Status")}:</strong> ${statusLabel(quote.status || "quoted")}</p></div>
       </section>
       <table class="items-table"><thead><tr><th>Description</th><th>${t("Product")}</th><th class="right">Size</th><th class="right">Sqft</th><th class="right">Rate</th><th class="right">${t("Quantity")}</th><th class="right">${t("Total")}</th></tr></thead><tbody>${quoteItemRowsHtml(quote.items)}</tbody></table>
       <section class="bottom-grid">

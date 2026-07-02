@@ -1,13 +1,13 @@
 import { attachLoginEvents, attachUserManagementEvents, logout, renderLoginCard, renderUserManagement } from "./auth.js";
+import { adsPageHtml, attachAdsEvents, renderAdsDashboard } from "./ads.js";
 import { renderAddProductForm, renderProducts, attachProductEvents } from "./products.js";
 import { attachQuotationEvents, renderQuotationForm } from "./quotations.js";
-import { setLanguage, setPage, state } from "./state.js";
+import { applyCloudSnapshot, replaceStateFromBackup, setLanguage, setPage, state, stateSnapshot, updateCloudStatus } from "./state.js";
 import { money } from "./calculations.js";
 import { attachWorkflowEvents, renderWorkflowModules } from "./workflow.js";
 import { t } from "./i18n.js";
-import { canAccessPage, defaultPageForRole, pageDefinitions, role } from "./permissions.js";
-import { isCloudConfigured, syncFromCloud } from "./cloudSync.js";
-import { applyCloudSnapshot } from "./state.js";
+import { canAccessPage, defaultPageForRole, isBossOrAdmin, pageDefinitions, role } from "./permissions.js";
+import { isCloudConfigured, safeSyncWithCloud, syncToCloud } from "./cloudSync.js";
 
 let cloudHydrated = false;
 
@@ -30,9 +30,11 @@ function appHtml() {
             <option value="zh" ${state.language === "zh" ? "selected" : ""}>中文</option>
           </select>
         </label>
-        <span class="pill">${isCloudConfigured() ? "Cloud ready" : "Local mode"}</span>
+        ${cloudStatusHtml()}
+        ${cloudActionButtonsHtml()}
         <span class="pill">${t("Current User")}: ${state.currentUser.name} / ${state.currentUser.role}</span>
         <button class="btn" id="logoutButton" type="button">${t("Logout")}</button>
+        <input id="backupImportFile" type="file" accept="application/json" hidden />
       </div>
     </header>
 
@@ -90,6 +92,7 @@ function currentPageHtml() {
   if (state.currentPage === "quotation") return quotationPageHtml();
   if (state.currentPage === "customers") return customersPageHtml();
   if (state.currentPage === "orders") return ordersPageHtml();
+  if (state.currentPage === "ads") return adsPageHtml();
   if (state.currentPage === "production") return productionPageHtml();
   if (state.currentPage === "installation") return installationPageHtml();
   if (state.currentPage === "products") return productManagementPageHtml();
@@ -116,6 +119,7 @@ function dashboardPageHtml() {
         <div class="metric-card"><span>${t("Production Jobs")}</span><strong>${state.productionJobs.length}</strong></div>
         <div class="metric-card"><span>${t("Installation Jobs")}</span><strong>${state.installationJobs.length}</strong></div>
       </div>
+      ${cloudDebugPanelHtml()}
       <div id="orderProgressBoard" class="dashboard-progress"></div>
       <span class="pill" id="workflowStatus">${t("Ready")}</span>
     </section>
@@ -298,6 +302,10 @@ function renderShell() {
     attachWorkflowEvents();
     renderWorkflowModules();
   }
+  if (isCurrentPage("ads")) {
+    attachAdsEvents();
+    renderAdsDashboard();
+  }
   if (isCurrentPage("customers")) renderCustomers();
   if (isCurrentPage("users")) attachUserManagementEvents(renderShell);
 }
@@ -305,12 +313,147 @@ function renderShell() {
 function syncCloudOnFirstLogin() {
   if (cloudHydrated || !isCloudConfigured()) return;
   cloudHydrated = true;
-  syncFromCloud().then((result) => {
-    if (result.data && Object.keys(result.data).length) {
-      applyCloudSnapshot(result.data);
-      renderShell();
-    }
+  updateCloudStatus({ status: "Checking cloud...", connected: false });
+  safeSyncWithCloud(stateSnapshot()).then((result) => {
+    applyCloudSnapshot(result.snapshot || {});
+    updateCloudStatus({
+      status: result.ok ? "Cloud Connected" : "Cloud Sync Failed",
+      connected: result.ok,
+      lastSyncAt: result.ok ? new Date().toISOString() : state.cloud.lastSyncAt,
+      lastError: result.ok ? "" : result.reason || "Cloud sync failed.",
+      counts: result.summary?.cloudCounts || {}
+    });
+    renderShell();
+  }).catch((error) => {
+    updateCloudStatus({
+      status: "Cloud Sync Failed",
+      connected: false,
+      lastError: error.message || "Cloud sync failed."
+    });
+    renderShell();
   });
+}
+
+function cloudStatusHtml() {
+  const status = isCloudConfigured() ? state.cloud.status : "Local Mode Only";
+  const lastSync = state.cloud.lastSyncAt ? new Date(state.cloud.lastSyncAt).toLocaleString("en-MY") : "-";
+  const statusClass = status === "Cloud Connected" ? "success" : status === "Cloud Sync Failed" ? "danger" : "";
+  return `<span class="pill ${statusClass}" title="${escapeHtml(state.cloud.lastError || "")}">${escapeHtml(status)} | Last Sync: ${escapeHtml(lastSync)}</span>`;
+}
+
+function cloudActionButtonsHtml() {
+  if (!isBossOrAdmin()) return "";
+  return `
+    <button class="btn" id="syncNowButton" type="button">Sync Now</button>
+    <button class="btn" id="exportBackupButton" type="button">Export Backup / 导出备份</button>
+    <button class="btn" id="importBackupButton" type="button">Import Backup</button>
+  `;
+}
+
+function cloudDebugPanelHtml() {
+  if (!isBossOrAdmin()) return "";
+  return `
+    <section class="panel cloud-debug-panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Cloud Debug</p>
+          <h2>Sync Safety Check</h2>
+        </div>
+      </div>
+      <div class="dashboard-grid">
+        <div class="metric-card"><span>Local quotations count</span><strong>${state.quotations.length}</strong></div>
+        <div class="metric-card"><span>Cloud quotations count</span><strong>${state.cloud.counts.quotations ?? "-"}</strong></div>
+        <div class="metric-card"><span>Local orders count</span><strong>${state.orders.length}</strong></div>
+        <div class="metric-card"><span>Cloud orders count</span><strong>${state.cloud.counts.orders ?? "-"}</strong></div>
+      </div>
+      <p class="muted-text">Last cloud sync error: ${escapeHtml(state.cloud.lastError || "-")}</p>
+    </section>
+  `;
+}
+
+function manualSyncNow() {
+  if (!isBossOrAdmin()) return;
+  updateCloudStatus({ status: "Checking cloud..." });
+  renderShell();
+  safeSyncWithCloud(stateSnapshot()).then((result) => {
+    applyCloudSnapshot(result.snapshot || {});
+    updateCloudStatus({
+      status: result.ok ? "Cloud Connected" : "Cloud Sync Failed",
+      connected: result.ok,
+      lastSyncAt: result.ok ? new Date().toISOString() : state.cloud.lastSyncAt,
+      lastError: result.ok ? "" : result.reason || "Cloud sync failed.",
+      counts: result.summary?.cloudCounts || {}
+    });
+    window.alert(syncSummaryText(result.summary));
+    renderShell();
+  }).catch((error) => {
+    updateCloudStatus({
+      status: "Cloud Sync Failed",
+      connected: false,
+      lastError: error.message || "Cloud sync failed."
+    });
+    window.alert(`Cloud Sync Failed: ${state.cloud.lastError}`);
+    renderShell();
+  });
+}
+
+function syncSummaryText(summary = {}) {
+  const errors = summary.errors?.length ? `\nErrors: ${summary.errors.join("; ")}` : "";
+  return [
+    "Sync completed.",
+    `Quotations uploaded: ${summary.uploaded?.quotations || 0}`,
+    `Quotations downloaded: ${summary.downloaded?.quotations || 0}`,
+    `Orders uploaded: ${summary.uploaded?.orders || 0}`,
+    `Orders downloaded: ${summary.downloaded?.orders || 0}`
+  ].join("\n") + errors;
+}
+
+function exportBackup() {
+  if (!isBossOrAdmin()) return;
+  const blob = new Blob([JSON.stringify({
+    exportedAt: new Date().toISOString(),
+    app: "Eco Screen CRM V2",
+    data: stateSnapshot()
+  }, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `eco-screen-crm-v2-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function importBackupFile(file) {
+  if (!isBossOrAdmin() || !file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const parsed = JSON.parse(reader.result);
+      const backupData = parsed.data || parsed;
+      const confirmation = window.prompt("Type RESTORE to confirm backup import. This replaces local CRM data.");
+      if (confirmation !== "RESTORE") return;
+      replaceStateFromBackup(backupData);
+      syncToCloud(stateSnapshot()).then((result) => {
+        updateCloudStatus(result.ok
+          ? {
+            status: "Cloud Connected",
+            connected: true,
+            lastSyncAt: result.syncedAt || new Date().toISOString(),
+            lastError: ""
+          }
+          : {
+            status: "Cloud Sync Failed",
+            connected: false,
+            lastError: result.reason || "Cloud sync failed."
+          });
+        window.alert(result.ok ? "Backup imported and synced to cloud." : `Backup imported locally. Cloud sync failed: ${state.cloud.lastError}`);
+        renderShell();
+      });
+    } catch (error) {
+      window.alert(`Import failed: ${error.message || "Invalid backup file."}`);
+    }
+  };
+  reader.readAsText(file);
 }
 
 function attachHeaderEvents() {
@@ -322,6 +465,10 @@ function attachHeaderEvents() {
     logout();
     renderShell();
   });
+  document.querySelector("#syncNowButton")?.addEventListener("click", manualSyncNow);
+  document.querySelector("#exportBackupButton")?.addEventListener("click", exportBackup);
+  document.querySelector("#importBackupButton")?.addEventListener("click", () => document.querySelector("#backupImportFile")?.click());
+  document.querySelector("#backupImportFile")?.addEventListener("change", (event) => importBackupFile(event.target.files?.[0]));
 }
 
 function attachNavigationEvents() {
@@ -364,6 +511,16 @@ function renderCustomers() {
 
 function currentPageTitle() {
   return pageDefinitions.find((page) => page.id === state.currentPage)?.title || "Quotation CRM";
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#039;"
+  })[char]);
 }
 
 renderShell();

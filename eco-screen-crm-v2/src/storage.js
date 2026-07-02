@@ -21,6 +21,7 @@ export const storageKeys = {
   customers: "ecoScreenV2.customers",
   quotations: "ecoScreenV2.quotations",
   orders: "ecoScreenV2.orders",
+  adsEntries: "ecoScreenV2.adsEntries",
   productionJobs: "ecoScreenV2.productionJobs",
   installationJobs: "ecoScreenV2.installationJobs",
   warrantyCards: "ecoScreenV2.warrantyCards"

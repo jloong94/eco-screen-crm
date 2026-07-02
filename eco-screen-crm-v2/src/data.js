@@ -10,7 +10,7 @@ export const defaultUsers = [
   { userId: "installer-1", name: "Installer", username: "installer", pin: "1234", role: "Installer", active: true }
 ];
 
-export const quotationStatuses = ["Draft", "Quoted", "Follow Up", "Won", "Ordered", "Lost", "Cancelled"];
+export const quotationStatuses = ["quoted", "follow_up", "won", "lost"];
 
 export const defaultProducts = [
   { id: "roller", name: "Roller", category: "Roller", sellingPrice: 33, costPrice: 0, calculationType: "sqft", minimumSqft: 11, active: true },
