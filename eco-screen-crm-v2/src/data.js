@@ -10,6 +10,18 @@ export const defaultUsers = [
   { userId: "installer-1", name: "Installer", username: "installer", pin: "1234", role: "Installer", active: true }
 ];
 
+export const defaultCompanySettings = {
+  id: "company",
+  companyName: "Eco Screen Sdn Bhd",
+  companyAddress: "24 Jalan Iks Bukit Tengah, Taman Iks Bukit Tengah, 14000 BM",
+  companyPhone: "0195763499",
+  companyEmail: "",
+  bankName: "PUBLIC BANK",
+  bankAccountName: "ECO SCREEN SDN BHD",
+  bankAccountNumber: "3242952413",
+  updatedAt: ""
+};
+
 export const quotationStatuses = ["quoted", "follow_up", "won", "lost"];
 
 export const defaultProducts = [

@@ -1575,9 +1575,15 @@ function totalsBlock(order) {
 
 function openPrint(title, number, body) {
   const area = document.querySelector("#workflowPrintArea");
+  const company = state.companySettings;
   area.innerHTML = `
     <div class="print-head">
-      <div><h1>Eco Screen Sdn Bhd</h1><p>24 Jalan Iks Bukit Tengah, Taman Iks Bukit Tengah, 14000 BM</p><p>Tel: 0197563499</p></div>
+      <div>
+        <h1>${company.companyName || "Eco Screen Sdn Bhd"}</h1>
+        <p>${company.companyAddress || ""}</p>
+        <p>Tel: ${company.companyPhone || ""}</p>
+        ${company.companyEmail ? `<p>Email: ${company.companyEmail}</p>` : ""}
+      </div>
       <div><p>${title}</p><h2>${number}</h2></div>
     </div>
     ${body}

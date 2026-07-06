@@ -1,4 +1,4 @@
-import { defaultProducts, defaultUsers } from "./data.js";
+import { defaultCompanySettings, defaultProducts, defaultUsers } from "./data.js";
 import { loadJson, saveJson, storageKeys } from "./storage.js";
 import { isCloudConfigured, saveData, syncToCloud } from "./cloudSync.js";
 
@@ -20,6 +20,7 @@ export const state = {
   productionJobs: loadJson(storageKeys.productionJobs, []),
   installationJobs: loadJson(storageKeys.installationJobs, []),
   warrantyCards: loadJson(storageKeys.warrantyCards, []),
+  companySettings: normalizeCompanySettings(loadJson(storageKeys.companySettings, defaultCompanySettings)),
   cloud: {
     status: isCloudConfigured() ? "Checking cloud..." : "Local Mode Only",
     connected: false,
@@ -66,6 +67,14 @@ function normalizeProducts(products) {
   return normalized;
 }
 
+function normalizeCompanySettings(settings) {
+  return {
+    ...defaultCompanySettings,
+    ...(settings || {}),
+    id: "company"
+  };
+}
+
 export function persistProducts() {
   saveJson(storageKeys.products, state.products);
   syncCollectionNow("products");
@@ -109,6 +118,15 @@ export function persistWarrantyCards() {
 export function persistUsers() {
   saveJson(storageKeys.users, state.users);
   return syncCollectionNow("users");
+}
+
+export function persistCompanySettings() {
+  state.companySettings = normalizeCompanySettings({
+    ...state.companySettings,
+    updatedAt: new Date().toISOString()
+  });
+  saveJson(storageKeys.companySettings, state.companySettings);
+  return syncCollectionNow("companySettings");
 }
 
 export function setLanguage(language) {
@@ -256,7 +274,8 @@ export function stateSnapshot() {
     adsEntries: state.adsEntries,
     productionJobs: state.productionJobs,
     installationJobs: state.installationJobs,
-    warrantyCards: state.warrantyCards
+    warrantyCards: state.warrantyCards,
+    companySettings: [state.companySettings]
   };
 }
 
@@ -270,6 +289,7 @@ export function applyCloudSnapshot(snapshot = {}) {
   applyCollection("productionJobs", snapshot.productionJobs);
   applyCollection("installationJobs", snapshot.installationJobs);
   applyCollection("warrantyCards", snapshot.warrantyCards);
+  applyCompanySettings(snapshot.companySettings);
 }
 
 export function replaceStateFromBackup(snapshot = {}) {
@@ -282,6 +302,7 @@ export function replaceStateFromBackup(snapshot = {}) {
   state.productionJobs = Array.isArray(snapshot.productionJobs) ? snapshot.productionJobs : [];
   state.installationJobs = Array.isArray(snapshot.installationJobs) ? snapshot.installationJobs : [];
   state.warrantyCards = Array.isArray(snapshot.warrantyCards) ? snapshot.warrantyCards : [];
+  state.companySettings = normalizeCompanySettings(Array.isArray(snapshot.companySettings) ? snapshot.companySettings[0] : snapshot.companySettings);
   persistLocalSnapshot();
 }
 
@@ -367,4 +388,12 @@ function persistLocalSnapshot() {
   saveJson(storageKeys.productionJobs, state.productionJobs);
   saveJson(storageKeys.installationJobs, state.installationJobs);
   saveJson(storageKeys.warrantyCards, state.warrantyCards);
+  saveJson(storageKeys.companySettings, state.companySettings);
+}
+
+function applyCompanySettings(incoming) {
+  const settings = Array.isArray(incoming) ? incoming[0] : incoming;
+  if (!settings || typeof settings !== "object") return;
+  state.companySettings = normalizeCompanySettings(settings);
+  saveJson(storageKeys.companySettings, state.companySettings);
 }

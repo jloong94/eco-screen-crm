@@ -336,6 +336,7 @@ function printableDocument(title, bodyHtml) {
 
 function quoteDocumentHtml(quote) {
   const totals = quoteTotals(quote.items, quote.discount, quote.deposit);
+  const company = state.companySettings;
   const discountRow = Number(quote.discount || 0) > 0
     ? `<div class="total-row"><span>${t("Discount")}</span><strong>- ${money(quote.discount)}</strong></div>`
     : "";
@@ -343,9 +344,10 @@ function quoteDocumentHtml(quote) {
     <main class="quotation-page">
       <header class="quote-header">
         <section class="company-block">
-          <div class="logo-row"><div class="es-logo">ES</div><div><h1>Eco Screen Sdn Bhd</h1><p class="specialist">Screen and Security Mesh Specialist</p></div></div>
-          <p>24 Jalan Iks Bukit Tengah, Taman Iks Bukit Tengah, 14000 BM</p>
-          <p>Tel: 0197563499</p>
+          <div class="logo-row"><div class="es-logo">ES</div><div><h1>${escapeHtml(company.companyName)}</h1><p class="specialist">Screen and Security Mesh Specialist</p></div></div>
+          <p>${escapeHtml(company.companyAddress)}</p>
+          <p>Tel: ${escapeHtml(company.companyPhone)}</p>
+          ${company.companyEmail ? `<p>Email: ${escapeHtml(company.companyEmail)}</p>` : ""}
           <p class="description">Supply and installation quotation for insect screen, roller screen, stainless steel net and security mesh products.</p>
         </section>
         <aside class="quote-card">
@@ -362,7 +364,7 @@ function quoteDocumentHtml(quote) {
       </section>
       <table class="items-table"><thead><tr><th>Description</th><th>${t("Product")}</th><th class="right">Size</th><th class="right">Sqft</th><th class="right">Rate</th><th class="right">${t("Quantity")}</th><th class="right">${t("Total")}</th></tr></thead><tbody>${quoteItemRowsHtml(quote.items)}</tbody></table>
       <section class="bottom-grid">
-        <div class="terms-box"><h3>Terms & Conditions</h3>${quoteTermsHtml()}</div>
+        <div class="terms-box"><h3>Terms & Conditions</h3>${quoteTermsHtml(company)}</div>
         <div class="totals-box">
           <div class="total-row"><span>${t("Subtotal")}</span><strong>${money(totals.subtotal)}</strong></div>
           ${discountRow}
@@ -398,13 +400,13 @@ function quoteItemDetailLinesHtml(item) {
   return details.filter(([, value]) => value).map(([label, value]) => `<small>${label}: ${escapeHtml(value)}</small>`).join("") || `<small>${t("Color")}: -</small>`;
 }
 
-function quoteTermsHtml() {
+function quoteTermsHtml(company = state.companySettings) {
   return `
     <p>i) Prices quoted are valid for a period of two (2) weeks from the quotation date.</p>
     <p>ii) 50% deposit is required upon confirmation, balance of payment upon completion.</p>
     <p>iii) Deposit paid is non-refundable.</p>
     <p>iv) All cheques should not be crossed and make payable to:</p>
-    <p class="bank-details">ECO SCREEN SDN BHD<br>PUBLIC BANK<br>3242952413</p>
+    <p class="bank-details">${escapeHtml(company.bankAccountName)}<br>${escapeHtml(company.bankName)}<br>${escapeHtml(company.bankAccountNumber)}</p>
   `;
 }
 

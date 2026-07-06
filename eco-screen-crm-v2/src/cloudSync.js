@@ -9,7 +9,8 @@ export const cloudCollections = [
   "adsEntries",
   "productionJobs",
   "installationJobs",
-  "warrantyCards"
+  "warrantyCards",
+  "companySettings"
 ];
 
 const tableName = "crm_v2_sync";
