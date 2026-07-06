@@ -98,7 +98,7 @@ export function convertQuoteToOrder(quoteId) {
     const quote = getQuoteById(quoteId);
     const validation = validateQuoteForOrder(quote);
     if (!validation.ok) return failConversion(validation.message);
-    const quoteDisplayNo = getQuotationDisplayNo(quote);
+    const quoteDisplayNo = ensureQuotationDisplayNo(quote);
 
     const existing = findExistingOrderForQuote(quote);
     if (existing) {
@@ -149,7 +149,7 @@ export function convertQuoteToOrder(quoteId) {
     return { ok: true, message, order };
   } catch (error) {
     console.error("Convert to Order failed", error);
-    return failConversion("Failed to save order.");
+    return failConversion(`Unknown error: ${error.message || "Failed to save order."}`);
   }
 }
 
@@ -159,7 +159,7 @@ export function getQuoteById(quoteId) {
 
 export function createOrderFromQuote(quote) {
   const totals = quoteTotals(quote.items, quote.discount, quote.deposit);
-  const displayNo = getQuotationDisplayNo(quote);
+  const displayNo = ensureQuotationDisplayNo(quote);
   return {
     id: uid("order"),
     orderNo: displayNo,
@@ -264,7 +264,6 @@ function validateQuoteForOrder(quote) {
   if (!quote) return { ok: false, message: "Please save quotation first" };
   if (!String(quote.customer?.name || "").trim()) return { ok: false, message: "Missing customer name" };
   if (!String(quote.customer?.phone || "").trim()) return { ok: false, message: "Missing phone number" };
-  if (!getQuotationDisplayNo(quote)) return { ok: false, message: "Missing quotation number" };
   if (!Array.isArray(quote.items) || !quote.items.length) return { ok: false, message: "Missing quotation items" };
   const totals = quoteTotals(quote.items, quote.discount, quote.deposit);
   const total = toNumber(quote.total || totals.total);
@@ -277,16 +276,33 @@ export function getQuotationDisplayNo(quote = {}) {
   return String(quote.quotationNo || quote.quoteNo || quote.quoteNumber || quote.number || quote.refNo || "").trim();
 }
 
+export function normalizeRefNo(value) {
+  return String(value ?? "").trim().toUpperCase();
+}
+
+function ensureQuotationDisplayNo(quote = {}) {
+  const existingNo = getQuotationDisplayNo(quote);
+  if (existingNo) return existingNo;
+  const fallback = `QUOTE-${String(quote.id || uid("quote")).replace(/[^a-z0-9]/gi, "").slice(-12).toUpperCase()}`;
+  quote.quoteNumber = fallback;
+  quote.quotationNo = fallback;
+  quote.quoteNo = fallback;
+  showWorkflowMessage(`Missing quotation number. Using safe order number: ${fallback}`, "warning");
+  return fallback;
+}
+
 function getOrderDisplayNo(order = {}) {
   return String(order.orderNo || order.orderNumber || order.quoteNumber || order.quotationNo || "").trim();
 }
 
 function findExistingOrderForQuote(quote) {
-  const quoteNo = normalizeText(getQuotationDisplayNo(quote));
+  const quoteNo = normalizeRefNo(getQuotationDisplayNo(quote));
   return state.orders.find((order) => {
-    const orderNo = normalizeText(getOrderDisplayNo(order));
-    const orderQuoteNo = normalizeText(order.quoteNumber || order.quotationNo || order.quoteNo);
-    return order.quoteId === quote.id || (quoteNo && (orderNo === quoteNo || orderQuoteNo === quoteNo));
+    const sameQuoteId = order.quoteId && quote.id && order.quoteId === quote.id;
+    const orderNo = normalizeRefNo(order.orderNo || order.orderNumber);
+    const orderQuoteNo = normalizeRefNo(order.quoteNumber || order.quotationNo || order.quoteNo);
+    const sameDisplayNo = quoteNo && ((orderNo && orderNo === quoteNo) || (orderQuoteNo && orderQuoteNo === quoteNo));
+    return sameQuoteId || sameDisplayNo;
   }) || null;
 }
 
