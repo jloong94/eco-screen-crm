@@ -2,14 +2,15 @@ import { attachLoginEvents, attachUserManagementEvents, logout, renderLoginCard,
 import { adsPageHtml, attachAdsEvents, renderAdsDashboard } from "./ads.js";
 import { renderAddProductForm, renderProducts, attachProductEvents } from "./products.js";
 import { attachQuotationEvents, renderQuotationForm } from "./quotations.js";
-import { applyCloudSnapshot, replaceStateFromBackup, setLanguage, setPage, state, stateSnapshot, updateCloudStatus } from "./state.js";
-import { money } from "./calculations.js";
+import { applyCloudSnapshot, persistCompanySettings, replaceStateFromBackup, setLanguage, setPage, state, stateSnapshot, updateCloudStatus } from "./state.js";
+import { money, toNumber } from "./calculations.js";
 import { attachWorkflowEvents, renderWorkflowModules } from "./workflow.js";
 import { t } from "./i18n.js";
 import { canAccessPage, defaultPageForRole, isBossOrAdmin, pageDefinitions, role } from "./permissions.js";
 import { isCloudConfigured, safeSyncWithCloud, syncToCloud } from "./cloudSync.js";
 
 let cloudHydrated = false;
+let monthlySummaryMonth = currentMonthValue();
 
 function appHtml() {
   if (!state.currentUser) return renderLoginCard();
@@ -21,6 +22,7 @@ function appHtml() {
           <p>${t("Eco Screen CRM V2")}</p>
           <h1>${t(currentPageTitle())}</h1>
           <span class="version-label">Eco Screen CRM V2 - Mobile Production</span>
+          <span class="version-label">${escapeHtml(state.companySettings.companyPhone)}</span>
         </div>
       </div>
       <div class="user-toolbar">
@@ -49,9 +51,9 @@ function appHtml() {
     <section id="printArea" class="print-area">
       <div class="print-head">
         <div>
-          <h1>Eco Screen Sdn Bhd</h1>
-          <p>24 Jalan Iks Bukit Tengah, Taman Iks Bukit Tengah, 14000 BM</p>
-          <p>Tel: 0197563499</p>
+          <h1>${escapeHtml(state.companySettings.companyName)}</h1>
+          <p>${escapeHtml(state.companySettings.companyAddress)}</p>
+          <p>Tel: ${escapeHtml(state.companySettings.companyPhone)}</p>
         </div>
         <div>
           <p>${t("Quotation")}</p>
@@ -120,6 +122,7 @@ function dashboardPageHtml() {
         <div class="metric-card"><span>${t("Installation Jobs")}</span><strong>${state.installationJobs.length}</strong></div>
       </div>
       ${cloudDebugPanelHtml()}
+      ${monthlySummaryHtml()}
       <div id="orderProgressBoard" class="dashboard-progress"></div>
       <span class="pill" id="workflowStatus">${t("Ready")}</span>
     </section>
@@ -258,6 +261,7 @@ function productManagementPageHtml() {
           <h2>${t("Product Management")}</h2>
         </div>
       </div>
+      ${companySettingsHtml()}
       <div id="addProductPanel"></div>
       <p id="productSaveStatus" class="muted-text"></p>
       <div id="productList" class="product-list"></div>
@@ -295,6 +299,7 @@ function renderShell() {
   }
   if (isCurrentPage("products")) {
     attachProductEvents();
+    attachCompanySettingsEvents();
     renderAddProductForm();
     renderProducts();
   }
@@ -302,6 +307,7 @@ function renderShell() {
     attachWorkflowEvents();
     renderWorkflowModules();
   }
+  if (isCurrentPage("dashboard")) attachMonthlySummaryEvents();
   if (isCurrentPage("ads")) {
     attachAdsEvents();
     renderAdsDashboard();
@@ -471,6 +477,155 @@ function attachHeaderEvents() {
   document.querySelector("#backupImportFile")?.addEventListener("change", (event) => importBackupFile(event.target.files?.[0]));
 }
 
+function companySettingsHtml() {
+  if (!isBossOrAdmin()) return "";
+  const settings = state.companySettings;
+  return `
+    <section class="panel company-settings-panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Company Settings</p>
+          <h2>Company Settings</h2>
+        </div>
+      </div>
+      <div class="form-grid">
+        <label>Company Name<input data-company-field="companyName" value="${escapeHtml(settings.companyName)}" /></label>
+        <label>Company Phone<input data-company-field="companyPhone" value="${escapeHtml(settings.companyPhone)}" /></label>
+        <label class="wide">Company Address<textarea rows="2" data-company-field="companyAddress">${escapeHtml(settings.companyAddress)}</textarea></label>
+        <label>Company Email<input data-company-field="companyEmail" value="${escapeHtml(settings.companyEmail)}" /></label>
+        <label>Bank Name<input data-company-field="bankName" value="${escapeHtml(settings.bankName)}" /></label>
+        <label>Bank Account Name<input data-company-field="bankAccountName" value="${escapeHtml(settings.bankAccountName)}" /></label>
+        <label>Bank Account Number<input data-company-field="bankAccountNumber" value="${escapeHtml(settings.bankAccountNumber)}" /></label>
+      </div>
+      <div class="actions">
+        <button class="btn primary" id="saveCompanySettingsButton" type="button">Save Company Settings</button>
+        <span class="muted-text" id="companySettingsStatus"></span>
+      </div>
+    </section>
+  `;
+}
+
+function attachCompanySettingsEvents() {
+  document.querySelector("#saveCompanySettingsButton")?.addEventListener("click", () => {
+    document.querySelectorAll("[data-company-field]").forEach((input) => {
+      state.companySettings[input.dataset.companyField] = input.value;
+    });
+    persistCompanySettings().then((result) => {
+      const status = document.querySelector("#companySettingsStatus");
+      if (status) status.textContent = result.ok ? "Company settings saved and synced." : "Company settings saved locally.";
+    });
+  });
+}
+
+function attachMonthlySummaryEvents() {
+  document.querySelector("[data-month-preset='this']")?.addEventListener("click", () => {
+    monthlySummaryMonth = currentMonthValue();
+    renderShell();
+  });
+  document.querySelector("[data-month-preset='last']")?.addEventListener("click", () => {
+    monthlySummaryMonth = monthOffsetValue(-1);
+    renderShell();
+  });
+  document.querySelector("#monthlySummaryMonth")?.addEventListener("change", (event) => {
+    monthlySummaryMonth = event.target.value || currentMonthValue();
+    renderShell();
+  });
+}
+
+function monthlySummary(monthValue) {
+  const rows = state.orders.filter((order) => isOrderInMonth(order, monthValue) && !order.isArchived && order.status !== "Cancelled");
+  return rows.reduce((summary, order) => {
+    const total = toNumber(order.total);
+    const collected = totalCollectedForOrder(order);
+    const remaining = Math.max(total - collected, 0);
+    const completed = remaining <= 0 && isOrderCompleted(order);
+    summary.totalSales += total;
+    summary.totalDeposit += toNumber(order.deposit);
+    summary.totalCollected += collected;
+    summary.outstanding += remaining;
+    summary.newOrdersCount += 1;
+    if (remaining > 0 && isOrderReadyForCollection(order)) {
+      summary.pendingCollection += remaining;
+      summary.pendingCollectionCount += 1;
+    }
+    if (completed) {
+      summary.completedAmount += total;
+      summary.completedCount += 1;
+    }
+    if (remaining > 0 || !completed) summary.activeOrdersCount += 1;
+    return summary;
+  }, {
+    totalSales: 0,
+    totalDeposit: 0,
+    totalCollected: 0,
+    outstanding: 0,
+    pendingCollection: 0,
+    completedAmount: 0,
+    newOrdersCount: 0,
+    activeOrdersCount: 0,
+    pendingCollectionCount: 0,
+    completedCount: 0
+  });
+}
+
+function totalCollectedForOrder(order) {
+  const installationJob = state.installationJobs.find((job) => job.orderId === order.id || job.orderNumber === order.orderNumber);
+  return toNumber(order.deposit) + toNumber(installationJob?.amountCollected);
+}
+
+function isOrderCompleted(order) {
+  const installationJob = state.installationJobs.find((job) => job.orderId === order.id || job.orderNumber === order.orderNumber);
+  return ["Completed", "Serviced"].includes(order.status) || ["installed", "Completed"].includes(installationJob?.status);
+}
+
+function isOrderReadyForCollection(order) {
+  const installationJob = state.installationJobs.find((job) => job.orderId === order.id || job.orderNumber === order.orderNumber);
+  return ["Pending Collection", "Completed", "Serviced"].includes(order.status)
+    || ["installed", "pending_collection", "Completed", "Pending Collection"].includes(installationJob?.status)
+    || installationJob?.completionStatus === "Completed";
+}
+
+function isOrderInMonth(order, monthValue) {
+  return String(order.createdAt || "").slice(0, 7) === monthValue;
+}
+
+function currentMonthValue() {
+  return new Date().toISOString().slice(0, 7);
+}
+
+function monthOffsetValue(offset) {
+  const date = new Date();
+  date.setMonth(date.getMonth() + offset);
+  return date.toISOString().slice(0, 7);
+}
+
+function monthlySummaryHtml() {
+  if (!["Boss", "Admin", "Secretary"].includes(role())) return "";
+  const summary = monthlySummary(monthlySummaryMonth);
+  return `
+    <section class="panel monthly-summary-panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">${uiLabel("Monthly Summary", "每月总结")}</p>
+          <h2>${uiLabel("Monthly Summary", "每月总结")}</h2>
+        </div>
+        <div class="actions">
+          <button class="btn" type="button" data-month-preset="this">${uiLabel("This Month", "这个月")}</button>
+          <button class="btn" type="button" data-month-preset="last">${uiLabel("Last Month", "上个月")}</button>
+          <label>${uiLabel("Select Month", "选择月份")}<input id="monthlySummaryMonth" type="month" value="${monthlySummaryMonth}" /></label>
+        </div>
+      </div>
+      <div class="dashboard-grid">
+        <div class="metric-card"><span>${uiLabel("New Orders Total", "新单总额")}</span><strong>${money(summary.totalSales)}</strong><small>${summary.newOrdersCount} ${uiLabel("new orders", "新单")}</small></div>
+        <div class="metric-card"><span>${uiLabel("Total Collected", "已收总额")}</span><strong>${money(summary.totalCollected)}</strong><small>${uiLabel("Deposit", "订金")}: ${money(summary.totalDeposit)}</small></div>
+        <div class="metric-card"><span>${uiLabel("Outstanding Balance", "未收余额")}</span><strong>${money(summary.outstanding)}</strong><small>${summary.activeOrdersCount} ${uiLabel("active orders", "进行中订单")}</small></div>
+        <div class="metric-card"><span>${uiLabel("Pending Collection", "等待收款")}</span><strong>${money(summary.pendingCollection)}</strong><small>${summary.pendingCollectionCount} ${uiLabel("pending", "等待")}</small></div>
+        <div class="metric-card"><span>${uiLabel("Completed Orders", "已完成订单")}</span><strong>${money(summary.completedAmount)}</strong><small>${summary.completedCount} ${uiLabel("completed", "已完成")}</small></div>
+      </div>
+    </section>
+  `;
+}
+
 function attachNavigationEvents() {
   document.querySelector("#moduleNavigation").addEventListener("click", (event) => {
     const page = event.target.dataset.page;
@@ -521,6 +676,10 @@ function escapeHtml(value) {
     "\"": "&quot;",
     "'": "&#039;"
   })[char]);
+}
+
+function uiLabel(en, zh) {
+  return state.language === "zh" ? zh : en;
 }
 
 renderShell();
