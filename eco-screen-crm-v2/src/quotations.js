@@ -9,12 +9,12 @@ import {
   state
 } from "./state.js";
 import { baseLineTotal, chargeableSqft, itemWithCalculatedTotals, lineTotal, money, powdercoatAmount, quoteTotals, toNumber } from "./calculations.js";
-import { convertQuoteToOrder, renderWorkflowModules } from "./workflow.js";
+import { convertQuoteToOrder, getQuotationDisplayNo, renderWorkflowModules } from "./workflow.js";
 import { normalizeStatus, statusLabel, t } from "./i18n.js";
 
 export function renderQuotationForm() {
   const quote = ensureCurrentQuote();
-  document.querySelector("#quoteNumber").value = quote.quoteNumber;
+  document.querySelector("#quoteNumber").value = getQuotationDisplayNo(quote);
   document.querySelector("#customerName").value = quote.customer.name;
   document.querySelector("#customerPhone").value = quote.customer.phone;
   document.querySelector("#customerArea").value = quote.customer.area;
@@ -254,10 +254,17 @@ export function updateQuoteSummary() {
 
 export function saveQuote() {
   const quote = ensureCurrentQuote();
+  const displayNo = String(document.querySelector("#quoteNumber")?.value || getQuotationDisplayNo(quote)).trim();
+  quote.quoteNumber = displayNo;
+  quote.quotationNo = displayNo;
+  quote.quoteNo = displayNo;
   quote.updatedAt = new Date().toISOString();
   const totals = quoteTotals(quote.items, quote.discount, quote.deposit);
   const snapshot = {
     ...quote,
+    quoteNumber: displayNo,
+    quotationNo: displayNo,
+    quoteNo: displayNo,
     status: normalizeStatus(quote.status),
     subtotal: totals.subtotal,
     total: totals.total,
@@ -269,11 +276,11 @@ export function saveQuote() {
     : [snapshot, ...state.quotations];
   const cloudSave = persistQuotations();
   const saveStatus = document.querySelector("#saveStatus");
-  saveStatus.textContent = `${t("Save Quote")} ${snapshot.quoteNumber} - saved locally. Syncing cloud...`;
+  saveStatus.textContent = `${t("Save Quote")} ${getQuotationDisplayNo(snapshot)} - saved locally. Syncing cloud...`;
   cloudSave.then((result) => {
     saveStatus.textContent = result.ok
-      ? `${t("Save Quote")} ${snapshot.quoteNumber} - cloud synced.`
-      : `${t("Save Quote")} ${snapshot.quoteNumber} - saved locally. Cloud sync failed: ${result.reason}`;
+      ? `${t("Save Quote")} ${getQuotationDisplayNo(snapshot)} - cloud synced.`
+      : `${t("Save Quote")} ${getQuotationDisplayNo(snapshot)} - saved locally. Cloud sync failed: ${result.reason}`;
   });
   renderQuotationList();
 }
@@ -289,7 +296,7 @@ export function renderQuotationList() {
   list.innerHTML = state.quotations.length ? state.quotations.map((quote) => `
     <article class="quote-row">
       <button type="button" data-open-quote="${quote.id}">
-        <span><strong>${escapeHtml(quote.quoteNumber)}</strong><small>${escapeHtml(quote.customer.name || "-")} | ${statusLabel(quote.status)}</small></span>
+        <span><strong>${escapeHtml(getQuotationDisplayNo(quote))}</strong><small>${escapeHtml(quote.customer.name || "-")} | ${statusLabel(quote.status)}</small></span>
         <span>${money(quote.total || 0)}</span>
       </button>
       <button class="btn primary" type="button" data-convert-quote="${quote.id}">${t("Convert to Order")}</button>
@@ -322,7 +329,7 @@ export function printQuote() {
     return;
   }
   printWindow.document.open();
-  printWindow.document.write(printableDocument(`${t("Quotation")} ${quote.quoteNumber}`, quoteDocumentHtml(quote)));
+  printWindow.document.write(printableDocument(`${t("Quotation")} ${getQuotationDisplayNo(quote)}`, quoteDocumentHtml(quote)));
   printWindow.document.close();
   setTimeout(() => {
     printWindow.focus();
@@ -352,7 +359,7 @@ function quoteDocumentHtml(quote) {
         </section>
         <aside class="quote-card">
           <p>${t("Quotation").toUpperCase()}</p>
-          <h2>${escapeHtml(quote.quoteNumber || "-")}</h2>
+          <h2>${escapeHtml(getQuotationDisplayNo(quote) || "-")}</h2>
           <div><span>Date</span><strong>${formatDate(quote.updatedAt || quote.createdAt || new Date().toISOString())}</strong></div>
           <div><span>${t("Status")}</span><strong>${statusLabel(quote.status || "Quoted")}</strong></div>
         </aside>
