@@ -1,6 +1,5 @@
 import {
   nextInstallationNumber,
-  nextOrderNumber,
   nextProductionNumber,
   nextWarrantyNumber,
   persistQuotations,
@@ -99,11 +98,13 @@ export function convertQuoteToOrder(quoteId) {
     const quote = getQuoteById(quoteId);
     const validation = validateQuoteForOrder(quote);
     if (!validation.ok) return failConversion(validation.message);
+    const quoteDisplayNo = getQuotationDisplayNo(quote);
 
-    const existing = state.orders.find((order) => order.quoteId === quote.id);
+    const existing = findExistingOrderForQuote(quote);
     if (existing) {
-      const message = `Order already exists: ${existing.orderNumber}`;
+      const message = `This quotation has already been converted to order. Order No: ${getOrderDisplayNo(existing)}`;
       showWorkflowMessage(message, "warning");
+      orderSearch = { ...orderSearch, orderNumber: getOrderDisplayNo(existing), filter: "all", highlightId: existing.id };
       renderWorkflowModules();
       scrollToOrders();
       return { ok: false, message, order: existing };
@@ -120,7 +121,10 @@ export function convertQuoteToOrder(quoteId) {
     state.productionJobs = [productionJob, ...state.productionJobs];
     state.installationJobs = [installationJob, ...state.installationJobs];
     quote.status = "won";
-    quote.orderNumber = order.orderNumber;
+    quote.quoteNumber = quoteDisplayNo;
+    quote.quotationNo = quoteDisplayNo;
+    quote.orderNo = getOrderDisplayNo(order);
+    quote.orderNumber = getOrderDisplayNo(order);
     quote.updatedAt = new Date().toISOString();
 
     const cloudSaves = [
@@ -137,8 +141,9 @@ export function convertQuoteToOrder(quoteId) {
       showWorkflowMessage("Order saved locally but cloud sync failed", "warning");
     });
 
-    const message = `Order created successfully: ${order.orderNumber}`;
+    const message = `Order created successfully. Order No: ${getOrderDisplayNo(order)}`;
     showWorkflowMessage(message, "success");
+    orderSearch = { ...orderSearch, orderNumber: getOrderDisplayNo(order), filter: "all", highlightId: order.id };
     renderWorkflowModules();
     scrollToOrders();
     return { ok: true, message, order };
@@ -149,16 +154,19 @@ export function convertQuoteToOrder(quoteId) {
 }
 
 export function getQuoteById(quoteId) {
-  return state.quotations.find((row) => row.id === quoteId || row.quoteNumber === quoteId) || null;
+  return state.quotations.find((row) => row.id === quoteId || getQuotationDisplayNo(row) === quoteId) || null;
 }
 
 export function createOrderFromQuote(quote) {
   const totals = quoteTotals(quote.items, quote.discount, quote.deposit);
+  const displayNo = getQuotationDisplayNo(quote);
   return {
     id: uid("order"),
-    orderNumber: nextOrderNumber(),
+    orderNo: displayNo,
+    orderNumber: displayNo,
     quoteId: quote.id,
-    quoteNumber: quote.quoteNumber,
+    quoteNumber: displayNo,
+    quotationNo: displayNo,
     customer: { ...quote.customer },
     items: quote.items.map((item) => ({ ...itemWithCalculatedTotals(item) })),
     subtotal: totals.subtotal,
@@ -178,11 +186,13 @@ export function createOrderFromQuote(quote) {
 }
 
 export function createProductionJobFromOrder(order) {
+  const orderNo = getOrderDisplayNo(order);
   return {
     id: uid("production"),
     productionNumber: nextProductionNumber(),
     orderId: order.id,
-    orderNumber: order.orderNumber,
+    orderNo,
+    orderNumber: orderNo,
     customerName: order.customer.name,
     items: order.items.map((item) => itemWithCalculatedTotals(item)),
     installationDate: order.installationDate || "",
@@ -194,11 +204,13 @@ export function createProductionJobFromOrder(order) {
 }
 
 export function createInstallationJobFromOrder(order) {
+  const orderNo = getOrderDisplayNo(order);
   return {
     id: uid("installation"),
     installationNumber: nextInstallationNumber(),
     orderId: order.id,
-    orderNumber: order.orderNumber,
+    orderNo,
+    orderNumber: orderNo,
     customer: { ...order.customer },
     items: order.items.map((item) => itemWithCalculatedTotals(item)),
     installationDate: order.installationDate,
@@ -250,9 +262,10 @@ function failConversion(message) {
 
 function validateQuoteForOrder(quote) {
   if (!quote) return { ok: false, message: "Please save quotation first" };
-  if (!String(quote.customer?.name || "").trim()) return { ok: false, message: "Customer name is required" };
-  if (!String(quote.customer?.phone || "").trim()) return { ok: false, message: "Phone number is required" };
-  if (!Array.isArray(quote.items) || !quote.items.length) return { ok: false, message: "Please add at least one product item" };
+  if (!String(quote.customer?.name || "").trim()) return { ok: false, message: "Missing customer name" };
+  if (!String(quote.customer?.phone || "").trim()) return { ok: false, message: "Missing phone number" };
+  if (!getQuotationDisplayNo(quote)) return { ok: false, message: "Missing quotation number" };
+  if (!Array.isArray(quote.items) || !quote.items.length) return { ok: false, message: "Missing quotation items" };
   const totals = quoteTotals(quote.items, quote.discount, quote.deposit);
   const total = toNumber(quote.total || totals.total);
   if (total <= 0) return { ok: false, message: "Quote total must be more than 0" };
@@ -260,8 +273,25 @@ function validateQuoteForOrder(quote) {
   return { ok: true };
 }
 
+export function getQuotationDisplayNo(quote = {}) {
+  return String(quote.quotationNo || quote.quoteNo || quote.quoteNumber || quote.number || quote.refNo || "").trim();
+}
+
+function getOrderDisplayNo(order = {}) {
+  return String(order.orderNo || order.orderNumber || order.quoteNumber || order.quotationNo || "").trim();
+}
+
+function findExistingOrderForQuote(quote) {
+  const quoteNo = normalizeText(getQuotationDisplayNo(quote));
+  return state.orders.find((order) => {
+    const orderNo = normalizeText(getOrderDisplayNo(order));
+    const orderQuoteNo = normalizeText(order.quoteNumber || order.quotationNo || order.quoteNo);
+    return order.quoteId === quote.id || (quoteNo && (orderNo === quoteNo || orderQuoteNo === quoteNo));
+  }) || null;
+}
+
 function showWorkflowMessage(message, type = "info") {
-  const status = document.querySelector("#workflowStatus");
+  const status = document.querySelector("#workflowStatus") || document.querySelector("#saveStatus");
   if (!status) return;
   status.textContent = t(message);
   status.dataset.type = type;
