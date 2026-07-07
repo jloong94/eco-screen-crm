@@ -2,7 +2,21 @@ import { attachLoginEvents, attachUserManagementEvents, logout, renderLoginCard,
 import { adsPageHtml, attachAdsEvents, renderAdsDashboard } from "./ads.js";
 import { renderAddProductForm, renderProducts, attachProductEvents } from "./products.js";
 import { attachQuotationEvents, renderQuotationForm } from "./quotations.js";
-import { applyCloudSnapshot, persistCompanySettings, replaceStateFromBackup, setLanguage, setPage, state, stateSnapshot, updateCloudStatus } from "./state.js";
+import {
+  applyCloudSnapshot,
+  persistCompanySettings,
+  persistInstallationJobs,
+  persistOrders,
+  persistProductionJobs,
+  persistQuotations,
+  persistWarrantyCards,
+  replaceStateFromBackup,
+  setLanguage,
+  setPage,
+  state,
+  stateSnapshot,
+  updateCloudStatus
+} from "./state.js";
 import { money, toNumber } from "./calculations.js";
 import { attachWorkflowEvents, renderWorkflowModules } from "./workflow.js";
 import { t } from "./i18n.js";
@@ -262,6 +276,7 @@ function productManagementPageHtml() {
         </div>
       </div>
       ${companySettingsHtml()}
+      ${orderResetToolsHtml()}
       <div id="addProductPanel"></div>
       <p id="productSaveStatus" class="muted-text"></p>
       <div id="productList" class="product-list"></div>
@@ -300,6 +315,7 @@ function renderShell() {
   if (isCurrentPage("products")) {
     attachProductEvents();
     attachCompanySettingsEvents();
+    attachOrderResetToolsEvents();
     renderAddProductForm();
     renderProducts();
   }
@@ -515,6 +531,143 @@ function attachCompanySettingsEvents() {
       if (status) status.textContent = result.ok ? "Company settings saved and synced." : "Company settings saved locally.";
     });
   });
+}
+
+function orderResetToolsHtml() {
+  if (!isBossOrAdmin()) return "";
+  return `
+    <section class="panel danger-panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Admin Tools</p>
+          <h2>Reset Orders and Reconversion Data</h2>
+        </div>
+      </div>
+      <p class="muted-text">
+        This will delete Orders, Production Jobs, Installation Jobs and Warranty Cards.
+        Quotations will be kept. Customers will be kept. Products will be kept.
+        Company Settings will be kept. This action is for fixing order conversion records.
+      </p>
+      <div class="form-grid compact">
+        <label class="wide">Confirmation Text
+          <input id="resetOrdersConfirmation" placeholder="Type RESET ORDERS" autocomplete="off" />
+        </label>
+      </div>
+      <div class="actions">
+        <button class="btn" id="backupBeforeOrderResetButton" type="button">Backup Data First</button>
+        <button class="btn danger" id="resetOrdersOnlyButton" type="button">Reset Orders Only</button>
+        <span class="muted-text" id="orderResetStatus"></span>
+      </div>
+    </section>
+  `;
+}
+
+function attachOrderResetToolsEvents() {
+  document.querySelector("#backupBeforeOrderResetButton")?.addEventListener("click", exportOrderResetBackup);
+  document.querySelector("#resetOrdersOnlyButton")?.addEventListener("click", resetOrdersOnly);
+}
+
+function exportOrderResetBackup() {
+  if (!isBossOrAdmin()) return;
+  downloadJsonBackup(orderResetBackupPayload(), orderResetBackupFilename());
+  setOrderResetStatus("Backup downloaded. You can reset after checking the backup file.", "success");
+}
+
+function resetOrdersOnly() {
+  if (!isBossOrAdmin()) return;
+  const status = document.querySelector("#orderResetStatus");
+  const confirmation = document.querySelector("#resetOrdersConfirmation")?.value || "";
+  if (confirmation !== "RESET ORDERS") {
+    setOrderResetStatus("Type RESET ORDERS to confirm reset.", "error");
+    return;
+  }
+  const proceed = window.confirm("This will delete Orders, Production Jobs, Installation Jobs and Warranty Cards. Quotations will be kept. Continue?");
+  if (!proceed) return;
+
+  downloadJsonBackup(orderResetBackupPayload(), orderResetBackupFilename());
+
+  state.orders = [];
+  state.productionJobs = [];
+  state.installationJobs = [];
+  state.warrantyCards = [];
+  state.quotations = state.quotations.map((quote) => {
+    const next = { ...quote };
+    next.convertedToOrder = false;
+    next.converted = false;
+    next.orderId = null;
+    next.orderNo = null;
+    next.orderNumber = null;
+    next.convertedAt = null;
+    if (next.workflowStatus && !["quoted", "follow_up"].includes(next.workflowStatus)) next.workflowStatus = "quoted";
+    if (["won", "converted", "ordered"].includes(String(next.status || "").toLowerCase())) next.status = "quoted";
+    return next;
+  });
+
+  const syncs = [
+    persistOrders(),
+    persistProductionJobs(),
+    persistInstallationJobs(),
+    persistWarrantyCards(),
+    persistQuotations()
+  ];
+  Promise.all(syncs).then((results) => {
+    const failed = results.find((result) => result && !result.ok && result.reason !== "Local Mode Only");
+    updateCloudStatus(failed
+      ? { status: "Cloud Sync Failed", connected: false, lastError: failed.reason || "Cloud sync failed." }
+      : { status: isCloudConfigured() ? "Cloud Connected" : "Local Mode Only", connected: isCloudConfigured(), lastSyncAt: new Date().toISOString(), lastError: "" });
+    renderShell();
+    setOrderResetStatus(failed
+      ? "Reset saved locally but cloud sync failed. Please click Sync Now."
+      : "Orders reset completed. You can now reconvert quotations.",
+    failed ? "warning" : "success");
+  }).catch((error) => {
+    console.error("Reset orders sync failed", error);
+    updateCloudStatus({ status: "Cloud Sync Failed", connected: false, lastError: error.message || "Cloud sync failed." });
+    renderShell();
+    setOrderResetStatus("Reset saved locally but cloud sync failed. Please click Sync Now.", "warning");
+  });
+
+  if (status) status.textContent = "Resetting orders and syncing cloud...";
+}
+
+function orderResetBackupPayload() {
+  return {
+    timestamp: new Date().toISOString(),
+    customers: state.customers,
+    quotations: state.quotations,
+    orders: state.orders,
+    productionJobs: state.productionJobs,
+    installationJobs: state.installationJobs,
+    warrantyCards: state.warrantyCards,
+    products: state.products,
+    users: state.users,
+    companySettings: state.companySettings
+  };
+}
+
+function orderResetBackupFilename() {
+  const stamp = new Date().toISOString().slice(0, 16).replace("T", "-").replace(":", "-");
+  return `eco-screen-crm-v2-backup-before-order-reset-${stamp}.json`;
+}
+
+function downloadJsonBackup(payload, filename) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function setOrderResetStatus(message, type = "info") {
+  const status = document.querySelector("#orderResetStatus");
+  if (!status) {
+    window.alert(message);
+    return;
+  }
+  status.textContent = message;
+  status.dataset.type = type;
 }
 
 function attachMonthlySummaryEvents() {

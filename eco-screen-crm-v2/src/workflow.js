@@ -165,6 +165,7 @@ export function createOrderFromQuote(quote) {
     orderNo: displayNo,
     orderNumber: displayNo,
     quoteId: quote.id,
+    quotationId: quote.id,
     quoteNumber: displayNo,
     quotationNo: displayNo,
     customer: { ...quote.customer },
@@ -298,7 +299,7 @@ function getOrderDisplayNo(order = {}) {
 function findExistingOrderForQuote(quote) {
   const quoteNo = normalizeRefNo(getQuotationDisplayNo(quote));
   return state.orders.find((order) => {
-    const sameQuoteId = order.quoteId && quote.id && order.quoteId === quote.id;
+    const sameQuoteId = quote.id && (order.quoteId === quote.id || order.quotationId === quote.id);
     const orderNo = normalizeRefNo(order.orderNo || order.orderNumber);
     const orderQuoteNo = normalizeRefNo(order.quoteNumber || order.quotationNo || order.quoteNo);
     const sameDisplayNo = quoteNo && ((orderNo && orderNo === quoteNo) || (orderQuoteNo && orderQuoteNo === quoteNo));
