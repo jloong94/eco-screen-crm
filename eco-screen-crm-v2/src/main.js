@@ -15,10 +15,11 @@ import {
   setPage,
   state,
   stateSnapshot,
+  uid,
   updateCloudStatus
 } from "./state.js";
-import { money, toNumber } from "./calculations.js";
-import { attachWorkflowEvents, renderWorkflowModules } from "./workflow.js";
+import { itemWithCalculatedTotals, money, quoteTotals, toNumber } from "./calculations.js";
+import { attachWorkflowEvents, getQuotationDisplayNo, renderWorkflowModules } from "./workflow.js";
 import { t } from "./i18n.js";
 import { canAccessPage, defaultPageForRole, isBossOrAdmin, pageDefinitions, role } from "./permissions.js";
 import { isCloudConfigured, safeSyncWithCloud, syncToCloud } from "./cloudSync.js";
@@ -540,6 +541,28 @@ function orderResetToolsHtml() {
       <div class="panel-head">
         <div>
           <p class="eyebrow">Admin Tools</p>
+          <h2>Emergency Rebuild Orders From Quotations</h2>
+        </div>
+      </div>
+      <p class="muted-text">
+        This tool backs up all CRM data, clears workflow records, and rebuilds one Order from each Quotation that has items.
+        Old converted flags are ignored. Production, Installation and Warranty records stay empty until you send orders later.
+      </p>
+      <div class="form-grid compact">
+        <label class="wide">Confirmation Text
+          <input id="rebuildOrdersConfirmation" placeholder="Type REBUILD ORDERS" autocomplete="off" />
+        </label>
+      </div>
+      <div class="actions">
+        <button class="btn" id="backupBeforeRebuildOrdersButton" type="button">Backup First</button>
+        <button class="btn danger" id="rebuildOrdersFromQuotationsButton" type="button">Rebuild Orders From Quotations</button>
+        <span class="muted-text" id="rebuildOrdersStatus"></span>
+      </div>
+    </section>
+    <section class="panel danger-panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Admin Tools</p>
           <h2>Reset Orders and Reconversion Data</h2>
         </div>
       </div>
@@ -565,6 +588,134 @@ function orderResetToolsHtml() {
 function attachOrderResetToolsEvents() {
   document.querySelector("#backupBeforeOrderResetButton")?.addEventListener("click", exportOrderResetBackup);
   document.querySelector("#resetOrdersOnlyButton")?.addEventListener("click", resetOrdersOnly);
+  document.querySelector("#backupBeforeRebuildOrdersButton")?.addEventListener("click", exportRebuildOrdersBackup);
+  document.querySelector("#rebuildOrdersFromQuotationsButton")?.addEventListener("click", rebuildOrdersFromQuotations);
+}
+
+function exportRebuildOrdersBackup() {
+  if (!isBossOrAdmin()) return;
+  downloadJsonBackup(orderResetBackupPayload(), rebuildOrdersBackupFilename());
+  setRebuildOrdersStatus("Backup downloaded. You can rebuild after checking the backup file.", "success");
+}
+
+function rebuildOrdersFromQuotations() {
+  if (!isBossOrAdmin()) return;
+  const confirmation = document.querySelector("#rebuildOrdersConfirmation")?.value || "";
+  if (confirmation !== "REBUILD ORDERS") {
+    setRebuildOrdersStatus("Type REBUILD ORDERS to confirm rebuild.", "error");
+    return;
+  }
+  const proceed = window.confirm("This will clear Orders, Production Jobs, Installation Jobs and Warranty Cards, then rebuild Orders from Quotations. Continue?");
+  if (!proceed) return;
+
+  downloadJsonBackup(orderResetBackupPayload(), rebuildOrdersBackupFilename());
+
+  const now = new Date().toISOString();
+  const errors = [];
+  let skipped = 0;
+  const orders = [];
+  const updatedQuotations = state.quotations.map((quote) => {
+    if (!Array.isArray(quote.items) || !quote.items.length) {
+      skipped += 1;
+      errors.push(`${getQuotationDisplayNo(quote) || quote.id || "Unknown quotation"} skipped: no items`);
+      return quote;
+    }
+    const order = buildOrderFromQuotationForRebuild(quote, now);
+    orders.push(order);
+    return {
+      ...quote,
+      convertedToOrder: true,
+      converted: true,
+      orderId: order.id,
+      orderNo: order.orderNo,
+      orderNumber: order.orderNumber,
+      convertedAt: now,
+      updatedAt: now
+    };
+  });
+
+  state.orders = orders;
+  state.productionJobs = [];
+  state.installationJobs = [];
+  state.warrantyCards = [];
+  state.quotations = updatedQuotations;
+
+  const syncs = [
+    persistOrders(),
+    persistQuotations(),
+    persistProductionJobs(),
+    persistInstallationJobs(),
+    persistWarrantyCards()
+  ];
+  Promise.all(syncs).then((results) => {
+    const failed = results.find((result) => result && !result.ok && result.reason !== "Local Mode Only");
+    updateCloudStatus(failed
+      ? { status: "Cloud Sync Failed", connected: false, lastError: failed.reason || "Cloud sync failed." }
+      : { status: isCloudConfigured() ? "Cloud Connected" : "Local Mode Only", connected: isCloudConfigured(), lastSyncAt: new Date().toISOString(), lastError: "" });
+    renderShell();
+    setRebuildOrdersStatus(rebuildOrdersResultMessage(orders.length, skipped, errors, failed), failed ? "warning" : "success");
+  }).catch((error) => {
+    console.error("Rebuild orders sync failed", error);
+    updateCloudStatus({ status: "Cloud Sync Failed", connected: false, lastError: error.message || "Cloud sync failed." });
+    renderShell();
+    setRebuildOrdersStatus(rebuildOrdersResultMessage(orders.length, skipped, errors, { reason: "Cloud sync failed" }), "warning");
+  });
+
+  setRebuildOrdersStatus("Rebuilding orders and syncing cloud...", "info");
+}
+
+function buildOrderFromQuotationForRebuild(quote, now) {
+  const orderNo = getQuotationDisplayNo(quote) || `Q-${String(quote.id || Date.now()).replace(/[^a-z0-9]/gi, "").slice(-12).toUpperCase()}`;
+  const items = Array.isArray(quote.items) ? quote.items.map((item) => itemWithCalculatedTotals(item)) : [];
+  const totals = quoteTotals(items, quote.discount, quote.deposit);
+  const total = toNumber(quote.total || totals.total);
+  const deposit = toNumber(quote.deposit);
+  const balance = Math.max(toNumber(quote.balance ?? totals.balance), 0);
+  return {
+    id: quote.orderId || uid("order"),
+    quoteId: quote.id,
+    quotationId: quote.id,
+    orderNo,
+    orderNumber: orderNo,
+    quoteNumber: orderNo,
+    quotationNo: orderNo,
+    customer: normalizeQuoteCustomer(quote),
+    items,
+    subtotal: toNumber(quote.subtotal || totals.subtotal),
+    discount: toNumber(quote.discount),
+    total,
+    deposit,
+    balance: total > 0 ? Math.max(total - deposit, 0) : balance,
+    status: total > 0 ? "Confirmed" : "Confirmed - Need Review",
+    sentToProduction: false,
+    productionStatus: "not_produced",
+    installationStatus: "not_scheduled",
+    installationDate: quote.appointmentDate || "",
+    remark: quote.remark || "",
+    createdAt: quote.createdAt || now,
+    updatedAt: now
+  };
+}
+
+function normalizeQuoteCustomer(quote) {
+  const customer = quote.customer || {};
+  return {
+    name: customer.name || quote.customerName || quote.name || "Unknown Customer",
+    phone: customer.phone || quote.phone || quote.customerPhone || "",
+    area: customer.area || quote.area || "",
+    address: customer.address || quote.address || "",
+    remark: customer.remark || quote.customerRemark || ""
+  };
+}
+
+function rebuildOrdersResultMessage(created, skipped, errors, failed) {
+  const lines = [
+    failed ? "Rebuild saved locally but cloud sync failed. Please click Sync Now." : "Rebuild completed.",
+    `Orders created: ${created}`,
+    `Skipped: ${skipped}`
+  ];
+  if (errors.length) lines.push(`Errors: ${errors.slice(0, 10).join(" | ")}`);
+  return lines.join("\n");
 }
 
 function exportOrderResetBackup() {
@@ -650,6 +801,11 @@ function orderResetBackupFilename() {
   return `eco-screen-crm-v2-backup-before-order-reset-${stamp}.json`;
 }
 
+function rebuildOrdersBackupFilename() {
+  const stamp = new Date().toISOString().slice(0, 16).replace("T", "-").replace(":", "-");
+  return `eco-screen-crm-v2-backup-before-order-rebuild-${stamp}.json`;
+}
+
 function downloadJsonBackup(payload, filename) {
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -662,6 +818,16 @@ function downloadJsonBackup(payload, filename) {
 
 function setOrderResetStatus(message, type = "info") {
   const status = document.querySelector("#orderResetStatus");
+  if (!status) {
+    window.alert(message);
+    return;
+  }
+  status.textContent = message;
+  status.dataset.type = type;
+}
+
+function setRebuildOrdersStatus(message, type = "info") {
+  const status = document.querySelector("#rebuildOrdersStatus");
   if (!status) {
     window.alert(message);
     return;
