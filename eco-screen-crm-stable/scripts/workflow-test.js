@@ -165,6 +165,91 @@ assert(importedOrder.oldOrderNo === 'OLD-SO-88', 'Migration: old order number is
 const duplicateResult = api.importOldV2Backup(oldV2Backup, [quoteRow.id, orderRow.id], { preview: api.previewOldV2Backup(oldV2Backup), force: true });
 assert(duplicateResult.quotationsImported === 0 && duplicateResult.ordersImported === 0, 'Migration: duplicate oldRefNo is skipped');
 
+api.reset();
+api.getState().session = { username: 'boss1', role: 'Boss' };
+
+function largeOldV2Backup() {
+  const quotations = [];
+  const orders = [];
+  for (let i = 1; i <= 120; i += 1) {
+    quotations.push({
+      id: 'old-q-id-' + i,
+      quotationNo: 'OLD-Q-' + String(i).padStart(3, '0'),
+      customerName: 'Quote Customer ' + i,
+      phone: '011' + String(i).padStart(7, '0'),
+      items: [{ product: 'Eco Screen Classic', quantity: 1, unitPrice: 100 + i, total: 100 + i }],
+      total: 100 + i,
+      deposit: 0,
+      status: 'follow_up'
+    });
+    orders.push({
+      id: 'old-o-id-' + i,
+      orderNo: 'OLD-O-' + String(i).padStart(3, '0'),
+      quoteNumber: 'OLD-QO-' + String(i).padStart(3, '0'),
+      customerName: 'Order Customer ' + i,
+      phone: '012' + String(i).padStart(7, '0'),
+      items: [{ product: 'Eco Screen Premium', quantity: 1, unitPrice: 500 + i, total: 500 + i }],
+      total: 500 + i,
+      deposit: 100,
+      balance: 400 + i,
+      productionStatus: i % 2 === 0 ? 'sent' : 'not_produced',
+      installationStatus: 'not_scheduled',
+      status: 'confirmed'
+    });
+  }
+  for (let i = 1; i <= 20; i += 1) {
+    quotations.push({
+      id: 'old-empty-id-' + i,
+      quotationNo: 'OLD-NOITEM-' + String(i).padStart(3, '0'),
+      customerName: 'No Item Customer ' + i,
+      phone: '013' + String(i).padStart(7, '0'),
+      items: [],
+      total: 0
+    });
+  }
+  for (let i = 1; i <= 10; i += 1) {
+    orders.push({
+      id: 'old-o-id-dup-' + i,
+      orderNo: 'OLD-O-' + String(i).padStart(3, '0'),
+      quoteNumber: 'OLD-DUP-Q-' + String(i).padStart(3, '0'),
+      customerName: 'Duplicate Order Customer ' + i,
+      phone: '014' + String(i).padStart(7, '0'),
+      items: [{ product: 'Eco Screen Premium', quantity: 1, unitPrice: 800, total: 800 }],
+      total: 800,
+      deposit: 0,
+      balance: 800,
+      status: 'confirmed'
+    });
+  }
+  return { data: { quotations, orders } };
+}
+
+const largeBackup = largeOldV2Backup();
+const largePreview = api.previewOldV2Backup(largeBackup);
+assert(largePreview.totals.totalRecords === 270, 'Large migration: preview should see all 270 records');
+assert(largePreview.totals.valid === 240, 'Large migration: valid count should be 240');
+assert(largePreview.totals.skipped === 30, 'Large migration: skipped count should be 30');
+assert(largePreview.totals.duplicates === 10, 'Large migration: duplicate count should be 10');
+assert(largePreview.totals.skippedNoItems === 20, 'Large migration: no-item count should be 20');
+const allValidIds = largePreview.rows.filter((row) => row.importable).map((row) => row.id);
+assert(allValidIds.length === 240, 'Large migration: Select All Valid should select all 240 valid rows');
+const pageOneIds = largePreview.rows.slice(0, 20).filter((row) => row.importable).map((row) => row.id);
+const pageTwoIds = largePreview.rows.slice(20, 40).filter((row) => row.importable).map((row) => row.id);
+const selectedAcrossPages = new Set(pageOneIds);
+pageTwoIds.forEach((id) => selectedAcrossPages.add(id));
+assert(pageOneIds.every((id) => selectedAcrossPages.has(id)), 'Large migration: page 1 selection remains after page 2 selection');
+const searchedRows = largePreview.rows.filter((row) => `${row.customer} ${row.phone} ${row.oldRefNo}`.toLowerCase().includes('order customer 120'));
+assert(searchedRows.length === 1 && pageOneIds.every((id) => selectedAcrossPages.has(id)), 'Large migration: search does not delete existing selection');
+const largeResult = api.importOldV2Backup(largeBackup, allValidIds, { preview: largePreview, force: true });
+assert(largeResult.imported === 240, 'Large migration: import should process all selected valid rows, not only visible rows');
+assert(largeResult.ordersImported === 120, 'Large migration: imports more than 100 orders');
+const importedOrderNumbers = api.getState().orders.map((order) => order.orderNo);
+['SO2607001', 'SO2607009', 'SO2607010', 'SO2607011', 'SO2607100', 'SO2607120'].forEach((orderNo) => {
+  assert(importedOrderNumbers.includes(orderNo), 'Large migration: expected order number ' + orderNo);
+});
+const repeatPreview = api.previewOldV2Backup(largeBackup);
+assert(repeatPreview.totals.duplicates >= 250, 'Large migration: duplicate preview detects previously imported old refs/source ids');
+
 process.stdout.write([
   'Workflow tests passed',
   'B quotation manual total RM800: passed',
@@ -175,5 +260,7 @@ process.stdout.write([
   'G installation full/partial collection: passed',
   'H company phone: passed',
   'I role safety basis: passed',
-  'Migration preview/import/duplicate skip: passed'
+  'Migration preview/import/duplicate skip: passed',
+  'Large migration 270-row preview and 240-row import: passed',
+  'SO sequence 001/009/010/011/100/120: passed'
 ].join('\n') + '\n');
