@@ -8,9 +8,21 @@ import {
   productById,
   state
 } from "./state.js";
-import { baseLineTotal, chargeableSqft, itemWithCalculatedTotals, lineTotal, money, powdercoatAmount, quoteTotals, toNumber } from "./calculations.js";
-import { convertQuoteToOrder, getQuotationDisplayNo, renderWorkflowModules } from "./workflow.js";
+import {
+  autoCalculatedPrice,
+  baseLineTotal,
+  chargeableSqft,
+  hasManualFinalPrice,
+  itemWithCalculatedTotals,
+  lineTotal,
+  money,
+  powdercoatAmount,
+  quoteTotals,
+  toNumber
+} from "./calculations.js";
+import { convertQuoteToOrder, getQuotationDisplayNo, normalizeRefNo, renderWorkflowModules } from "./workflow.js";
 import { normalizeStatus, statusLabel, t } from "./i18n.js";
+import { isBossOrAdmin } from "./permissions.js";
 
 export function renderQuotationForm() {
   const quote = ensureCurrentQuote();
@@ -162,6 +174,12 @@ function itemCardHtml(item, index) {
             <option value="true" ${item.powdercoat ? "selected" : ""}>Yes</option>
           </select>
         </label>
+        <label>${t("Manual Final Price")}
+          <input inputmode="decimal" data-item-id="${item.id}" data-field="manualFinalPrice" value="${escapeHtml(item.manualFinalPrice ?? "")}" placeholder="Optional final RM" />
+        </label>
+        <label class="wide">${t("Adjustment Remark")}
+          <input data-item-id="${item.id}" data-field="priceAdjustmentRemark" value="${escapeHtml(item.priceAdjustmentRemark || "")}" placeholder="Reason for price adjustment" />
+        </label>
         <label class="wide">${t("Remark")}
           <textarea rows="2" data-item-id="${item.id}" data-field="remark" placeholder="Site note, special request">${escapeHtml(item.remark || "")}</textarea>
         </label>
@@ -172,6 +190,8 @@ function itemCardHtml(item, index) {
           <strong data-line-id="${item.id}" data-line-field="base">${money(baseLineTotal(item))}</strong>
           <span>Powdercoat 8%</span>
           <strong data-line-id="${item.id}" data-line-field="powdercoat">${money(powdercoatAmount(item))}</strong>
+          <span>${t("Auto Calculated Price")}</span>
+          <strong data-line-id="${item.id}" data-line-field="auto">${money(autoCalculatedPrice(item))}</strong>
           <span>${t("Line Total")}</span>
           <strong data-line-id="${item.id}" data-line-field="total">${money(lineTotal(item))}</strong>
         </div>
@@ -216,10 +236,11 @@ function updateItemFromEvent(event) {
     item.powdercoat = event.target.value === "true";
     item.powdercoatRate = Number(item.powdercoatRate || 0.08);
   } else {
-    item[field] = ["width", "height", "quantity", "unitPrice"].includes(field)
+    item[field] = ["width", "height", "quantity", "unitPrice", "manualFinalPrice"].includes(field)
       ? event.target.value.replace(/[^\d.]/g, "")
       : event.target.value;
   }
+  item.autoCalculatedPrice = autoCalculatedPrice(item);
   updateLineCalculation(item);
   updateQuoteSummary();
 }
@@ -228,10 +249,13 @@ function updateLineCalculation(item) {
   const area = document.querySelector(`[data-line-id="${item.id}"][data-line-field="area"]`);
   const base = document.querySelector(`[data-line-id="${item.id}"][data-line-field="base"]`);
   const powdercoat = document.querySelector(`[data-line-id="${item.id}"][data-line-field="powdercoat"]`);
+  const auto = document.querySelector(`[data-line-id="${item.id}"][data-line-field="auto"]`);
   const total = document.querySelector(`[data-line-id="${item.id}"][data-line-field="total"]`);
+  item.autoCalculatedPrice = autoCalculatedPrice(item);
   if (area) area.textContent = chargeableSqft(item).toFixed(2);
   if (base) base.textContent = money(baseLineTotal(item));
   if (powdercoat) powdercoat.textContent = money(powdercoatAmount(item));
+  if (auto) auto.textContent = money(autoCalculatedPrice(item));
   if (total) total.textContent = money(lineTotal(item));
 }
 
@@ -300,6 +324,7 @@ export function renderQuotationList() {
         <span>${money(quote.total || 0)}</span>
       </button>
       <button class="btn primary" type="button" data-convert-quote="${quote.id}">${t("Convert to Order")}</button>
+      ${isBossOrAdmin() ? `<button class="btn danger" type="button" data-delete-quote="${quote.id}">${t("Delete")}</button>` : ""}
     </article>
   `).join("") : `<p class="muted-text">${t("No saved quotations yet.")}</p>`;
   list.querySelectorAll("[data-open-quote]").forEach((button) => {
@@ -319,6 +344,59 @@ export function renderQuotationList() {
       renderWorkflowModules();
     });
   });
+  list.querySelectorAll("[data-delete-quote]").forEach((button) => {
+    button.addEventListener("click", () => deleteQuotation(button.dataset.deleteQuote));
+  });
+}
+
+function deleteQuotation(quoteId) {
+  if (!isBossOrAdmin()) {
+    setSaveStatus("Permission denied: your role cannot perform this action.", "error");
+    return;
+  }
+  const quote = state.quotations.find((row) => row.id === quoteId);
+  if (!quote) {
+    setSaveStatus("Quotation not found.", "error");
+    return;
+  }
+  if (quotationHasLinkedOrder(quote)) {
+    setSaveStatus("This quotation has been converted to order. Please cancel/archive the order first.", "error");
+    return;
+  }
+  const confirmation = window.prompt("Are you sure you want to delete this quotation?\nType DELETE to confirm.");
+  if (confirmation !== "DELETE") {
+    setSaveStatus("Delete cancelled.", "info");
+    return;
+  }
+  state.quotations = state.quotations.filter((row) => row.id !== quoteId);
+  if (state.currentQuote?.id === quoteId) state.currentQuote = null;
+  const cloudSave = persistQuotations();
+  setSaveStatus("Quotation deleted successfully. Syncing cloud...", "success");
+  cloudSave.then((result) => {
+    setSaveStatus(result.ok
+      ? "Quotation deleted successfully."
+      : `Quotation deleted locally. Cloud sync failed: ${result.reason}`, result.ok ? "success" : "warning");
+  }).catch((error) => {
+    console.error("Quotation delete cloud sync failed", error);
+    setSaveStatus("Quotation deleted locally. Cloud sync failed.", "warning");
+  });
+  renderQuotationForm();
+}
+
+function quotationHasLinkedOrder(quote) {
+  const quoteNo = normalizeRefNo(getQuotationDisplayNo(quote));
+  return state.orders.some((order) => {
+    const sameQuoteId = quote.id && (order.quoteId === quote.id || order.quotationId === quote.id);
+    const orderNo = normalizeRefNo(order.orderNo || order.orderNumber || order.quoteNumber || order.quotationNo);
+    return sameQuoteId || (quoteNo && orderNo && orderNo === quoteNo);
+  });
+}
+
+function setSaveStatus(message, type = "info") {
+  const status = document.querySelector("#saveStatus");
+  if (!status) return;
+  status.textContent = t(message);
+  status.dataset.type = type;
 }
 
 export function printQuote() {
@@ -387,8 +465,16 @@ function quoteDocumentHtml(quote) {
 function quoteItemRowsHtml(items) {
   return items.map((item, index) => {
     const description = item.description || item.label || item.remark || `${t("Product")} ${index + 1}`;
-    return `<tr><td><strong>${escapeHtml(description)}</strong>${quoteItemDetailLinesHtml(item)}</td><td>${escapeHtml(item.productName || "-")}</td><td class="right">${escapeHtml(item.width || 0)} x ${escapeHtml(item.height || 0)} mm</td><td class="right">${chargeableSqft(item).toFixed(2)}</td><td class="right">${money(item.unitPrice)}</td><td class="right">${escapeHtml(item.quantity || 0)}</td><td class="right amount">${money(lineTotal(item))}</td></tr>`;
+    return `<tr><td><strong>${escapeHtml(description)}</strong>${quoteItemDetailLinesHtml(item)}</td><td>${escapeHtml(item.productName || "-")}</td><td class="right">${escapeHtml(item.width || 0)} x ${escapeHtml(item.height || 0)} mm</td><td class="right">${chargeableSqft(item).toFixed(2)}</td><td class="right">${money(item.unitPrice)}</td><td class="right">${escapeHtml(item.quantity || 0)}</td><td class="right amount">${money(lineTotal(item))}${priceAdjustmentNoteHtml(item)}</td></tr>`;
   }).join("");
+}
+
+function priceAdjustmentNoteHtml(item) {
+  if (!hasManualFinalPrice(item)) return "";
+  const remark = item.priceAdjustmentRemark
+    ? `<small>Remark: ${escapeHtml(item.priceAdjustmentRemark)}</small>`
+    : "";
+  return `<small>Adjusted from ${money(autoCalculatedPrice(item))}</small>${remark}`;
 }
 
 function quoteItemDetailLinesHtml(item) {

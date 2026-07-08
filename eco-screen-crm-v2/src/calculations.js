@@ -37,20 +37,32 @@ export function powdercoatAmount(item) {
   return isPowdercoatSelected(item) ? baseLineTotal(item) * toNumber(item.powdercoatRate || 0.08) : 0;
 }
 
-export function lineTotal(item) {
+export function autoCalculatedPrice(item) {
   return baseLineTotal(item) + powdercoatAmount(item);
+}
+
+export function hasManualFinalPrice(item) {
+  return String(item.manualFinalPrice ?? "").trim() !== "";
+}
+
+export function lineTotal(item) {
+  return hasManualFinalPrice(item) ? toNumber(item.manualFinalPrice) : autoCalculatedPrice(item);
 }
 
 export function itemWithCalculatedTotals(item) {
   const base = baseLineTotal(item);
   const powdercoat = powdercoatAmount(item);
+  const autoPrice = base + powdercoat;
   return {
     ...item,
     powdercoat: isPowdercoatSelected(item),
     powdercoatRate: toNumber(item.powdercoatRate || 0.08),
     baseLineTotal: base,
     powdercoatAmount: powdercoat,
-    lineTotal: base + powdercoat
+    autoCalculatedPrice: autoPrice,
+    manualFinalPrice: item.manualFinalPrice ?? "",
+    priceAdjustmentRemark: item.priceAdjustmentRemark || "",
+    lineTotal: hasManualFinalPrice(item) ? toNumber(item.manualFinalPrice) : autoPrice
   };
 }
 
