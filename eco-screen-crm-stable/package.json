@@ -1,0 +1,12 @@
+{
+  "name": "eco-screen-crm-stable",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Eco Screen CRM Stable",
+  "scripts": {
+    "lint": "node scripts/lint.js",
+    "build": "node scripts/build.js",
+    "test:workflow": "node scripts/workflow-test.js",
+    "dev": "node scripts/dev-server.js"
+  }
+}
