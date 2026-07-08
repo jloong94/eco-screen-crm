@@ -10,7 +10,16 @@ import {
   state,
   uid
 } from "./state.js";
-import { itemWithCalculatedTotals, lineTotal, money, powdercoatAmount, quoteTotals, toNumber } from "./calculations.js";
+import {
+  autoCalculatedPrice,
+  hasManualFinalPrice,
+  itemWithCalculatedTotals,
+  lineTotal,
+  money,
+  powdercoatAmount,
+  quoteTotals,
+  toNumber
+} from "./calculations.js";
 import { normalizeStatus, statusLabel, t } from "./i18n.js";
 import {
   canCompleteInstallation,
@@ -1676,8 +1685,14 @@ function customerBlock(customer) {
 
 function printItemsTable(items, showPrice) {
   return `<table><thead><tr><th>${t("Product")}</th><th>${t("Installation Location")}</th><th>Size</th><th>${t("Quantity")}</th><th>${t("Color")}</th><th>${t("Install Type / Inside Outside")}</th><th>${t("Opening Direction")}</th><th>${t("Track Size")}</th><th>${t("Handle Height")}</th><th>${t("Handle Position")}</th><th>${t("Track Type")}</th><th>${t("Mesh / Net Type")}</th><th>${t("Powdercoat / Powercoat")}</th><th>${t("Remark")}</th>${showPrice ? `<th>${t("Unit Price")}</th><th>${t("Total")}</th>` : ""}</tr></thead><tbody>
-    ${items.map((item) => `<tr><td>${item.productName}</td><td>${item.installationLocation || "-"}</td><td>${item.width || 0} x ${item.height || 0}</td><td>${item.quantity || 0}</td><td>${item.color || "-"}</td><td>${item.installType || "-"}</td><td>${item.openingDirection || "-"}</td><td>${item.trackSize || "-"}</td><td>${item.handleHeight || "-"}</td><td>${item.handlePosition || "-"}</td><td>${item.trackType || item.trackOpening || "-"}</td><td>${meshValue(item) || "-"}</td><td>${item.powdercoat ? `Yes ${money(powdercoatAmount(item))}` : "No"}</td><td>${item.remark || "-"}</td>${showPrice ? `<td>${money(item.unitPrice)}</td><td>${money(lineTotal(item))}</td>` : ""}</tr>`).join("")}
+    ${items.map((item) => `<tr><td>${item.productName}</td><td>${item.installationLocation || "-"}</td><td>${item.width || 0} x ${item.height || 0}</td><td>${item.quantity || 0}</td><td>${item.color || "-"}</td><td>${item.installType || "-"}</td><td>${item.openingDirection || "-"}</td><td>${item.trackSize || "-"}</td><td>${item.handleHeight || "-"}</td><td>${item.handlePosition || "-"}</td><td>${item.trackType || item.trackOpening || "-"}</td><td>${meshValue(item) || "-"}</td><td>${item.powdercoat ? `Yes ${money(powdercoatAmount(item))}` : "No"}</td><td>${item.remark || "-"}</td>${showPrice ? `<td>${money(item.unitPrice)}</td><td>${money(lineTotal(item))}${priceAdjustmentPrintNote(item)}</td>` : ""}</tr>`).join("")}
   </tbody></table>`;
+}
+
+function priceAdjustmentPrintNote(item) {
+  if (!hasManualFinalPrice(item)) return "";
+  const remark = item.priceAdjustmentRemark ? `<small>Remark: ${item.priceAdjustmentRemark}</small>` : "";
+  return `<small>Adjusted from ${money(autoCalculatedPrice(item))}</small>${remark}`;
 }
 
 function totalsBlock(order) {
