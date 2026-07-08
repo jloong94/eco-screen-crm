@@ -5,7 +5,6 @@ export const pageDefinitions = [
   { id: "quotation", label: "Quotation", title: "Quotation" },
   { id: "customers", label: "Customers", title: "Customers" },
   { id: "orders", label: "Orders", title: "Orders" },
-  { id: "ads", label: "Marketing / Ads", title: "Marketing / Ads Tracker" },
   { id: "production", label: "Production", title: "Production Jobs" },
   { id: "installation", label: "Installation", title: "Installation Jobs" },
   { id: "products", label: "Product Management / Settings", title: "Product Management" },
@@ -15,8 +14,8 @@ export const pageDefinitions = [
 export const rolePages = {
   Boss: pageDefinitions.map((page) => page.id),
   Admin: pageDefinitions.map((page) => page.id),
-  Secretary: ["dashboard", "orders", "quotation", "customers", "ads", "production", "installation"],
-  Sales: ["quotation", "customers", "orders", "ads"],
+  Secretary: ["dashboard", "orders", "quotation", "customers", "production", "installation"],
+  Sales: ["quotation", "customers", "orders"],
   Production: ["production"],
   Installer: ["installation"]
 };

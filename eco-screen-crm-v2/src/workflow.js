@@ -23,7 +23,6 @@ import {
 import { normalizeStatus, statusLabel, t } from "./i18n.js";
 import {
   canCompleteInstallation,
-  canDeleteOrders,
   canEditOrder,
   canEditProduction,
   canScheduleInstallation,
@@ -89,7 +88,6 @@ const progressCategories = [
 ];
 
 let activeCompletionJobId = null;
-let orderActionRunning = false;
 let orderSearch = {
   orderNumber: "",
   customerName: "",
@@ -165,17 +163,31 @@ export function getQuoteById(quoteId) {
   return state.quotations.find((row) => row.id === quoteId || getQuotationDisplayNo(row) === quoteId) || null;
 }
 
+export function nextSalesOrderNumber(date = new Date()) {
+  const year = String(date.getFullYear()).slice(-2);
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const prefix = `SO${year}${month}`;
+  const highest = state.orders
+    .map((order) => normalizeRefNo(order.orderNo || order.orderNumber))
+    .filter((number) => number.startsWith(prefix))
+    .map((number) => Number(number.slice(prefix.length)))
+    .filter(Number.isFinite)
+    .reduce((max, number) => Math.max(max, number), 0);
+  return `${prefix}${String(highest + 1).padStart(3, "0")}`;
+}
+
 export function createOrderFromQuote(quote) {
   const totals = quoteTotals(quote.items, quote.discount, quote.deposit);
-  const displayNo = ensureQuotationDisplayNo(quote);
+  const quoteDisplayNo = ensureQuotationDisplayNo(quote);
+  const orderNo = nextSalesOrderNumber();
   return {
     id: uid("order"),
-    orderNo: displayNo,
-    orderNumber: displayNo,
+    orderNo,
+    orderNumber: orderNo,
     quoteId: quote.id,
     quotationId: quote.id,
-    quoteNumber: displayNo,
-    quotationNo: displayNo,
+    quoteNumber: quoteDisplayNo,
+    quotationNo: quoteDisplayNo,
     customer: { ...quote.customer },
     items: quote.items.map((item) => ({ ...itemWithCalculatedTotals(item) })),
     subtotal: totals.subtotal,
@@ -207,9 +219,10 @@ function updateOrderFromQuote(existingOrder, quote) {
     id: existingOrder.id,
     quoteId: quote.id,
     quotationId: quote.id,
-    orderNo: latest.orderNo,
-    orderNumber: latest.orderNumber,
+    orderNo: existingOrder.orderNo || existingOrder.orderNumber || latest.orderNo,
+    orderNumber: existingOrder.orderNumber || existingOrder.orderNo || latest.orderNumber,
     quoteNumber: latest.quoteNumber,
+    quotationNo: latest.quotationNo,
     createdAt: existingOrder.createdAt || latest.createdAt,
     status: existingInstallationStarted || existingSentToProduction ? existingOrder.status : "Confirmed",
     sentToProduction: existingSentToProduction ? true : latest.sentToProduction,
@@ -227,6 +240,8 @@ export function createProductionJobFromOrder(order) {
     orderId: order.id,
     orderNo,
     orderNumber: orderNo,
+    quoteNumber: order.quoteNumber || order.quotationNo || "",
+    quotationNo: order.quoteNumber || order.quotationNo || "",
     customerName: order.customer.name,
     items: order.items.map((item) => itemWithCalculatedTotals(item)),
     installationDate: order.installationDate || "",
@@ -244,6 +259,8 @@ function upsertWorkflowJobsForOrder(order) {
     productionJob.orderId = order.id;
     productionJob.orderNo = orderNo;
     productionJob.orderNumber = orderNo;
+    productionJob.quoteNumber = order.quoteNumber || order.quotationNo || "";
+    productionJob.quotationNo = order.quoteNumber || order.quotationNo || "";
     productionJob.customerName = order.customer.name;
     productionJob.items = order.items.map((item) => itemWithCalculatedTotals(item));
     productionJob.installationDate = order.installationDate || productionJob.installationDate || "";
@@ -257,6 +274,8 @@ function upsertWorkflowJobsForOrder(order) {
     installationJob.orderId = order.id;
     installationJob.orderNo = orderNo;
     installationJob.orderNumber = orderNo;
+    installationJob.quoteNumber = order.quoteNumber || order.quotationNo || "";
+    installationJob.quotationNo = order.quoteNumber || order.quotationNo || "";
     installationJob.customer = { ...order.customer };
     installationJob.items = order.items.map((item) => itemWithCalculatedTotals(item));
     installationJob.installationDate = order.installationDate || installationJob.installationDate || "";
@@ -278,6 +297,8 @@ function updateWarrantyOrderNumbers(order) {
       orderId: order.id,
       orderNo,
       orderNumber: orderNo,
+      quoteNumber: order.quoteNumber || order.quotationNo || "",
+      quotationNo: order.quoteNumber || order.quotationNo || "",
       updatedAt: new Date().toISOString()
     };
   });
@@ -291,6 +312,8 @@ export function createInstallationJobFromOrder(order) {
     orderId: order.id,
     orderNo,
     orderNumber: orderNo,
+    quoteNumber: order.quoteNumber || order.quotationNo || "",
+    quotationNo: order.quoteNumber || order.quotationNo || "",
     customer: { ...order.customer },
     items: order.items.map((item) => itemWithCalculatedTotals(item)),
     installationDate: order.installationDate,
@@ -485,6 +508,7 @@ function renderOrderTools() {
         <button class="btn primary" type="button" data-order-tool="search">${t("Search")}</button>
         <button class="btn" type="button" data-order-tool="clear">${t("Clear Search")}</button>
         <button class="btn" type="button" data-order-tool="find">${t("Find Order")}</button>
+        ${isBossOrAdmin() ? `<button class="btn danger" type="button" data-order-tool="move-selected-follow-up">${t("Move Selected to Follow Up")}</button>` : ""}
       </div>
       <div class="filter-tabs">
         ${orderFilters.map((filter) => `<button class="filter-tab ${orderSearch.filter === filter.id ? "active" : ""}" type="button" data-order-filter="${filter.id}">${t(filter.label)}</button>`).join("")}
@@ -498,7 +522,8 @@ function renderCompactOrderRow(order) {
   const installationJob = getOrderInstallationJob(order);
   return `
     <article class="compact-order-row ${orderSearch.highlightId === order.id ? "highlight-card" : ""}" data-order-card="${order.id}">
-      <div><strong>${order.orderNumber}</strong><span>${order.customer?.name || "-"} | ${order.customer?.phone || "-"}</span></div>
+      ${isBossOrAdmin() ? `<label class="checkbox-row"><input type="checkbox" data-order-select="${order.id}" /> Select</label>` : ""}
+      <div><strong>${getOrderDisplayNo(order)}</strong><span>${t("Quote")}: ${order.quoteNumber || order.quotationNo || "-"} | ${order.customer?.name || "-"} | ${order.customer?.phone || "-"}</span></div>
       <div><span>${order.customer?.area || "-"}</span><span>${order.installationDate || installationJob?.installationDate || "-"}</span></div>
       <div><span>${t("Production")}: ${statusLabel(getOrderProductionStatus(order, productionJob))}</span><span>${t("Installation")}: ${statusLabel(getOrderInstallationStatus(order, installationJob))}</span></div>
       <div><span>${t("Remaining Balance")}: ${money(getRemainingBalance(order, installationJob))}</span><span>Updated: ${formatShortDate(order.updatedAt || order.createdAt)}</span></div>
@@ -515,7 +540,7 @@ function orderActionsHtml(order) {
       ${canSendOrder() ? `<button class="btn" type="button" data-send-production="${order.id}">${t("Send to Production")}</button><button class="btn" type="button" data-send-installer="${order.id}">${t("Send to Installer")}</button><button class="btn" type="button" data-update-order-status="${order.id}">${t("Update Status")}</button>` : ""}
       <button class="btn" type="button" data-whatsapp-order="${order.id}">${t("WhatsApp Customer")}</button>
       <button class="btn" type="button" data-highlight-order="${order.id}">${t("Search / Open Customer")}</button>
-      ${canDeleteOrders() ? `<button class="btn danger" type="button" data-delete-order="${order.id}">${t("Delete Order")}</button>` : ""}
+      ${isBossOrAdmin() ? `<button class="btn danger" type="button" data-move-follow-up="${order.id}">${t("Move Back to Follow Up")}</button>` : ""}
     </div>
   `;
 }
@@ -525,8 +550,8 @@ function renderOrderProgressCard(order) {
   const installationJob = getOrderInstallationJob(order);
   return `
     <article class="progress-card ${orderSearch.highlightId === order.id ? "highlight-card" : ""}" data-order-card="${order.id}">
-      <strong>${order.orderNumber}</strong>
-      <p class="muted-text">${t("Quote")}: ${order.quoteNumber || "-"}</p>
+      <strong>${getOrderDisplayNo(order)}</strong>
+      <p class="muted-text">${t("Quote")}: ${order.quoteNumber || order.quotationNo || "-"}</p>
       <p>${order.customer?.name || "-"} | ${order.customer?.phone || "-"}</p>
       <p class="muted-text">${order.customer?.area || "-"} | ${order.customer?.address || "-"}</p>
       <p class="muted-text">${productSummary(order.items)}</p>
@@ -552,7 +577,7 @@ function filteredOrders() {
 }
 
 function matchesOrderSearch(order) {
-  const orderNumber = normalizeText(order.orderNumber);
+  const orderNumber = normalizeText(getOrderDisplayNo(order));
   const customerName = normalizeText(order.customer?.name);
   const phone = normalizeText(order.customer?.phone);
   const installationJob = getOrderInstallationJob(order);
@@ -581,7 +606,7 @@ function matchesProgressFilter(categoryId, order) {
 function sortedOrders(rows) {
   return [...rows].sort((a, b) => {
     if (orderSearch.sort === "installationDate") return String(a.installationDate || "").localeCompare(String(b.installationDate || ""));
-    if (orderSearch.sort === "orderNumber") return String(a.orderNumber || "").localeCompare(String(b.orderNumber || ""));
+    if (orderSearch.sort === "orderNumber") return String(getOrderDisplayNo(a)).localeCompare(String(getOrderDisplayNo(b)));
     return Date.parse(b.updatedAt || b.createdAt || 0) - Date.parse(a.updatedAt || a.createdAt || 0);
   });
 }
@@ -591,11 +616,13 @@ function normalizeText(value) {
 }
 
 function getOrderProductionJob(order) {
-  return state.productionJobs.find((job) => job.orderId === order.id || job.orderNumber === order.orderNumber) || null;
+  const orderNo = getOrderDisplayNo(order);
+  return state.productionJobs.find((job) => job.orderId === order.id || normalizeRefNo(job.orderNumber || job.orderNo) === normalizeRefNo(orderNo)) || null;
 }
 
 function getOrderInstallationJob(order) {
-  return state.installationJobs.find((job) => job.orderId === order.id || job.orderNumber === order.orderNumber) || null;
+  const orderNo = getOrderDisplayNo(order);
+  return state.installationJobs.find((job) => job.orderId === order.id || normalizeRefNo(job.orderNumber || job.orderNo) === normalizeRefNo(orderNo)) || null;
 }
 
 function getOrderBalance(order) {
@@ -708,7 +735,8 @@ function renderProductionJobs() {
       <div class="card-head">
         <div>
           <strong>${job.productionNumber}</strong>
-          <p class="muted-text">${t("Order")}: ${job.orderNumber} | ${job.customerName || "-"}</p>
+          <p class="muted-text">${t("Order")}: ${job.orderNo || job.orderNumber} | ${job.customerName || "-"}</p>
+          <p class="muted-text">${t("Quote")}: ${job.quoteNumber || job.quotationNo || "-"}</p>
           <p class="muted-text">${t("Installation Date")}: ${job.installationDate || "-"}</p>
         </div>
         <span class="pill">${statusLabel(job.status)}</span>
@@ -733,7 +761,8 @@ function renderInstallationJobs() {
       <div class="card-head">
         <div>
           <strong>${job.installationNumber}</strong>
-          <p class="muted-text">${t("Order")}: ${job.orderNumber} | ${job.customer.name || "-"}</p>
+          <p class="muted-text">${t("Order")}: ${job.orderNo || job.orderNumber} | ${job.customer.name || "-"}</p>
+          <p class="muted-text">${t("Quote")}: ${job.quoteNumber || job.quotationNo || "-"}</p>
           <p class="muted-text">${job.customer.phone || "-"} | ${job.customer.address || "-"}</p>
         </div>
         <span class="pill">${money(getRemainingBalance(findOrder(job.orderId) || {}, job))} ${t("Remaining Balance")}</span>
@@ -903,7 +932,7 @@ function handleOrderClick(event) {
   const sendProductionId = event.target.dataset.sendProduction;
   const sendInstallerId = event.target.dataset.sendInstaller;
   const updateStatusId = event.target.dataset.updateOrderStatus;
-  const deleteId = event.target.dataset.deleteOrder;
+  const moveFollowUpId = event.target.dataset.moveFollowUp;
   const whatsappId = event.target.dataset.whatsappOrder;
   const highlightId = event.target.dataset.highlightOrder;
   if (page) {
@@ -915,7 +944,7 @@ function handleOrderClick(event) {
   if (sendProductionId) sendOrderToProduction(sendProductionId);
   if (sendInstallerId) sendOrderToInstaller(sendInstallerId);
   if (updateStatusId) updateOrderStatus(updateStatusId);
-  if (deleteId) deleteOrderFlow(deleteId);
+  if (moveFollowUpId) moveOrderBackToFollowUpFlow(moveFollowUpId);
   if (whatsappId) whatsappOrderCustomer(whatsappId);
   if (highlightId) highlightOrder(highlightId);
 }
@@ -958,12 +987,13 @@ function handleOrderToolsClick(event) {
     renderOrders();
   }
   if (tool === "find") quickFindOrder();
+  if (tool === "move-selected-follow-up") moveSelectedOrdersBackToFollowUp();
 }
 
 function quickFindOrder() {
   const value = window.prompt("Enter order number");
   if (value === null) return;
-  const order = state.orders.find((row) => normalizeText(row.orderNumber).includes(normalizeText(value)));
+  const order = state.orders.find((row) => normalizeText(getOrderDisplayNo(row)).includes(normalizeText(value)));
   if (!order) {
     showWorkflowMessage("Order not found", "error");
     return;
@@ -971,7 +1001,7 @@ function quickFindOrder() {
   orderSearch = { ...orderSearch, orderNumber: value, filter: "all", highlightId: order.id };
   renderOrders();
   setTimeout(() => document.querySelector(`[data-order-card="${order.id}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
-  showWorkflowMessage(`Order found: ${order.orderNumber}`, "success");
+  showWorkflowMessage(`Order found: ${getOrderDisplayNo(order)}`, "success");
 }
 
 function highlightOrder(orderId) {
@@ -979,7 +1009,7 @@ function highlightOrder(orderId) {
   if (!order) return;
   orderSearch = {
     ...orderSearch,
-    orderNumber: order.orderNumber,
+    orderNumber: getOrderDisplayNo(order),
     filter: "all",
     highlightId: order.id
   };
@@ -992,7 +1022,7 @@ function whatsappOrderCustomer(orderId) {
   if (!order) return showWorkflowMessage("Order not found.", "error");
   const phone = String(order.customer?.phone || "").replace(/\D/g, "");
   if (!phone) return showWorkflowMessage("Customer phone number is missing.", "error");
-  const text = encodeURIComponent(`Hi ${order.customer?.name || ""}, this is Eco Screen. Your order ${order.orderNumber} is currently ${order.status || "in progress"}. Thank you.`);
+  const text = encodeURIComponent(`Hi ${order.customer?.name || ""}, this is Eco Screen. Your order ${getOrderDisplayNo(order)} is currently ${order.status || "in progress"}. Thank you.`);
   window.open(`https://wa.me/6${phone.replace(/^6/, "")}?text=${text}`, "_blank", "noopener");
 }
 
@@ -1004,70 +1034,81 @@ function updateOrderStatus(orderId) {
   showWorkflowMessage(`Order status updated: ${order.status}`, "success");
 }
 
-function deleteOrderFlow(orderId) {
-  if (orderActionRunning) return showWorkflowMessage("Another order action is running. Please wait.", "warning");
-  if (!canDeleteOrders()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+function moveSelectedOrdersBackToFollowUp() {
+  if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+  const selectedIds = [...document.querySelectorAll("[data-order-select]:checked")].map((input) => input.dataset.orderSelect);
+  if (!selectedIds.length) return showWorkflowMessage("Please select at least one order.", "warning");
+  const confirmation = window.prompt(`Move ${selectedIds.length} selected order(s) back to Follow Up?\nType FOLLOW UP to confirm.`);
+  if (confirmation !== "FOLLOW UP") return showWorkflowMessage("Move back cancelled.", "warning");
+  const result = moveOrdersBackToFollowUp(selectedIds);
+  persistMovedBackOrders(result);
+}
+
+function moveOrderBackToFollowUpFlow(orderId) {
+  if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
   const order = findOrder(orderId);
   if (!order) return showWorkflowMessage("Order not found.", "error");
-  const confirmed = window.confirm("Are you sure you want to delete this order? This will also affect related production and installation jobs.");
-  if (!confirmed) return;
-  const action = window.prompt("Type ARCHIVE to archive/cancel this order, or DELETE for permanent delete.");
-  if (action === null) return;
-  const normalized = action.trim().toUpperCase();
-  if (normalized === "ARCHIVE") archiveOrder(orderId);
-  else if (normalized === "DELETE") permanentDeleteOrder(orderId);
-  else showWorkflowMessage("Delete cancelled. Type ARCHIVE or DELETE.", "warning");
+  const confirmation = window.prompt(`Move ${getOrderDisplayNo(order)} back to Follow Up?\nType FOLLOW UP to confirm.`);
+  if (confirmation !== "FOLLOW UP") return showWorkflowMessage("Move back cancelled.", "warning");
+  const result = moveOrdersBackToFollowUp([orderId]);
+  persistMovedBackOrders(result);
 }
 
-function archiveOrder(orderId) {
-  orderActionRunning = true;
-  try {
-    const order = findOrder(orderId);
-    if (!order) return;
-    const reason = window.prompt("Cancel reason / archive note", "") || "";
-    const now = new Date().toISOString();
-    Object.assign(order, {
-      status: "Cancelled",
-      isArchived: true,
-      archivedAt: now,
-      cancelReason: reason,
+function moveOrdersBackToFollowUp(orderIds) {
+  const ids = new Set(orderIds);
+  const now = new Date().toISOString();
+  const movedOrders = state.orders.filter((order) => ids.has(order.id));
+  const movedOrderNumbers = new Set(movedOrders.map((order) => normalizeRefNo(getOrderDisplayNo(order))).filter(Boolean));
+  const movedOrderIds = new Set(movedOrders.map((order) => order.id));
+  const movedQuoteIds = new Set(movedOrders.flatMap((order) => [order.quoteId, order.quotationId]).filter(Boolean));
+  const movedQuoteNumbers = new Set(movedOrders.flatMap((order) => [order.quoteNumber, order.quotationNo]).map(normalizeRefNo).filter(Boolean));
+
+  state.orders = state.orders.filter((order) => !movedOrderIds.has(order.id));
+  state.productionJobs = state.productionJobs.filter((job) => !movedOrderIds.has(job.orderId) && !movedOrderNumbers.has(normalizeRefNo(job.orderNo || job.orderNumber)));
+  state.installationJobs = state.installationJobs.filter((job) => !movedOrderIds.has(job.orderId) && !movedOrderNumbers.has(normalizeRefNo(job.orderNo || job.orderNumber)));
+  state.warrantyCards = state.warrantyCards.filter((card) => !movedOrderIds.has(card.orderId) && !movedOrderNumbers.has(normalizeRefNo(card.orderNo || card.orderNumber)));
+  state.quotations = state.quotations.map((quote) => {
+    const quoteNo = normalizeRefNo(getQuotationDisplayNo(quote));
+    const linked = movedQuoteIds.has(quote.id) || (quoteNo && movedQuoteNumbers.has(quoteNo));
+    if (!linked) return quote;
+    return {
+      ...quote,
+      status: "follow_up",
+      workflowStatus: "follow_up",
+      convertedToOrder: false,
+      converted: false,
+      orderId: null,
+      orderNo: null,
+      orderNumber: null,
+      convertedAt: null,
       updatedAt: now
-    });
-    state.productionJobs = state.productionJobs.map((job) => job.orderId === order.id && job.status !== "Completed" ? { ...job, status: "Cancelled", updatedAt: now } : job);
-    state.installationJobs = state.installationJobs.map((job) => job.orderId === order.id && job.status !== "Completed" ? { ...job, status: "Cancelled", updatedAt: now } : job);
-    persistOrders();
-    persistProductionJobs();
-    persistInstallationJobs();
-    orderSearch = { ...orderSearch, filter: "archived", highlightId: order.id };
-    renderWorkflowModules();
-    showWorkflowMessage("Order archived / cancelled", "success");
-  } finally {
-    orderActionRunning = false;
-  }
+    };
+  });
+  orderSearch = { ...orderSearch, highlightId: "", filter: "active" };
+  return { movedCount: movedOrders.length };
 }
 
-function permanentDeleteOrder(orderId) {
-  const confirmation = window.prompt("Type DELETE to confirm permanent deletion");
-  if (confirmation !== "DELETE") {
-    showWorkflowMessage("Permanent delete cancelled.", "warning");
-    return;
-  }
-  orderActionRunning = true;
-  try {
-    const order = findOrder(orderId);
-    if (!order) return;
-    state.orders = state.orders.filter((row) => row.id !== order.id);
-    state.productionJobs = state.productionJobs.filter((job) => job.orderId !== order.id);
-    state.installationJobs = state.installationJobs.filter((job) => job.orderId !== order.id);
-    persistOrders();
-    persistProductionJobs();
-    persistInstallationJobs();
-    orderSearch = { ...orderSearch, highlightId: "" };
+function persistMovedBackOrders(result) {
+  const syncs = [
+    persistQuotations(),
+    persistOrders(),
+    persistProductionJobs(),
+    persistInstallationJobs(),
+    persistWarrantyCards()
+  ];
+  Promise.all(syncs).then((results) => {
+    const failed = results.find((row) => row && !row.ok && row.reason !== "Local Mode Only");
     renderWorkflowModules();
-    showWorkflowMessage("Order permanently deleted", "success");
-  } finally {
-    orderActionRunning = false;
-  }
+    showWorkflowMessage(failed
+      ? `Moved back locally but cloud sync failed. ${result.movedCount} order(s) affected.`
+      : "Moved back to Follow Up successfully.", failed ? "warning" : "success");
+  }).catch((error) => {
+    console.error("Move back to Follow Up sync failed", error);
+    renderWorkflowModules();
+    showWorkflowMessage("Moved back locally but cloud sync failed.", "warning");
+  });
+  renderWorkflowModules();
+  showWorkflowMessage("Moving order(s) back to Follow Up...", "info");
 }
 
 function sendOrderToProduction(orderId) {
@@ -1488,7 +1529,10 @@ function generateWarrantyCard(jobId) {
   const card = {
     id: uid("warranty"),
     warrantyNo: nextWarrantyNumber(),
-    orderNo: job.orderNumber,
+    orderNo: job.orderNo || job.orderNumber,
+    orderNumber: job.orderNo || job.orderNumber,
+    quoteNumber: job.quoteNumber || job.quotationNo || "",
+    quotationNo: job.quoteNumber || job.quotationNo || "",
     installationJobNo: job.installationNumber,
     customer: { ...job.customer },
     products: job.items.map((item) => ({
@@ -1521,6 +1565,7 @@ function printWarrantyCard(jobId) {
   openPrint(t("Warranty Card"), card.warrantyNo, `
     <div class="print-box"><strong>${card.customer.name || "-"}</strong><br>${card.customer.phone || "-"}<br>${card.customer.address || "-"}</div>
     <p><strong>${t("Order")}:</strong> ${card.orderNo}</p>
+    <p><strong>${t("Quote")}:</strong> ${card.quoteNumber || card.quotationNo || "-"}</p>
     <p><strong>${t("Installation Jobs")}:</strong> ${card.installationJobNo}</p>
     <p><strong>Start Date:</strong> ${card.startDate}</p>
     <p><strong>${t("Warranty Card")}:</strong> ${card.warrantyPeriod}</p>
@@ -1612,9 +1657,9 @@ function mediaFileToRecord(file) {
 function printOrder(id) {
   const order = state.orders.find((row) => row.id === id);
   if (!order) return;
-  openPrint(t("Order"), order.orderNumber, `
+  openPrint(t("Order"), getOrderDisplayNo(order), `
     ${customerBlock(order.customer)}
-    <p><strong>${t("Quote")}:</strong> ${order.quoteNumber}</p>
+    <p><strong>${t("Quote")}:</strong> ${order.quoteNumber || order.quotationNo || "-"}</p>
     <p><strong>${t("Status")}:</strong> ${statusLabel(order.status)}</p>
     <p><strong>${t("Installation Date")}:</strong> ${order.installationDate || "-"}</p>
     ${printItemsTable(order.items, true)}
@@ -1627,7 +1672,8 @@ function printProduction(id) {
   const job = state.productionJobs.find((row) => row.id === id);
   if (!job) return;
   openPrint(t("Print Production Sheet"), job.productionNumber, `
-    <p><strong>${t("Order")}:</strong> ${job.orderNumber}</p>
+    <p><strong>${t("Order")}:</strong> ${job.orderNo || job.orderNumber}</p>
+    <p><strong>${t("Quote")}:</strong> ${job.quoteNumber || job.quotationNo || "-"}</p>
     <p><strong>${t("Customer Name")}:</strong> ${job.customerName || "-"}</p>
     <p><strong>${t("Status")}:</strong> ${statusLabel(job.status)}</p>
     ${printItemsTable(job.items, false)}
@@ -1641,7 +1687,8 @@ function printInstallation(id) {
   if (!job) return;
   openPrint(t("Print Installation Sheet"), job.installationNumber, `
     ${customerBlock(job.customer)}
-    <p><strong>${t("Order")}:</strong> ${job.orderNumber}</p>
+    <p><strong>${t("Order")}:</strong> ${job.orderNo || job.orderNumber}</p>
+    <p><strong>${t("Quote")}:</strong> ${job.quoteNumber || job.quotationNo || "-"}</p>
     <p><strong>${t("Installation Date")}:</strong> ${job.installationDate || "-"}</p>
     <p><strong>${t("Status")}:</strong> ${statusLabel(job.status)}</p>
     <p><strong>${t("Balance")}:</strong> ${money(job.balance)}</p>

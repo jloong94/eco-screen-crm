@@ -1,5 +1,4 @@
 import { attachLoginEvents, attachUserManagementEvents, logout, renderLoginCard, renderUserManagement } from "./auth.js";
-import { adsPageHtml, attachAdsEvents, renderAdsDashboard } from "./ads.js";
 import { renderAddProductForm, renderProducts, attachProductEvents } from "./products.js";
 import { attachQuotationEvents, renderQuotationForm } from "./quotations.js";
 import {
@@ -19,7 +18,7 @@ import {
   updateCloudStatus
 } from "./state.js";
 import { itemWithCalculatedTotals, money, quoteTotals, toNumber } from "./calculations.js";
-import { attachWorkflowEvents, getQuotationDisplayNo, renderWorkflowModules } from "./workflow.js";
+import { attachWorkflowEvents, getQuotationDisplayNo, nextSalesOrderNumber, renderWorkflowModules } from "./workflow.js";
 import { t } from "./i18n.js";
 import { canAccessPage, defaultPageForRole, isBossOrAdmin, pageDefinitions, role } from "./permissions.js";
 import { isCloudConfigured, safeSyncWithCloud, syncToCloud } from "./cloudSync.js";
@@ -109,7 +108,6 @@ function currentPageHtml() {
   if (state.currentPage === "quotation") return quotationPageHtml();
   if (state.currentPage === "customers") return customersPageHtml();
   if (state.currentPage === "orders") return ordersPageHtml();
-  if (state.currentPage === "ads") return adsPageHtml();
   if (state.currentPage === "production") return productionPageHtml();
   if (state.currentPage === "installation") return installationPageHtml();
   if (state.currentPage === "products") return productManagementPageHtml();
@@ -325,10 +323,6 @@ function renderShell() {
     renderWorkflowModules();
   }
   if (isCurrentPage("dashboard")) attachMonthlySummaryEvents();
-  if (isCurrentPage("ads")) {
-    attachAdsEvents();
-    renderAdsDashboard();
-  }
   if (isCurrentPage("customers")) renderCustomers();
   if (isCurrentPage("users")) attachUserManagementEvents(renderShell);
 }
@@ -613,15 +607,24 @@ function rebuildOrdersFromQuotations() {
   const now = new Date().toISOString();
   const errors = [];
   let skipped = 0;
+  state.orders = [];
   const orders = [];
-  const updatedQuotations = state.quotations.map((quote) => {
+  const orderByQuoteId = new Map();
+  const sortedQuotations = [...state.quotations].sort((a, b) => Date.parse(a.createdAt || a.updatedAt || 0) - Date.parse(b.createdAt || b.updatedAt || 0));
+  sortedQuotations.forEach((quote) => {
     if (!Array.isArray(quote.items) || !quote.items.length) {
       skipped += 1;
       errors.push(`${getQuotationDisplayNo(quote) || quote.id || "Unknown quotation"} skipped: no items`);
-      return quote;
+      return;
     }
     const order = buildOrderFromQuotationForRebuild(quote, now);
     orders.push(order);
+    state.orders = orders;
+    orderByQuoteId.set(quote.id, order);
+  });
+  const updatedQuotations = state.quotations.map((quote) => {
+    const order = orderByQuoteId.get(quote.id);
+    if (!order) return quote;
     return {
       ...quote,
       convertedToOrder: true,
@@ -665,7 +668,8 @@ function rebuildOrdersFromQuotations() {
 }
 
 function buildOrderFromQuotationForRebuild(quote, now) {
-  const orderNo = getQuotationDisplayNo(quote) || `Q-${String(quote.id || Date.now()).replace(/[^a-z0-9]/gi, "").slice(-12).toUpperCase()}`;
+  const quoteNo = getQuotationDisplayNo(quote) || `Q-${String(quote.id || Date.now()).replace(/[^a-z0-9]/gi, "").slice(-12).toUpperCase()}`;
+  const orderNo = nextSalesOrderNumber(new Date(now));
   const items = Array.isArray(quote.items) ? quote.items.map((item) => itemWithCalculatedTotals(item)) : [];
   const totals = quoteTotals(items, quote.discount, quote.deposit);
   const total = toNumber(quote.total || totals.total);
@@ -677,8 +681,8 @@ function buildOrderFromQuotationForRebuild(quote, now) {
     quotationId: quote.id,
     orderNo,
     orderNumber: orderNo,
-    quoteNumber: orderNo,
-    quotationNo: orderNo,
+    quoteNumber: quoteNo,
+    quotationNo: quoteNo,
     customer: normalizeQuoteCustomer(quote),
     items,
     subtotal: toNumber(quote.subtotal || totals.subtotal),
@@ -888,17 +892,20 @@ function monthlySummary(monthValue) {
 }
 
 function totalCollectedForOrder(order) {
-  const installationJob = state.installationJobs.find((job) => job.orderId === order.id || job.orderNumber === order.orderNumber);
+  const orderNo = order.orderNo || order.orderNumber || "";
+  const installationJob = state.installationJobs.find((job) => job.orderId === order.id || (orderNo && (job.orderNumber === orderNo || job.orderNo === orderNo)));
   return toNumber(order.deposit) + toNumber(installationJob?.amountCollected);
 }
 
 function isOrderCompleted(order) {
-  const installationJob = state.installationJobs.find((job) => job.orderId === order.id || job.orderNumber === order.orderNumber);
+  const orderNo = order.orderNo || order.orderNumber || "";
+  const installationJob = state.installationJobs.find((job) => job.orderId === order.id || (orderNo && (job.orderNumber === orderNo || job.orderNo === orderNo)));
   return ["Completed", "Serviced"].includes(order.status) || ["installed", "Completed"].includes(installationJob?.status);
 }
 
 function isOrderReadyForCollection(order) {
-  const installationJob = state.installationJobs.find((job) => job.orderId === order.id || job.orderNumber === order.orderNumber);
+  const orderNo = order.orderNo || order.orderNumber || "";
+  const installationJob = state.installationJobs.find((job) => job.orderId === order.id || (orderNo && (job.orderNumber === orderNo || job.orderNo === orderNo)));
   return ["Pending Collection", "Completed", "Serviced"].includes(order.status)
     || ["installed", "pending_collection", "Completed", "Pending Collection"].includes(installationJob?.status)
     || installationJob?.completionStatus === "Completed";
@@ -959,7 +966,7 @@ function renderCustomers() {
   if (!list) return;
   const customers = state.orders.map((order) => ({
     id: order.id,
-    orderNumber: order.orderNumber,
+    orderNumber: order.orderNo || order.orderNumber,
     quoteNumber: order.quoteNumber,
     name: order.customer?.name || "-",
     phone: order.customer?.phone || "-",
