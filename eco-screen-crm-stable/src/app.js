@@ -47,7 +47,18 @@
     installationJobs: [],
     warrantyCards: [],
     companySettings: [{ id: 'company', name: 'Eco Screen', phone: COMPANY_PHONE }],
-    ui: { page: 'dashboard', selectedQuotationId: null, selectedOrderId: null, orderPage: 1, orderSearch: '', orderStatus: 'all', migration: null }
+    ui: {
+      page: 'dashboard',
+      selectedQuotationId: null,
+      selectedOrderId: null,
+      quotationPage: 1,
+      quotationSearch: '',
+      quotationStatus: 'all',
+      orderPage: 1,
+      orderSearch: '',
+      orderStatus: 'all',
+      migration: null
+    }
   });
 
   let state = load();
@@ -110,8 +121,12 @@
     const prefix = `SO${yy}${mm}`;
     const max = state.orders
       .filter((order) => order.orderNo && order.orderNo.startsWith(prefix))
-      .reduce((highest, order) => Math.max(highest, Number(order.orderNo.slice(-3)) || 0), 0);
-    return prefix + String(max + 1).padStart(3, '0');
+      .reduce((highest, order) => Math.max(highest, Number(order.orderNo.slice(prefix.length)) || 0), 0);
+    return formatOrderNo(prefix, max + 1);
+  }
+
+  function formatOrderNo(prefix, sequence) {
+    return prefix + String(sequence).padStart(3, '0');
   }
 
   function paymentStatus(balance) {
@@ -194,6 +209,14 @@
     return String(pick(record, ['oldRefNo', 'orderNo', 'quotationNo', 'quoteNo', 'quoteNumber', 'number', 'refNo', 'id'], fallback));
   }
 
+  function oldSourceId(record) {
+    return String(pick(record, ['id', '_id', 'uuid', 'sourceId'], ''));
+  }
+
+  function migrationRowId(type, ref, sourceIndex) {
+    return `${type}-${ref}-${sourceIndex}`.replace(/[^a-z0-9_-]/gi, '-');
+  }
+
   function customerName(record) {
     return String(pick(record, ['customerName', 'customer.name', 'name', 'clientName'], ''));
   }
@@ -272,7 +295,8 @@
       balance: totals.balance,
       status: forceFollowUp ? mapQuotationStatus(record, importingAsOrder) : mapQuotationStatus(record, importingAsOrder),
       source: 'v2-import',
-      oldRefNo: ref
+      oldRefNo: ref,
+      oldSourceId: oldSourceId(record)
     };
   }
 
@@ -305,6 +329,7 @@
       source: 'v2-import',
       oldOrderNo: ref,
       oldRefNo: ref,
+      oldSourceId: oldSourceId(record),
       createdAt: new Date().toISOString()
     };
   }
@@ -323,21 +348,31 @@
     const collections = oldCollections(payload);
     let orderOffset = 0;
     const rows = [];
-    const duplicateRefs = new Set([
+    const existingRefs = new Set([
       ...state.quotations.filter((item) => item.source === 'v2-import').map((item) => item.oldRefNo),
       ...state.orders.filter((item) => item.source === 'v2-import').map((item) => item.oldRefNo)
     ].filter(Boolean));
+    const existingSourceIds = new Set([
+      ...state.quotations.filter((item) => item.source === 'v2-import').map((item) => item.oldSourceId),
+      ...state.orders.filter((item) => item.source === 'v2-import').map((item) => item.oldSourceId)
+    ].filter(Boolean));
+    const seenRefs = new Set();
+    const seenSourceIds = new Set();
 
-    collections.quotations.forEach((record) => {
+    collections.quotations.forEach((record, index) => {
       const ref = oldRef(record, 'quotation');
+      const sourceId = oldSourceId(record);
       const quote = stableQuotationFromOld(record, true, false);
       const totals = oldTotals(record, quote.items);
       const problems = previewProblems(record, quote.items, totals);
-      const duplicate = duplicateRefs.has(ref);
+      const duplicate = existingRefs.has(ref) || seenRefs.has(ref) || (sourceId && (existingSourceIds.has(sourceId) || seenSourceIds.has(sourceId)));
+      seenRefs.add(ref);
+      if (sourceId) seenSourceIds.add(sourceId);
       rows.push({
-        id: 'quote-' + rows.length,
+        id: migrationRowId('quotation', ref, index),
         type: 'Quotation',
         oldRefNo: ref,
+        oldSourceId: sourceId,
         newOrderNo: '',
         customer: quote.customerName,
         phone: quote.phone,
@@ -352,20 +387,24 @@
       });
     });
 
-    collections.orders.forEach((record) => {
+    collections.orders.forEach((record, index) => {
       const ref = oldRef(record, 'order');
+      const sourceId = oldSourceId(record);
       const items = normalizeItems(record);
       const totals = oldTotals(record, items);
       const installationStatus = mapInstallationStatus(record, totals.balance);
       const isCompleted = installationStatus === 'installed';
       const allowed = settings.importOrders && (!isCompleted || settings.importCompletedArchived);
-      const duplicate = duplicateRefs.has(ref);
+      const duplicate = existingRefs.has(ref) || seenRefs.has(ref) || (sourceId && (existingSourceIds.has(sourceId) || seenSourceIds.has(sourceId)));
+      seenRefs.add(ref);
+      if (sourceId) seenSourceIds.add(sourceId);
       const newOrderNo = allowed && !duplicate && items.length ? nextOrderNoWithOffset(orderOffset++) : '';
       const problems = previewProblems(record, items, totals);
       rows.push({
-        id: 'order-' + rows.length,
-        type: 'Order',
+        id: migrationRowId('order', ref, index),
+        type: isCompleted ? 'Archived Completed' : 'Order',
         oldRefNo: ref,
+        oldSourceId: sourceId,
         newOrderNo,
         customer: customerName(record),
         phone: customerPhone(record),
@@ -380,14 +419,22 @@
       });
     });
 
+    const valid = rows.filter((row) => row.importable).length;
+    const duplicateCount = rows.filter((row) => row.duplicate).length;
+    const skipped = rows.filter((row) => !row.importable).length;
     return {
       totals: {
+        totalRecords: rows.length,
         oldQuotations: collections.quotations.length,
         oldOrders: collections.orders.length,
+        valid,
+        selected: rows.filter((row) => row.selected).length,
+        skipped,
+        duplicates: duplicateCount,
         quotationsToImport: rows.filter((row) => row.type === 'Quotation' && row.selected).length,
-        ordersToImport: rows.filter((row) => row.type === 'Order' && row.selected).length,
+        ordersToImport: rows.filter((row) => (row.type === 'Order' || row.type === 'Archived Completed') && row.selected).length,
         skippedNoItems: rows.filter((row) => row.problems.includes('no items')).length,
-        skippedDuplicates: rows.filter((row) => row.duplicate).length,
+        skippedDuplicates: duplicateCount,
         potentialProblems: rows.filter((row) => row.problems.length).length
       },
       rows
@@ -396,7 +443,9 @@
 
   function nextOrderNoWithOffset(offset) {
     const base = nextOrderNo();
-    return base.slice(0, -3) + String((Number(base.slice(-3)) || 0) + offset).padStart(3, '0');
+    const prefix = base.slice(0, 6);
+    const sequence = Number(base.slice(prefix.length)) || 0;
+    return formatOrderNo(prefix, sequence + offset);
   }
 
   function stableBackupText() {
@@ -416,40 +465,47 @@
     if (!canManage() && !options.force) return { quotationsImported: 0, ordersImported: 0, skipped: 0, errors: ['Boss/Admin only'] };
     const preview = options.preview || previewOldV2Backup(payload, options);
     const selected = new Set(selectedIds || preview.rows.filter((row) => row.selected).map((row) => row.id));
-    const result = { quotationsImported: 0, ordersImported: 0, skipped: 0, errors: [], backup: stableBackupText() };
-    preview.rows.forEach((row) => {
-      if (!selected.has(row.id) || !row.importable) {
-        result.skipped += 1;
-        return;
-      }
-      if (row.type === 'Quotation') {
-        if (state.quotations.some((item) => item.source === 'v2-import' && item.oldRefNo === row.oldRefNo)) {
+    const selectedRows = preview.rows.filter((row) => selected.has(row.id));
+    const batchSize = Number(options.batchSize || 50);
+    const result = { quotationsImported: 0, ordersImported: 0, skipped: 0, errors: [], backup: stableBackupText(), imported: 0, total: selectedRows.length, batchSize };
+    for (let index = 0; index < selectedRows.length; index += batchSize) {
+      selectedRows.slice(index, index + batchSize).forEach((row) => {
+        if (!row.importable) {
           result.skipped += 1;
           return;
         }
-        state.quotations.push(stableQuotationFromOld(row.record, true, false));
-        result.quotationsImported += 1;
-      }
-      if (row.type === 'Order') {
-        if (state.orders.some((item) => item.source === 'v2-import' && item.oldRefNo === row.oldRefNo)) {
-          result.skipped += 1;
-          return;
+        if (row.type === 'Quotation') {
+          if (state.quotations.some((item) => item.source === 'v2-import' && (item.oldRefNo === row.oldRefNo || (row.oldSourceId && item.oldSourceId === row.oldSourceId)))) {
+            result.skipped += 1;
+            return;
+          }
+          state.quotations.push(stableQuotationFromOld(row.record, true, false));
+          result.quotationsImported += 1;
+          result.imported += 1;
         }
-        const quoteRecord = stableQuotationFromOld(row.record, false, true);
-        quoteRecord.status = 'won';
-        let quote = state.quotations.find((item) => item.source === 'v2-import' && item.oldRefNo === quoteRecord.oldRefNo);
-        if (!quote) {
-          quote = quoteRecord;
-          state.quotations.push(quote);
+        if (row.type === 'Order' || row.type === 'Archived Completed') {
+          if (state.orders.some((item) => item.source === 'v2-import' && (item.oldRefNo === row.oldRefNo || (row.oldSourceId && item.oldSourceId === row.oldSourceId)))) {
+            result.skipped += 1;
+            return;
+          }
+          const quoteRecord = stableQuotationFromOld(row.record, false, true);
+          quoteRecord.status = 'won';
+          let quote = state.quotations.find((item) => item.source === 'v2-import' && item.oldRefNo === quoteRecord.oldRefNo);
+          if (!quote) {
+            quote = quoteRecord;
+            state.quotations.push(quote);
+          }
+          const order = stableOrderFromOld(row.record, nextOrderNo(), quote.id);
+          state.orders.push(order);
+          if (order.productionStatus !== 'not_produced') state.productionJobs.push({ id: uid(), orderId: order.id, status: order.productionStatus, source: 'v2-import', oldRefNo: row.oldRefNo });
+          if (order.installationStatus !== 'not_scheduled') state.installationJobs.push({ id: uid(), orderId: order.id, status: order.installationStatus, source: 'v2-import', oldRefNo: row.oldRefNo });
+          if (order.installationStatus === 'installed') state.warrantyCards.push({ id: uid(), orderId: order.id, orderNo: order.orderNo, quoteNumber: order.quoteNumber, customerName: order.customerName, source: 'v2-import', oldRefNo: row.oldRefNo });
+          result.ordersImported += 1;
+          result.imported += 1;
         }
-        const order = stableOrderFromOld(row.record, nextOrderNo(), quote.id);
-        state.orders.push(order);
-        if (order.productionStatus !== 'not_produced') state.productionJobs.push({ id: uid(), orderId: order.id, status: order.productionStatus, source: 'v2-import', oldRefNo: row.oldRefNo });
-        if (order.installationStatus !== 'not_scheduled') state.installationJobs.push({ id: uid(), orderId: order.id, status: order.installationStatus, source: 'v2-import', oldRefNo: row.oldRefNo });
-        if (order.installationStatus === 'installed') state.warrantyCards.push({ id: uid(), orderId: order.id, orderNo: order.orderNo, quoteNumber: order.quoteNumber, customerName: order.customerName, source: 'v2-import', oldRefNo: row.oldRefNo });
-        result.ordersImported += 1;
-      }
-    });
+      });
+      result.progress = Math.min(selectedRows.length, index + batchSize);
+    }
     save();
     return result;
   }
@@ -483,7 +539,7 @@
     reset: () => { state = defaults(); save(); render(); },
     calcQuote, convertQuotation, seedQuote, nextOrderNo,
     moveBackToFollowUp, sendToProduction, markProductionCompleted, sendToInstaller, scheduleInstallation, completeInstallation,
-    printQuotation, printWarranty, previewOldV2Backup, importOldV2Backup
+    printQuotation, printWarranty, previewOldV2Backup, importOldV2Backup, filteredMigrationRows
   };
 
   function login(username, password) {
@@ -553,14 +609,23 @@
   }
 
   function quotationView() {
+    const search = (state.ui.quotationSearch || '').toLowerCase();
+    const filtered = state.quotations.filter((q) => {
+      const text = `${q.quotationNo} ${q.customerName} ${q.phone}`.toLowerCase();
+      return text.includes(search) && (state.ui.quotationStatus === 'all' || q.status === state.ui.quotationStatus);
+    });
+    const page = Math.max(1, state.ui.quotationPage || 1);
+    const rows = filtered.slice((page - 1) * 20, page * 20);
     return `
       <section class="split">
         <div class="panel">
           <div class="panel-head"><h2>${label('quotations')}</h2><button data-new-quote>New</button></div>
-          <div class="list">${state.quotations.map((q) => {
+          <div class="toolbar"><input data-quote-search placeholder="Search quote, customer, phone" value="${state.ui.quotationSearch || ''}"><label>Status<select data-quote-status>${['all', 'quoted', 'follow_up', 'won', 'lost'].map((option) => `<option value="${option}" ${option === state.ui.quotationStatus ? 'selected' : ''}>${label(option)}</option>`).join('')}</select></label></div>
+          <div class="list">${rows.map((q) => {
             const totals = calcQuote(q);
             return `<button class="list-row" data-select-quote="${q.id}"><strong>${q.quotationNo}</strong><span>${q.customerName}</span><span>${label(q.status)} / ${money(totals.total)}</span></button>`;
           }).join('') || '<p>No quotations yet.</p>'}</div>
+          <div class="pager"><button data-quote-page="${page - 1}" ${page === 1 ? 'disabled' : ''}>Prev</button><span>Page ${page} / ${Math.max(1, Math.ceil(filtered.length / 20))}</span><button data-quote-page="${page + 1}" ${page * 20 >= filtered.length ? 'disabled' : ''}>Next</button></div>
         </div>
         <div class="panel">${quoteForm()}</div>
       </section>`;
@@ -605,14 +670,14 @@
 
   function ordersView() {
     const search = (state.ui.orderSearch || '').toLowerCase();
-    const filtered = activeOrders().filter((o) => {
-      const text = `${o.orderNo} ${o.quoteNumber} ${o.customerName}`.toLowerCase();
+    const filtered = state.orders.filter((order) => order.status !== 'moved_back').filter((o) => {
+      const text = `${o.orderNo} ${o.quoteNumber} ${o.customerName} ${o.phone}`.toLowerCase();
       return text.includes(search) && (state.ui.orderStatus === 'all' || o.status === state.ui.orderStatus);
     });
     const page = Math.max(1, state.ui.orderPage);
     const rows = filtered.slice((page - 1) * 20, page * 20);
     return `<section class="panel">
-      <div class="toolbar"><input data-order-search placeholder="Search order, quote, customer" value="${state.ui.orderSearch || ''}"><label>Filter<select data-order-status>${['all', 'confirmed', 'archived'].map((option) => `<option value="${option}" ${option === state.ui.orderStatus ? 'selected' : ''}>${label(option)}</option>`).join('')}</select></label></div>
+      <div class="toolbar"><input data-order-search placeholder="Search order, quote, customer, phone" value="${state.ui.orderSearch || ''}"><label>Filter<select data-order-status>${['all', 'confirmed', 'completed', 'pending_collection', 'touch_up', 'archived'].map((option) => `<option value="${option}" ${option === state.ui.orderStatus ? 'selected' : ''}>${label(option)}</option>`).join('')}</select></label></div>
       <div class="table">${rows.map(orderRow).join('') || '<p>No confirmed orders.</p>'}</div>
       <div class="pager"><button data-page="${page - 1}" ${page === 1 ? 'disabled' : ''}>Prev</button><span>Page ${page}</span><button data-page="${page + 1}" ${page * 20 >= filtered.length ? 'disabled' : ''}>Next</button></div>
     </section>`;
@@ -679,6 +744,7 @@
         </div>
       </div>
       ${preview ? migrationPreviewView(preview) : '<p class="muted">Select an Old V2 backup JSON, then preview before importing.</p>'}
+      ${migration.progress ? `<div class="result"><strong>Progress</strong><span>Imported ${migration.progress.imported} / ${migration.progress.total}</span></div>` : ''}
       ${result ? `<div class="result"><strong>Import result</strong><span>Quotations imported: ${result.quotationsImported}</span><span>Orders imported: ${result.ordersImported}</span><span>Skipped: ${result.skipped}</span><span>Errors: ${result.errors.length ? result.errors.join(', ') : 'None'}</span></div>` : ''}
     </section>`;
   }
@@ -693,23 +759,53 @@
   }
 
   function migrationPreviewView(preview) {
+    const migration = state.ui.migration || {};
+    const rows = filteredMigrationRows(preview, migration);
+    const page = Math.max(1, migration.page || 1);
+    const pageRows = rows.slice((page - 1) * 20, page * 20);
+    const selectedIds = new Set(migration.selectedIds || preview.rows.filter((row) => row.selected).map((row) => row.id));
+    const selectedCount = selectedIds.size;
     const summary = preview.totals;
     return `<div class="migration-preview">
       <div class="summary">
-        <span>Old quotations: ${summary.oldQuotations}</span><span>Old orders: ${summary.oldOrders}</span>
-        <span>Quotations to import: ${summary.quotationsToImport}</span><span>Orders to import: ${summary.ordersToImport}</span>
-        <span>Skipped no-items: ${summary.skippedNoItems}</span><span>Skipped duplicates: ${summary.skippedDuplicates}</span>
-        <span>Potential problems: ${summary.potentialProblems}</span>
+        <span>Total records: ${summary.totalRecords}</span><span>Total valid: ${summary.valid}</span><span>Total selected: ${selectedCount}</span><span>Total skipped: ${summary.skipped}</span>
+        <span>Total duplicates: ${summary.duplicates}</span><span>Old quotations: ${summary.oldQuotations}</span><span>Old orders: ${summary.oldOrders}</span><span>Problems: ${summary.potentialProblems}</span>
       </div>
+      <div class="toolbar"><input data-v2-search placeholder="Search customer, phone, old ref no" value="${migration.search || ''}"><label>Filter<select data-v2-filter>${['all', 'Quotation', 'Order', 'Archived Completed', 'Skipped', 'Duplicate'].map((option) => `<option value="${option}" ${option === (migration.filter || 'all') ? 'selected' : ''}>${option}</option>`).join('')}</select></label></div>
+      <div class="actions"><button data-v2-select-all>Select All Valid</button><button data-v2-unselect-all>Unselect All</button><button data-v2-select-page>Select Current Page</button><button data-v2-unselect-page>Unselect Current Page</button></div>
       <div class="migration-table">
         <div class="migration-head"><span>Import</span><span>Type</span><span>Old Ref No</span><span>New Order No</span><span>Customer</span><span>Phone</span><span>Total</span><span>Balance</span><span>Status</span><span>Problem warning</span></div>
-        ${preview.rows.map((row) => `<div class="migration-row">
-          <span><input type="checkbox" data-v2-select="${row.id}" ${row.selected ? 'checked' : ''} ${row.importable ? '' : 'disabled'}></span>
+        ${pageRows.map((row) => `<div class="migration-row">
+          <span><input type="checkbox" data-v2-select="${row.id}" ${selectedIds.has(row.id) ? 'checked' : ''} ${row.importable ? '' : 'disabled'}></span>
           <span>${row.type}</span><span>${row.oldRefNo}</span><span>${row.newOrderNo || '-'}</span><span>${row.customer || '-'}</span><span>${row.phone || '-'}</span>
           <span>${money(row.total)}</span><span>${money(row.balance)}</span><span>${row.status}</span><span>${row.duplicate ? 'duplicate oldRefNo' : (row.problems.join(', ') || '-')}</span>
         </div>`).join('')}
       </div>
+      <div class="pager"><button data-v2-page="${page - 1}" ${page === 1 ? 'disabled' : ''}>Previous</button><span>Page ${page} / ${Math.max(1, Math.ceil(rows.length / 20))} (${rows.length} shown)</span><button data-v2-page="${page + 1}" ${page * 20 >= rows.length ? 'disabled' : ''}>Next</button></div>
     </div>`;
+  }
+
+  function filteredMigrationRows(preview, migration = {}) {
+    const search = String(migration.search || '').toLowerCase();
+    const filter = migration.filter || 'all';
+    return preview.rows.filter((row) => {
+      const text = `${row.customer} ${row.phone} ${row.oldRefNo}`.toLowerCase();
+      const matchesSearch = text.includes(search);
+      const matchesFilter = filter === 'all' || row.type === filter || (filter === 'Skipped' && !row.importable) || (filter === 'Duplicate' && row.duplicate);
+      return matchesSearch && matchesFilter;
+    });
+  }
+
+  function currentMigrationSelectedIds() {
+    const migration = state.ui.migration || {};
+    if (migration.selectedIds) return new Set(migration.selectedIds);
+    const preview = migration.preview;
+    return new Set(preview ? preview.rows.filter((row) => row.selected).map((row) => row.id) : []);
+  }
+
+  function setMigrationSelectedIds(ids) {
+    state.ui.migration = state.ui.migration || {};
+    state.ui.migration.selectedIds = [...ids];
   }
 
   function saveQuote(form) {
@@ -878,6 +974,9 @@
       if (!migration.rawText) return alert('Select Old V2 Backup JSON first.');
       try {
         migration.preview = previewOldV2Backup(JSON.parse(migration.rawText), migrationOptions());
+        migration.selectedIds = migration.preview.rows.filter((row) => row.selected).map((row) => row.id);
+        migration.page = 1;
+        migration.progress = null;
         migration.result = null;
         state.ui.migration = migration;
         save();
@@ -889,27 +988,72 @@
     if (el.matches('[data-v2-import]')) {
       const migration = state.ui.migration || {};
       if (!migration.preview || !migration.rawText) return alert('Preview import first.');
-      const selectedIds = [...document.querySelectorAll('[data-v2-select]:checked')].map((item) => item.dataset.v2Select);
+      const selectedIds = migration.selectedIds || [];
       const beforeBackup = stableBackupText();
       downloadText('eco-screen-crm-stable-auto-backup-before-v2-import.json', beforeBackup);
+      migration.progress = { imported: 0, total: selectedIds.length };
+      state.ui.migration = migration;
+      save();
       const result = importOldV2Backup(JSON.parse(migration.rawText), selectedIds, { ...migrationOptions(), preview: migration.preview });
       migration.result = result;
+      migration.progress = { imported: result.imported, total: selectedIds.length };
       migration.preview = previewOldV2Backup(JSON.parse(migration.rawText), migrationOptions());
+      migration.selectedIds = migration.preview.rows.filter((row) => row.selected).map((row) => row.id);
       state.ui.migration = migration;
       save();
       render();
     }
+    if (el.matches('[data-v2-page]')) { state.ui.migration.page = Math.max(1, Number(el.dataset.v2Page)); save(); render(); }
+    if (el.matches('[data-v2-select-all]')) {
+      const preview = state.ui.migration.preview;
+      setMigrationSelectedIds(preview.rows.filter((row) => row.importable).map((row) => row.id));
+      save();
+      render();
+    }
+    if (el.matches('[data-v2-unselect-all]')) { setMigrationSelectedIds([]); save(); render(); }
+    if (el.matches('[data-v2-select-page]')) {
+      const ids = currentMigrationSelectedIds();
+      filteredMigrationRows(state.ui.migration.preview, state.ui.migration)
+        .slice(((state.ui.migration.page || 1) - 1) * 20, (state.ui.migration.page || 1) * 20)
+        .filter((row) => row.importable)
+        .forEach((row) => ids.add(row.id));
+      setMigrationSelectedIds(ids);
+      save();
+      render();
+    }
+    if (el.matches('[data-v2-unselect-page]')) {
+      const ids = currentMigrationSelectedIds();
+      filteredMigrationRows(state.ui.migration.preview, state.ui.migration)
+        .slice(((state.ui.migration.page || 1) - 1) * 20, (state.ui.migration.page || 1) * 20)
+        .forEach((row) => ids.delete(row.id));
+      setMigrationSelectedIds(ids);
+      save();
+      render();
+    }
+    if (el.matches('[data-quote-page]')) { state.ui.quotationPage = Math.max(1, Number(el.dataset.quotePage)); save(); render(); }
   });
 
   document.addEventListener('input', (event) => {
     if (event.target.matches('[data-order-search]')) { state.ui.orderSearch = event.target.value; state.ui.orderPage = 1; save(); render(); }
     if (event.target.matches('[data-order-status]')) { state.ui.orderStatus = event.target.value; state.ui.orderPage = 1; save(); render(); }
+    if (event.target.matches('[data-quote-search]')) { state.ui.quotationSearch = event.target.value; state.ui.quotationPage = 1; save(); render(); }
+    if (event.target.matches('[data-quote-status]')) { state.ui.quotationStatus = event.target.value; state.ui.quotationPage = 1; save(); render(); }
     if (event.target.matches('[data-v2-option]')) {
       state.ui.migration = state.ui.migration || {};
       state.ui.migration[event.target.dataset.v2Option] = event.target.checked;
       state.ui.migration.preview = null;
+      state.ui.migration.selectedIds = [];
       save();
       render();
+    }
+    if (event.target.matches('[data-v2-search]')) { state.ui.migration.search = event.target.value; state.ui.migration.page = 1; save(); render(); }
+    if (event.target.matches('[data-v2-filter]')) { state.ui.migration.filter = event.target.value; state.ui.migration.page = 1; save(); render(); }
+    if (event.target.matches('[data-v2-select]')) {
+      const ids = currentMigrationSelectedIds();
+      if (event.target.checked) ids.add(event.target.dataset.v2Select);
+      else ids.delete(event.target.dataset.v2Select);
+      setMigrationSelectedIds(ids);
+      save();
     }
   });
 
