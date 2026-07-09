@@ -102,6 +102,22 @@ api.scheduleInstallation(o3.id);
 api.completeInstallation(o3.id, 200, false);
 assert(api.getState().orders.find((o) => o.id === o3.id).installationStatus === 'pending_collection', 'G: remaining balance should be pending collection');
 
+assert(api.getState().products.length === 20, 'Products: default Eco Screen list should contain 20 products');
+const rollerWindow = api.getState().products.find((product) => product.name === 'Roller Window');
+assert(rollerWindow && rollerWindow.unitPrice === 33 && rollerWindow.minimumSqft === 11, 'Products: Roller Window default price/minimum');
+const rollerItem = { product: 'Roller Window', width: 1000, height: 1000, quantity: 1, unitPrice: 33, minimumSqft: 11, calculationType: 'sqft', powdercoat: 'no' };
+assert(api.calcItemDetails(rollerItem).finalTotal === 363, 'Products: Roller Window 1000mm x 1000mm uses 11 sqft minimum = RM363');
+const hollow = api.getState().products.find((product) => product.name === 'Hollow 1x2');
+assert(hollow && hollow.unitPrice === 10, 'Products: Hollow 1x2 unit price RM10');
+const powdercoat = api.calcItemDetails({ ...rollerItem, powdercoat: 'yes' });
+assert(Math.abs(powdercoat.powdercoatAmount - 29.04) < 0.001 && Math.abs(powdercoat.finalTotal - 392.04) < 0.001, 'Products: powdercoat adds 8 percent');
+assert(api.calcItemDetails({ ...rollerItem, powdercoat: 'yes', manualFinalPrice: 300 }).finalTotal === 300, 'Products: manual final price overrides powdercoat final amount');
+const beforeRestoreQuotes = api.getState().quotations.length;
+const beforeRestoreOrders = api.getState().orders.length;
+api.restoreDefaultProducts(false);
+assert(api.getState().products.length === 20, 'Products: restore returns 20 defaults');
+assert(api.getState().quotations.length === beforeRestoreQuotes && api.getState().orders.length === beforeRestoreOrders, 'Products: restore does not touch quotations/orders');
+
 assert(api.getState().companySettings[0].phone === '0195763499', 'H: company phone default');
 state.session = { username: 'sales', role: 'Sales' };
 assert(!['Boss', 'Admin'].includes(api.getState().session.role), 'I: sales is not a manager role');
@@ -258,6 +274,7 @@ process.stdout.write([
   'E move back follow up excludes monthly active orders: passed',
   'F production flow: passed',
   'G installation full/partial collection: passed',
+  'Product defaults and calculation: passed',
   'H company phone: passed',
   'I role safety basis: passed',
   'Migration preview/import/duplicate skip: passed',

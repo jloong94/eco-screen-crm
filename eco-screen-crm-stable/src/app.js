@@ -6,6 +6,28 @@
   const COMPANY_PHONE = '0195763499';
   const COLLECTIONS = ['users', 'products', 'quotations', 'orders', 'productionJobs', 'installationJobs', 'warrantyCards', 'companySettings'];
   const ROLE_CAN_MANAGE = ['Boss', 'Admin'];
+  const DEFAULT_PRODUCTS = [
+    ['Roller Window', 'Roller Screen', 33, 'sqft', 11],
+    ['Roller Door', 'Roller Screen', 41, 'sqft', 11],
+    ['3 Section Removable', 'Removable Screen', 40, 'sqft', 11],
+    ['Pocket Lock', 'Pocket Lock', 50, 'sqft', 11],
+    ['Sliding Security Mesh Door', 'Pocket Lock', 100, 'sqft', 21],
+    ['Sliding Stainless Steel Net Window', 'Sliding Screen', 55, 'sqft', 11],
+    ['Sliding Stainless Steel Net Door', 'Sliding Door', 55, 'sqft', 11],
+    ['Aluminium Grille + Stainless Steel Net', 'Aluminium Grille', 80, 'sqft', 11],
+    ['Hinged Security Mesh Window', 'Security Mesh', 90, 'sqft', 11],
+    ['Hinged Security Mesh Door', 'Security Mesh', 100, 'sqft', 11],
+    ['Roller With Grille', 'Roller With Grille', 53, 'sqft', 11],
+    ['3 Section With Grille', 'Removable With Grille', 60, 'sqft', 11],
+    ['Magnetic Screen', 'Magnetic Screen', 10, 'sqft', 11],
+    ['Fold Security Mesh', 'Security Mesh', 129, 'sqft', 11],
+    ['Glass With Security Mesh', 'Security Mesh', 190, 'sqft', 11],
+    ['Hollow 1x1', 'Hollow', 5, 'sqft', 0],
+    ['Hollow 1x2', 'Hollow', 10, 'sqft', 0],
+    ['Hollow 1x3', 'Hollow', 15, 'sqft', 0],
+    ['Hollow 2x2', 'Hollow', 20, 'sqft', 0],
+    ['Hollow 2x3', 'Hollow', 25, 'sqft', 0]
+  ];
   const t = {
     en: {
       login: 'Login', dashboard: 'Dashboard', quotations: 'Quotations', orders: 'Orders', production: 'Production', installation: 'Installation',
@@ -35,12 +57,7 @@
       { username: 'production', password: '1234', role: 'Production' },
       { username: 'installer', password: '1234', role: 'Installer' }
     ],
-    products: [
-      { id: uid(), name: 'Eco Screen Classic', unitPrice: 18, active: true },
-      { id: uid(), name: 'Eco Screen Premium', unitPrice: 25, active: true },
-      { id: uid(), name: 'Eco Screen Pet Mesh', unitPrice: 28, active: true },
-      { id: uid(), name: 'Eco Screen Sliding Door', unitPrice: 320, active: true }
-    ],
+    products: defaultProducts(),
     quotations: [],
     orders: [],
     productionJobs: [],
@@ -68,6 +85,18 @@
     return 'id-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
   }
 
+  function defaultProducts() {
+    return DEFAULT_PRODUCTS.map(([name, category, unitPrice, calculationType, minimumSqft]) => ({
+      id: uid(),
+      name,
+      category,
+      unitPrice,
+      calculationType,
+      minimumSqft,
+      active: true
+    }));
+  }
+
   function load() {
     try {
       const stored = JSON.parse(localStorage.getItem(APP_KEY) || 'null');
@@ -87,6 +116,12 @@
     localStorage.setItem(APP_KEY, JSON.stringify(state));
   }
 
+  function restoreDefaultProducts(showMessage = true) {
+    state.products = defaultProducts();
+    save();
+    if (showMessage) alert('Default Eco Screen products restored.');
+  }
+
   function label(key) {
     return (t[state.lang] && t[state.lang][key]) || t.en[key] || key;
   }
@@ -103,9 +138,34 @@
     return state.orders.filter((order) => order.status !== 'archived' && order.status !== 'moved_back');
   }
 
+  function productByName(name) {
+    return state.products.find((product) => product.name === name) || {};
+  }
+
+  function yes(value) {
+    return String(value || '').toLowerCase() === 'yes' || value === true;
+  }
+
+  function calcItemDetails(item) {
+    const product = productByName(item.product);
+    const unitPrice = numberValue(item.unitPrice) || numberValue(product.unitPrice);
+    const calculationType = item.calculationType || product.calculationType || 'sqft';
+    const minimumSqft = numberValue(item.minimumSqft !== undefined && item.minimumSqft !== '' ? item.minimumSqft : product.minimumSqft);
+    const quantity = numberValue(item.quantity) || 1;
+    const widthMm = numberValue(item.width);
+    const heightMm = numberValue(item.height);
+    const sqft = widthMm > 0 && heightMm > 0 ? (widthMm * heightMm) / 92903.04 : 0;
+    const chargeableSqft = calculationType === 'sqft' ? Math.max(sqft, minimumSqft) : 1;
+    const baseTotal = calculationType === 'sqft' ? chargeableSqft * unitPrice * quantity : unitPrice * quantity;
+    const powdercoatAmount = yes(item.powdercoat) ? baseTotal * 0.08 : 0;
+    const autoTotal = baseTotal + powdercoatAmount;
+    const manual = numberValue(item.manualFinalPrice);
+    const finalTotal = manual > 0 ? manual : autoTotal;
+    return { unitPrice, calculationType, minimumSqft, quantity, sqft, chargeableSqft, baseTotal, powdercoatAmount, autoTotal, finalTotal };
+  }
+
   function calcItem(item) {
-    const auto = Number(item.width || 0) * Number(item.height || 0) * Number(item.quantity || 0) * Number(item.unitPrice || 0);
-    return Number(item.manualFinalPrice || 0) > 0 ? Number(item.manualFinalPrice) : auto;
+    return calcItemDetails(item).finalTotal;
   }
 
   function calcQuote(quote) {
@@ -539,7 +599,8 @@
     reset: () => { state = defaults(); save(); render(); },
     calcQuote, convertQuotation, seedQuote, nextOrderNo,
     moveBackToFollowUp, sendToProduction, markProductionCompleted, sendToInstaller, scheduleInstallation, completeInstallation,
-    printQuotation, printWarranty, previewOldV2Backup, importOldV2Backup, filteredMigrationRows
+    printQuotation, printWarranty, previewOldV2Backup, importOldV2Backup, filteredMigrationRows,
+    calcItemDetails, defaultProducts, restoreDefaultProducts
   };
 
   function login(username, password) {
@@ -653,15 +714,22 @@
 
   function itemFields(item = {}) {
     const id = item.id || uid();
+    const productName = item.product || 'Roller Window';
+    const details = calcItemDetails({ ...item, product: productName });
     return `<fieldset class="item" data-item="${id}">
-      ${input('product', 'Product', item.product || 'Eco Screen Classic')}${input('width', 'Width', item.width || 1, 'number')}${input('height', 'Height', item.height || 1, 'number')}
+      <label>Product<select name="product">${state.products.filter((product) => product.active !== false).map((product) => `<option value="${product.name}" ${product.name === productName ? 'selected' : ''}>${product.name}</option>`).join('')}</select></label>
+      ${input('width', 'Width mm', item.width || 1000, 'number')}${input('height', 'Height mm', item.height || 1000, 'number')}
       ${input('quantity', 'Qty', item.quantity || 1, 'number')}${input('color', 'Color', item.color || '')}${input('location', 'Location', item.location || '')}
-      ${input('unitPrice', 'Unit Price', item.unitPrice || 0, 'number')}${input('manualFinalPrice', 'Manual Final', item.manualFinalPrice || '', 'number')}${input('adjustmentRemark', 'Remark', item.adjustmentRemark || '')}
+      ${input('unitPrice', 'Unit Price', item.unitPrice || details.unitPrice, 'number')}${input('minimumSqft', 'Minimum Sqft', item.minimumSqft !== undefined ? item.minimumSqft : details.minimumSqft, 'number')}
+      <label>Calculation Type<select name="calculationType"><option value="sqft" ${(item.calculationType || details.calculationType) === 'sqft' ? 'selected' : ''}>sqft</option><option value="fixed" ${(item.calculationType || details.calculationType) === 'fixed' ? 'selected' : ''}>fixed</option></select></label>
+      <label>Powdercoat<select name="powdercoat"><option value="no" ${yes(item.powdercoat) ? '' : 'selected'}>No</option><option value="yes" ${yes(item.powdercoat) ? 'selected' : ''}>Yes</option></select></label>
+      ${input('manualFinalPrice', 'Manual Final', item.manualFinalPrice || '', 'number')}${input('adjustmentRemark', 'Remark', item.adjustmentRemark || '')}
+      <div class="calc-note">Sqft ${details.sqft.toFixed(2)} / Chargeable ${details.chargeableSqft.toFixed(2)} / Powdercoat ${money(details.powdercoatAmount)} / Final ${money(details.finalTotal)}</div>
     </fieldset>`;
   }
 
   function input(name, caption, value, type = 'text') {
-    return `<label>${caption}<input name="${name}" type="${type}" value="${String(value || '').replace(/"/g, '&quot;')}"></label>`;
+    return `<label>${caption}<input name="${name}" type="${type}" value="${String(value ?? '').replace(/"/g, '&quot;')}"></label>`;
   }
 
   function select(name, caption, value, options) {
@@ -707,7 +775,11 @@
 
   function productsView() {
     if (!canManage()) return `<section class="panel"><p>Boss/Admin only.</p></section>`;
-    return `<section class="panel"><form data-product>${input('name', 'Product', '')}${input('unitPrice', 'Unit Price', 0, 'number')}<button>Add Product</button></form><form data-products-edit class="list">${state.products.map((p) => `<div class="list-line" data-product-row="${p.id}">${input('name', 'Product', p.name)}${input('unitPrice', 'Unit Price', p.unitPrice, 'number')}</div>`).join('')}<button>Save Products</button></form></section>`;
+    return `<section class="panel">
+      <div class="actions"><button class="primary" data-restore-products>Restore Eco Screen Default Products</button></div>
+      <form data-product class="product-form">${input('name', 'Product', '')}${input('category', 'Category', '')}${input('unitPrice', 'Unit Price', 0, 'number')}${input('calculationType', 'Calculation Type', 'sqft')}${input('minimumSqft', 'Minimum Sqft', 11, 'number')}<button>Add Product</button></form>
+      <form data-products-edit class="list">${state.products.map((p) => `<div class="list-line product-row" data-product-row="${p.id}">${input('name', 'Product', p.name)}${input('category', 'Category', p.category || '')}${input('unitPrice', 'Unit Price', p.unitPrice, 'number')}${input('calculationType', 'Calculation Type', p.calculationType || 'sqft')}${input('minimumSqft', 'Minimum Sqft', p.minimumSqft ?? 0, 'number')}<label>Active<select name="active"><option value="true" ${p.active !== false ? 'selected' : ''}>Yes</option><option value="false" ${p.active === false ? 'selected' : ''}>No</option></select></label></div>`).join('')}<button>Save Products</button></form>
+    </section>`;
   }
 
   function settingsView() {
@@ -812,7 +884,7 @@
     const data = Object.fromEntries(new FormData(form).entries());
     const items = [...form.querySelectorAll('[data-item]')].map((field) => {
       const item = { id: field.dataset.item };
-      field.querySelectorAll('input').forEach((inputEl) => { item[inputEl.name] = inputEl.value; });
+      field.querySelectorAll('input, select').forEach((inputEl) => { item[inputEl.name] = inputEl.value; });
       return item;
     });
     let quote = state.quotations.find((q) => q.id === data.id);
@@ -929,14 +1001,31 @@
     const form = event.target;
     if (form.matches('[data-login]')) { event.preventDefault(); login(form.username.value, form.password.value); }
     if (form.matches('[data-save-quote]')) { event.preventDefault(); saveQuote(form); }
-    if (form.matches('[data-product]')) { event.preventDefault(); state.products.push({ id: uid(), name: form.name.value, unitPrice: Number(form.unitPrice.value), active: true }); save(); render(); }
+    if (form.matches('[data-product]')) {
+      event.preventDefault();
+      state.products.push({
+        id: uid(),
+        name: form.name.value,
+        category: form.category.value,
+        unitPrice: Number(form.unitPrice.value),
+        calculationType: form.calculationType.value || 'sqft',
+        minimumSqft: Number(form.minimumSqft.value),
+        active: true
+      });
+      save();
+      render();
+    }
     if (form.matches('[data-products-edit]')) {
       event.preventDefault();
       form.querySelectorAll('[data-product-row]').forEach((row) => {
         const product = state.products.find((item) => item.id === row.dataset.productRow);
         if (product) {
           product.name = row.querySelector('[name="name"]').value;
+          product.category = row.querySelector('[name="category"]').value;
           product.unitPrice = Number(row.querySelector('[name="unitPrice"]').value);
+          product.calculationType = row.querySelector('[name="calculationType"]').value || 'sqft';
+          product.minimumSqft = Number(row.querySelector('[name="minimumSqft"]').value);
+          product.active = row.querySelector('[name="active"]').value === 'true';
         }
       });
       save();
@@ -952,6 +1041,7 @@
     if (el.matches('[data-lang]')) { state.lang = state.lang === 'en' ? 'zh' : 'en'; save(); render(); }
     if (el.matches('[data-logout]')) logout();
     if (el.matches('[data-new-quote]')) { const q = seedQuote('Q-' + Date.now().toString().slice(-5), 0); state.ui.selectedQuotationId = q.id; render(); }
+    if (el.matches('[data-restore-products]')) { if (prompt('Type RESTORE PRODUCTS to confirm') === 'RESTORE PRODUCTS') { restoreDefaultProducts(true); render(); } }
     if (el.matches('[data-select-quote]')) { state.ui.selectedQuotationId = el.dataset.selectQuote; render(); }
     if (el.matches('[data-add-item]')) { el.closest('form').querySelector('[data-items]').insertAdjacentHTML('beforeend', itemFields()); }
     if (el.matches('[data-print-quote]')) printQuotation(el.dataset.printQuote);
