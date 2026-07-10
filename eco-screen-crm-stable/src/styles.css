@@ -242,6 +242,15 @@ h3 {
   padding: 8px 0;
 }
 
+.product-form,
+.product-row {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -257,6 +266,16 @@ h3 {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
+}
+
+.calc-note {
+  grid-column: 1 / -1;
+  color: var(--accent-2);
+  background: #eef6fd;
+  border: 1px solid #c3d6e7;
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 13px;
 }
 
 .table {
@@ -383,6 +402,8 @@ h3 {
   .grid.metrics,
   .summary,
   .form-grid,
+  .product-form,
+  .product-row,
   .item {
     grid-template-columns: 1fr;
   }
