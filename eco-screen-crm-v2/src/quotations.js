@@ -317,13 +317,14 @@ export function newQuote() {
 
 export function renderQuotationList() {
   const list = document.querySelector("#quotationList");
+  const cloudIsLoading = state.cloud.status === "Checking cloud...";
   list.innerHTML = state.quotations.length ? state.quotations.map((quote) => `
     <article class="quote-row">
       <button type="button" data-open-quote="${quote.id}">
         <span><strong>${escapeHtml(getQuotationDisplayNo(quote))}</strong><small>${escapeHtml(quote.customer.name || "-")} | ${statusLabel(quote.status)}</small></span>
         <span>${money(quote.total || 0)}</span>
       </button>
-      <button class="btn primary" type="button" data-convert-quote="${quote.id}">${t("Convert to Order")}</button>
+      <button class="btn primary" type="button" data-convert-quote="${quote.id}" ${cloudIsLoading ? "disabled" : ""} title="${cloudIsLoading ? "Waiting for cloud data to finish loading" : ""}">${t("Convert to Order")}</button>
       ${isBossOrAdmin() ? `<button class="btn danger" type="button" data-delete-quote="${quote.id}">${t("Delete")}</button>` : ""}
     </article>
   `).join("") : `<p class="muted-text">${t("No saved quotations yet.")}</p>`;
@@ -335,13 +336,21 @@ export function renderQuotationList() {
     });
   });
   list.querySelectorAll("[data-convert-quote]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const result = convertQuoteToOrder(button.dataset.convertQuote);
-      const status = document.querySelector("#saveStatus");
-      status.textContent = result.ok ? result.message : result.message;
-      status.dataset.type = result.ok ? "success" : "error";
-      renderQuotationList();
-      renderWorkflowModules();
+    button.addEventListener("click", async () => {
+      if (button.disabled) return;
+      button.disabled = true;
+      button.textContent = "Converting...";
+      setSaveStatus("Converting quotation. Saving locally first...", "info");
+      try {
+        const result = await convertQuoteToOrder(button.dataset.convertQuote);
+        setSaveStatus(result.message, result.ok ? (result.cloudOk === false && !result.localOnly ? "warning" : "success") : "error");
+      } catch (error) {
+        console.error("Convert to Order button failed", error);
+        setSaveStatus(`Convert to Order failed: ${error.message || "Unknown error"}`, "error");
+      } finally {
+        renderQuotationList();
+        renderWorkflowModules();
+      }
     });
   });
   list.querySelectorAll("[data-delete-quote]").forEach((button) => {
