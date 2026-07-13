@@ -2,12 +2,14 @@ import {
   nextInstallationNumber,
   nextProductionNumber,
   nextWarrantyNumber,
+  persistOrderConversionLocally,
   persistQuotations,
   persistInstallationJobs,
   persistOrders,
   persistProductionJobs,
   persistWarrantyCards,
   state,
+  syncOrderConversionCollections,
   uid
 } from "./state.js";
 import {
@@ -88,6 +90,7 @@ const progressCategories = [
 ];
 
 let activeCompletionJobId = null;
+const convertingQuoteIds = new Set();
 let orderSearch = {
   orderNumber: "",
   customerName: "",
@@ -100,86 +103,159 @@ let orderSearch = {
   highlightId: ""
 };
 
-export function convertQuoteToOrder(quoteId) {
+export async function convertQuoteToOrder(quoteId) {
+  const lockKey = String(quoteId ?? "").trim();
+  if (!lockKey) return failConversion("Please save quotation first");
+  if (convertingQuoteIds.has(lockKey)) {
+    return failConversion("Conversion already in progress. Please wait.", { busy: true });
+  }
+
+  convertingQuoteIds.add(lockKey);
+  let previousState = null;
+  let localCommitted = false;
   try {
-    const quote = getQuoteById(quoteId);
-    const validation = validateQuoteForOrder(quote);
+    const sourceQuote = getQuoteById(lockKey);
+    const validation = validateQuoteForOrder(sourceQuote);
     if (!validation.ok) return failConversion(validation.message);
+    const quote = quotationForConversion(sourceQuote);
     const quoteDisplayNo = ensureQuotationDisplayNo(quote);
-
     const existing = findExistingOrderForQuote(quote);
-    const order = existing ? updateOrderFromQuote(existing, quote) : createOrderFromQuote(quote);
+    const order = existing || createOrderFromQuote(quote);
     if (!order) return failConversion("Failed to save order.");
+    const now = new Date().toISOString();
+    const updatedQuote = {
+      ...quote,
+      status: "won",
+      workflowStatus: "converted",
+      quoteNumber: quoteDisplayNo,
+      quotationNo: quoteDisplayNo,
+      quoteNo: quoteDisplayNo,
+      orderId: order.id,
+      orderNo: getOrderDisplayNo(order),
+      orderNumber: getOrderDisplayNo(order),
+      converted: true,
+      convertedToOrder: true,
+      convertedAt: quote.convertedAt || now,
+      updatedAt: now
+    };
+    const workflowJobs = upsertWorkflowJobsForOrder(order, state.productionJobs, state.installationJobs);
+    const nextWarrantyCards = updateWarrantyOrderNumbers(order, state.warrantyCards);
+    const nextQuotations = state.quotations.map((row) => (
+      row === sourceQuote || (sourceQuote.id && row.id === sourceQuote.id) ? updatedQuote : row
+    ));
+    const nextOrders = existing ? state.orders : [order, ...state.orders];
 
-    state.orders = existing
-      ? state.orders.map((row) => row.id === existing.id ? order : row)
-      : [order, ...state.orders];
+    previousState = {
+      orders: state.orders,
+      quotations: state.quotations,
+      productionJobs: state.productionJobs,
+      installationJobs: state.installationJobs,
+      warrantyCards: state.warrantyCards
+    };
+    state.orders = nextOrders;
+    state.quotations = nextQuotations;
+    state.productionJobs = workflowJobs.productionJobs;
+    state.installationJobs = workflowJobs.installationJobs;
+    state.warrantyCards = nextWarrantyCards;
 
-    upsertWorkflowJobsForOrder(order);
-    updateWarrantyOrderNumbers(order);
+    const localSave = persistOrderConversionLocally();
+    if (!localSave.ok) {
+      restoreConversionState(previousState);
+      return failConversion(`Failed to save order locally: ${localSave.reason}`);
+    }
+    localCommitted = true;
 
-    quote.status = "won";
-    quote.quoteNumber = quoteDisplayNo;
-    quote.quotationNo = quoteDisplayNo;
-    quote.quoteNo = quoteDisplayNo;
-    quote.orderId = order.id;
-    quote.orderNo = getOrderDisplayNo(order);
-    quote.orderNumber = getOrderDisplayNo(order);
-    quote.converted = true;
-    quote.convertedToOrder = true;
-    quote.convertedAt = new Date().toISOString();
-    quote.updatedAt = new Date().toISOString();
-
-    const cloudSaves = [
-      persistOrders(),
-      persistProductionJobs(),
-      persistInstallationJobs(),
-      persistWarrantyCards(),
-      persistQuotations()
-    ];
-    Promise.all(cloudSaves).then((results) => {
-      const failed = results.find((result) => result && !result.ok && result.reason !== "Local Mode Only");
-      if (failed) showWorkflowMessage("Order saved locally but cloud sync failed", "warning");
-    }).catch((error) => {
-      console.error("Convert to Order cloud sync failed", error);
-      showWorkflowMessage("Order saved locally but cloud sync failed", "warning");
-    });
-
-    const message = existing
-      ? `Order updated successfully. Order No: ${getOrderDisplayNo(order)}`
+    const baseMessage = existing
+      ? `Order already exists. Order No: ${getOrderDisplayNo(order)}`
       : `Order created successfully. Order No: ${getOrderDisplayNo(order)}`;
-    showWorkflowMessage(message, "success");
+    showWorkflowMessage(`${baseMessage} Saved locally. Syncing cloud...`, "info");
+
+    const cloudSync = await syncOrderConversionCollections();
+    const cloudFailed = !cloudSync.ok && !cloudSync.localOnly;
+    const message = cloudFailed
+      ? `${baseMessage} Order saved locally but cloud sync failed: ${cloudSync.reason}`
+      : cloudSync.localOnly
+        ? `${baseMessage} Saved locally.`
+        : baseMessage;
+    showWorkflowMessage(message, cloudFailed ? "warning" : "success");
     orderSearch = { ...orderSearch, orderNumber: getOrderDisplayNo(order), filter: "all", highlightId: order.id };
     renderWorkflowModules();
     scrollToOrders();
-    return { ok: true, message, order, updated: Boolean(existing) };
+    return {
+      ok: true,
+      message,
+      order,
+      existing: Boolean(existing),
+      cloudOk: cloudSync.ok && !cloudSync.localOnly,
+      localOnly: cloudSync.localOnly
+    };
   } catch (error) {
     console.error("Convert to Order failed", error);
+    if (!localCommitted && previousState) restoreConversionState(previousState);
+    if (localCommitted) {
+      const message = `Order saved locally but cloud sync failed: ${error.message || "Unknown cloud error"}`;
+      showWorkflowMessage(message, "warning");
+      return { ok: true, message, cloudOk: false };
+    }
     return failConversion(`Unknown error: ${error.message || "Failed to save order."}`);
+  } finally {
+    convertingQuoteIds.delete(lockKey);
   }
 }
 
 export function getQuoteById(quoteId) {
-  return state.quotations.find((row) => row.id === quoteId || getQuotationDisplayNo(row) === quoteId) || null;
+  return state.quotations.find((row) => row.id === quoteId)
+    || state.quotations.find((row) => getQuotationDisplayNo(row) === quoteId)
+    || null;
+}
+
+function quotationForConversion(quote) {
+  return {
+    ...quote,
+    customer: customerFromQuotation(quote),
+    items: quote.items.map((item) => ({ ...item }))
+  };
+}
+
+function customerFromQuotation(quote = {}) {
+  const customer = quote.customer && typeof quote.customer === "object" ? quote.customer : {};
+  return {
+    ...customer,
+    name: customer.name ?? quote.customerName ?? "",
+    phone: customer.phone ?? quote.phone ?? "",
+    area: customer.area ?? quote.area ?? "",
+    address: customer.address ?? quote.address ?? "",
+    remark: customer.remark ?? quote.customerRemark ?? ""
+  };
 }
 
 export function nextSalesOrderNumber(date = new Date()) {
   const year = String(date.getFullYear()).slice(-2);
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const prefix = `SO${year}${month}`;
-  const highest = state.orders
-    .map((order) => normalizeRefNo(order.orderNo || order.orderNumber))
+  const usedNumbers = new Set(state.orders.map((order) => normalizeRefNo(order.orderNo || order.orderNumber)).filter(Boolean));
+  const highest = [...usedNumbers]
     .filter((number) => number.startsWith(prefix))
     .map((number) => Number(number.slice(prefix.length)))
     .filter(Number.isFinite)
     .reduce((max, number) => Math.max(max, number), 0);
-  return `${prefix}${String(highest + 1).padStart(3, "0")}`;
+  let next = highest + 1;
+  let orderNumber = `${prefix}${String(next).padStart(3, "0")}`;
+  while (usedNumbers.has(orderNumber)) {
+    next += 1;
+    orderNumber = `${prefix}${String(next).padStart(3, "0")}`;
+  }
+  return orderNumber;
 }
 
 export function createOrderFromQuote(quote) {
   const totals = quoteTotals(quote.items, quote.discount, quote.deposit);
   const quoteDisplayNo = ensureQuotationDisplayNo(quote);
   const orderNo = nextSalesOrderNumber();
+  const customer = customerFromQuotation(quote);
+  const appointmentDate = quote.appointmentDate || quote.appointment_date || "";
+  const appointmentTime = quote.appointmentTime || quote.appointment_time || "";
+  const remark = quote.remark ?? quote.remarks ?? "";
   return {
     id: uid("order"),
     orderNo,
@@ -188,46 +264,28 @@ export function createOrderFromQuote(quote) {
     quotationId: quote.id,
     quoteNumber: quoteDisplayNo,
     quotationNo: quoteDisplayNo,
-    customer: { ...quote.customer },
+    customer: { ...customer },
+    customerName: customer.name,
+    phone: customer.phone,
+    area: customer.area,
+    address: customer.address,
     items: quote.items.map((item) => ({ ...itemWithCalculatedTotals(item) })),
     subtotal: totals.subtotal,
-    discount: Number(quote.discount || 0),
+    discount: toNumber(quote.discount),
     total: totals.total,
-    deposit: Number(quote.deposit || 0),
+    deposit: toNumber(quote.deposit),
     balance: totals.balance,
     status: "Confirmed",
     sentToProduction: false,
     productionStatus: "not_produced",
     installationStatus: "not_scheduled",
-    installationDate: quote.appointmentDate || "",
-    remark: quote.remark || "",
+    appointmentDate,
+    appointmentTime,
+    installationDate: appointmentDate,
+    remark,
+    remarks: quote.remarks ?? remark,
+    customerRemark: customer.remark,
     createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  };
-}
-
-function updateOrderFromQuote(existingOrder, quote) {
-  const latest = createOrderFromQuote(quote);
-  const existingSentToProduction = existingOrder.sentToProduction === true
-    || ["Sent to Production", "In Production", "Production Completed"].includes(existingOrder.status)
-    || !["not_produced", "", undefined, null].includes(existingOrder.productionStatus);
-  const existingInstallationStarted = !["not_scheduled", "", undefined, null].includes(existingOrder.installationStatus)
-    || ["Sent to Installer", "Installation Scheduled", "Installing", "Installation Completed", "Pending Collection", "Completed", "Serviced"].includes(existingOrder.status);
-  return {
-    ...existingOrder,
-    ...latest,
-    id: existingOrder.id,
-    quoteId: quote.id,
-    quotationId: quote.id,
-    orderNo: existingOrder.orderNo || existingOrder.orderNumber || latest.orderNo,
-    orderNumber: existingOrder.orderNumber || existingOrder.orderNo || latest.orderNumber,
-    quoteNumber: latest.quoteNumber,
-    quotationNo: latest.quotationNo,
-    createdAt: existingOrder.createdAt || latest.createdAt,
-    status: existingInstallationStarted || existingSentToProduction ? existingOrder.status : "Confirmed",
-    sentToProduction: existingSentToProduction ? true : latest.sentToProduction,
-    productionStatus: existingSentToProduction ? existingOrder.productionStatus : latest.productionStatus,
-    installationStatus: existingInstallationStarted ? existingOrder.installationStatus : latest.installationStatus,
     updatedAt: new Date().toISOString()
   };
 }
@@ -252,44 +310,63 @@ export function createProductionJobFromOrder(order) {
   };
 }
 
-function upsertWorkflowJobsForOrder(order) {
+function upsertWorkflowJobsForOrder(order, productionJobs, installationJobs) {
   const orderNo = getOrderDisplayNo(order);
-  const productionJob = state.productionJobs.find((job) => job.orderId === order.id || normalizeRefNo(job.orderNumber || job.orderNo) === normalizeRefNo(orderNo));
+  const productionJob = productionJobs.find((job) => job.orderId === order.id || normalizeRefNo(job.orderNumber || job.orderNo) === normalizeRefNo(orderNo));
+  let nextProductionJobs;
   if (productionJob) {
-    productionJob.orderId = order.id;
-    productionJob.orderNo = orderNo;
-    productionJob.orderNumber = orderNo;
-    productionJob.quoteNumber = order.quoteNumber || order.quotationNo || "";
-    productionJob.quotationNo = order.quoteNumber || order.quotationNo || "";
-    productionJob.customerName = order.customer.name;
-    productionJob.items = order.items.map((item) => itemWithCalculatedTotals(item));
-    productionJob.installationDate = order.installationDate || productionJob.installationDate || "";
-    productionJob.updatedAt = new Date().toISOString();
+    const updatedProductionJob = {
+      ...productionJob,
+      orderId: order.id,
+      orderNo,
+      orderNumber: orderNo,
+      quoteNumber: order.quoteNumber || order.quotationNo || productionJob.quoteNumber || "",
+      quotationNo: order.quoteNumber || order.quotationNo || productionJob.quotationNo || "",
+      customerName: productionJob.customerName || order.customer?.name || "",
+      items: Array.isArray(productionJob.items) && productionJob.items.length
+        ? productionJob.items
+        : order.items.map((item) => itemWithCalculatedTotals(item)),
+      installationDate: productionJob.installationDate || order.installationDate || "",
+      updatedAt: new Date().toISOString()
+    };
+    nextProductionJobs = productionJobs.map((job) => job.id === productionJob.id ? updatedProductionJob : job);
   } else {
-    state.productionJobs = [createProductionJobFromOrder(order), ...state.productionJobs];
+    nextProductionJobs = [createProductionJobFromOrder(order), ...productionJobs];
   }
 
-  const installationJob = state.installationJobs.find((job) => job.orderId === order.id || normalizeRefNo(job.orderNumber || job.orderNo) === normalizeRefNo(orderNo));
+  const installationJob = installationJobs.find((job) => job.orderId === order.id || normalizeRefNo(job.orderNumber || job.orderNo) === normalizeRefNo(orderNo));
+  let nextInstallationJobs;
   if (installationJob) {
-    installationJob.orderId = order.id;
-    installationJob.orderNo = orderNo;
-    installationJob.orderNumber = orderNo;
-    installationJob.quoteNumber = order.quoteNumber || order.quotationNo || "";
-    installationJob.quotationNo = order.quoteNumber || order.quotationNo || "";
-    installationJob.customer = { ...order.customer };
-    installationJob.items = order.items.map((item) => itemWithCalculatedTotals(item));
-    installationJob.installationDate = order.installationDate || installationJob.installationDate || "";
-    installationJob.balance = order.balance;
-    installationJob.balanceToCollect = order.balance;
-    installationJob.updatedAt = new Date().toISOString();
+    const updatedInstallationJob = {
+      ...installationJob,
+      orderId: order.id,
+      orderNo,
+      orderNumber: orderNo,
+      quoteNumber: order.quoteNumber || order.quotationNo || installationJob.quoteNumber || "",
+      quotationNo: order.quoteNumber || order.quotationNo || installationJob.quotationNo || "",
+      customer: installationJob.customer || { ...order.customer },
+      items: Array.isArray(installationJob.items) && installationJob.items.length
+        ? installationJob.items
+        : order.items.map((item) => itemWithCalculatedTotals(item)),
+      installationDate: installationJob.installationDate || order.installationDate || "",
+      balance: installationJob.balance ?? order.balance,
+      balanceToCollect: installationJob.balanceToCollect ?? order.balance,
+      updatedAt: new Date().toISOString()
+    };
+    nextInstallationJobs = installationJobs.map((job) => job.id === installationJob.id ? updatedInstallationJob : job);
   } else {
-    state.installationJobs = [createInstallationJobFromOrder(order), ...state.installationJobs];
+    nextInstallationJobs = [createInstallationJobFromOrder(order), ...installationJobs];
   }
+
+  return {
+    productionJobs: nextProductionJobs,
+    installationJobs: nextInstallationJobs
+  };
 }
 
-function updateWarrantyOrderNumbers(order) {
+function updateWarrantyOrderNumbers(order, warrantyCards) {
   const orderNo = getOrderDisplayNo(order);
-  state.warrantyCards = state.warrantyCards.map((card) => {
+  return warrantyCards.map((card) => {
     const sameOrder = card.orderId === order.id || normalizeRefNo(card.orderNo || card.orderNumber) === normalizeRefNo(orderNo);
     if (!sameOrder) return card;
     return {
@@ -357,22 +434,30 @@ export function loadOrders() {
   return state.orders;
 }
 
-function failConversion(message) {
+function restoreConversionState(previousState) {
+  if (!previousState) return;
+  state.orders = previousState.orders;
+  state.quotations = previousState.quotations;
+  state.productionJobs = previousState.productionJobs;
+  state.installationJobs = previousState.installationJobs;
+  state.warrantyCards = previousState.warrantyCards;
+}
+
+function failConversion(message, extra = {}) {
   console.error("Convert to Order:", message);
   showWorkflowMessage(message, "error");
-  return { ok: false, message };
+  return { ok: false, message, ...extra };
 }
 
 function validateQuoteForOrder(quote) {
   if (!quote) return { ok: false, message: "Please save quotation first" };
-  if (!String(quote.customer?.name || "").trim()) return { ok: false, message: "Missing customer name" };
-  if (!String(quote.customer?.phone || "").trim()) return { ok: false, message: "Missing phone number" };
+  const customer = customerFromQuotation(quote);
+  if (!String(customer.name || "").trim()) return { ok: false, message: "Missing customer name" };
   if (!Array.isArray(quote.items) || !quote.items.length) return { ok: false, message: "Missing quotation items" };
   const totals = quoteTotals(quote.items, quote.discount, quote.deposit);
-  const total = toNumber(quote.total || totals.total);
-  if (total <= 0) return { ok: false, message: "Quote total must be more than 0" };
-  quote.status = normalizeStatus(quote.status);
-  return { ok: true };
+  if (!Number.isFinite(totals.total)) return { ok: false, message: "Quote total must be a valid number" };
+  if (totals.total <= 0) return { ok: false, message: "Quote total must be more than 0" };
+  return { ok: true, totals };
 }
 
 export function getQuotationDisplayNo(quote = {}) {
@@ -399,13 +484,16 @@ function getOrderDisplayNo(order = {}) {
 }
 
 function findExistingOrderForQuote(quote) {
+  const byQuoteId = state.orders.find((order) => quote.id && (order.quoteId === quote.id || order.quotationId === quote.id));
+  if (byQuoteId) return byQuoteId;
+
   const quoteNo = normalizeRefNo(getQuotationDisplayNo(quote));
+  if (!quoteNo) return null;
   return state.orders.find((order) => {
-    const sameQuoteId = quote.id && (order.quoteId === quote.id || order.quotationId === quote.id);
+    if (order.quoteId || order.quotationId) return false;
     const orderNo = normalizeRefNo(order.orderNo || order.orderNumber);
     const orderQuoteNo = normalizeRefNo(order.quoteNumber || order.quotationNo || order.quoteNo);
-    const sameDisplayNo = quoteNo && ((orderNo && orderNo === quoteNo) || (orderQuoteNo && orderQuoteNo === quoteNo));
-    return sameQuoteId || sameDisplayNo;
+    return (orderQuoteNo && orderQuoteNo === quoteNo) || (orderNo && orderNo === quoteNo);
   }) || null;
 }
 
