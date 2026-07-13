@@ -21,7 +21,7 @@ import { itemWithCalculatedTotals, money, quoteTotals, toNumber } from "./calcul
 import { attachWorkflowEvents, getQuotationDisplayNo, nextSalesOrderNumber, renderWorkflowModules } from "./workflow.js";
 import { t } from "./i18n.js";
 import { canAccessPage, defaultPageForRole, isBossOrAdmin, pageDefinitions, role } from "./permissions.js";
-import { isCloudConfigured, safeSyncWithCloud, syncToCloud } from "./cloudSync.js";
+import { isCloudConfigured, safeSyncWithCloud, syncFromCloud, syncToCloud } from "./cloudSync.js";
 
 let cloudHydrated = false;
 let monthlySummaryMonth = currentMonthValue();
@@ -228,6 +228,7 @@ function ordersPageHtml() {
         </div>
         <span class="pill" id="workflowStatus">${t("Ready")}</span>
       </div>
+      ${orderExportToolsHtml()}
       <div id="orderTools"></div>
       <div id="orderProgressBoard"></div>
       <div id="orderList" class="workflow-list"></div>
@@ -322,6 +323,7 @@ function renderShell() {
     attachWorkflowEvents();
     renderWorkflowModules();
   }
+  if (isCurrentPage("orders")) attachOrderExportEvents();
   if (isCurrentPage("dashboard")) attachMonthlySummaryEvents();
   if (isCurrentPage("customers")) renderCustomers();
   if (isCurrentPage("users")) attachUserManagementEvents(renderShell);
@@ -526,6 +528,292 @@ function attachCompanySettingsEvents() {
       if (status) status.textContent = result.ok ? "Company settings saved and synced." : "Company settings saved locally.";
     });
   });
+}
+
+function orderExportToolsHtml() {
+  if (!isBossOrAdmin()) return "";
+  return `
+    <section class="panel order-export-panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Backup / Export</p>
+          <h2>Export Old V2 Orders</h2>
+        </div>
+      </div>
+      <p class="muted-text">Read-only export. This only downloads data and will not delete, reset, migrate, import or change anything.</p>
+      <div class="actions">
+        <button class="btn" type="button" data-export-v2="orders-json">Export All Orders JSON</button>
+        <button class="btn" type="button" data-export-v2="orders-csv">Export All Orders CSV</button>
+        <button class="btn" type="button" data-export-v2="quotations-json">Export All Quotations JSON</button>
+        <button class="btn" type="button" data-export-v2="quotations-csv">Export All Quotations CSV</button>
+        <span class="muted-text" id="orderExportStatus"></span>
+      </div>
+    </section>
+  `;
+}
+
+function attachOrderExportEvents() {
+  document.querySelectorAll("[data-export-v2]").forEach((button) => {
+    button.addEventListener("click", () => exportV2Data(button.dataset.exportV2));
+  });
+}
+
+async function exportV2Data(type) {
+  if (!isBossOrAdmin()) return;
+  const confirmed = window.confirm("This will only download data. It will not delete or change anything.");
+  if (!confirmed) return;
+  setOrderExportStatus("Preparing export. Loading cloud data if available...", "info");
+  const snapshot = await exportSnapshot();
+  const stamp = exportTimestamp();
+  if (type === "orders-json") {
+    downloadJsonBackup(snapshot.orders, `eco-screen-crm-v2-orders-full-${stamp}.json`);
+    setOrderExportStatus(`Orders JSON downloaded: ${snapshot.orders.length} orders.`, "success");
+  }
+  if (type === "orders-csv") {
+    downloadTextFile(ordersSummaryCsv(snapshot), `eco-screen-crm-v2-orders-summary-${stamp}.csv`, "text/csv;charset=utf-8");
+    downloadTextFile(ordersItemsCsv(snapshot), `eco-screen-crm-v2-orders-items-${stamp}.csv`, "text/csv;charset=utf-8");
+    setOrderExportStatus(`Orders CSV downloaded: ${snapshot.orders.length} orders, ${countItems(snapshot.orders)} item rows.`, "success");
+  }
+  if (type === "quotations-json") {
+    downloadJsonBackup(snapshot.quotations, `eco-screen-crm-v2-quotations-full-${stamp}.json`);
+    setOrderExportStatus(`Quotations JSON downloaded: ${snapshot.quotations.length} quotations.`, "success");
+  }
+  if (type === "quotations-csv") {
+    downloadTextFile(quotationsSummaryCsv(snapshot), `eco-screen-crm-v2-quotations-summary-${stamp}.csv`, "text/csv;charset=utf-8");
+    setOrderExportStatus(`Quotations CSV downloaded: ${snapshot.quotations.length} quotations.`, "success");
+  }
+  if (snapshot.warning) setOrderExportStatus(`${document.querySelector("#orderExportStatus")?.textContent || "Export ready."} ${snapshot.warning}`, "warning");
+}
+
+async function exportSnapshot() {
+  const local = stateSnapshot();
+  if (!isCloudConfigured()) return { ...local, warning: "Local export only. Supabase is not configured." };
+  const cloud = await syncFromCloud();
+  if (!cloud.ok) return { ...local, warning: `Cloud load failed. Exported local data only: ${cloud.reason}` };
+  return {
+    ...local,
+    customers: Array.isArray(cloud.data?.customers) && cloud.data.customers.length ? cloud.data.customers : local.customers,
+    products: Array.isArray(cloud.data?.products) && cloud.data.products.length ? cloud.data.products : local.products,
+    quotations: Array.isArray(cloud.data?.quotations) && cloud.data.quotations.length ? cloud.data.quotations : local.quotations,
+    orders: Array.isArray(cloud.data?.orders) && cloud.data.orders.length ? cloud.data.orders : local.orders,
+    productionJobs: Array.isArray(cloud.data?.productionJobs) && cloud.data.productionJobs.length ? cloud.data.productionJobs : local.productionJobs,
+    installationJobs: Array.isArray(cloud.data?.installationJobs) && cloud.data.installationJobs.length ? cloud.data.installationJobs : local.installationJobs,
+    warrantyCards: Array.isArray(cloud.data?.warrantyCards) && cloud.data.warrantyCards.length ? cloud.data.warrantyCards : local.warrantyCards
+  };
+}
+
+function ordersSummaryCsv(snapshot) {
+  const headers = [
+    "Order No",
+    "Quotation No / Old Ref No",
+    "Customer Name",
+    "Phone",
+    "Area",
+    "Address",
+    "Appointment Date",
+    "Status",
+    "Order Date",
+    "Discount",
+    "Deposit",
+    "Balance",
+    "Total",
+    "Payment Status",
+    "Production Status",
+    "Installation Status",
+    "Installer",
+    "Install Date",
+    "Warranty Info",
+    "Created At",
+    "Updated At"
+  ];
+  const rows = snapshot.orders.map((order) => {
+    const production = findExportProduction(order, snapshot);
+    const installation = findExportInstallation(order, snapshot);
+    const warranty = findExportWarranty(order, snapshot, installation);
+    return [
+      exportOrderNo(order),
+      exportQuoteNo(order),
+      order.customer?.name,
+      order.customer?.phone,
+      order.customer?.area,
+      order.customer?.address,
+      order.appointmentDate || order.appointment_date,
+      order.status,
+      order.orderDate || order.order_date || order.createdAt,
+      order.discount,
+      order.deposit,
+      order.balance,
+      order.total,
+      order.paymentStatus || order.payment_status,
+      order.productionStatus || production?.status,
+      order.installationStatus || installation?.status,
+      installation?.installerName || installation?.installer,
+      installation?.installationDate || order.installationDate,
+      warrantySummaryText(warranty),
+      order.createdAt,
+      order.updatedAt
+    ];
+  });
+  return csvFromRows(headers, rows);
+}
+
+function ordersItemsCsv(snapshot) {
+  const headers = [
+    "Order No",
+    "Quotation No / Old Ref No",
+    "Customer Name",
+    "Phone",
+    "Status",
+    "Item No",
+    "Product Name",
+    "Width",
+    "Height",
+    "Sqft",
+    "Quantity",
+    "Color",
+    "Location",
+    "Unit Price",
+    "Manual Final Price",
+    "Line Total",
+    "Remark",
+    "Production Status",
+    "Installation Status",
+    "Installer",
+    "Install Date",
+    "Created At",
+    "Updated At"
+  ];
+  const rows = snapshot.orders.flatMap((order) => {
+    const production = findExportProduction(order, snapshot);
+    const installation = findExportInstallation(order, snapshot);
+    const items = Array.isArray(order.items) ? order.items : [];
+    return items.map((item, index) => [
+      exportOrderNo(order),
+      exportQuoteNo(order),
+      order.customer?.name,
+      order.customer?.phone,
+      order.status,
+      index + 1,
+      item.productName,
+      item.width,
+      item.height,
+      item.sqft || item.area || item.chargeableSqft || item.actualSqft,
+      item.quantity,
+      item.color,
+      item.installationLocation || item.location,
+      item.unitPrice,
+      item.manualFinalPrice,
+      item.lineTotal,
+      item.remark,
+      order.productionStatus || production?.status,
+      order.installationStatus || installation?.status,
+      installation?.installerName || installation?.installer,
+      installation?.installationDate || order.installationDate,
+      order.createdAt,
+      order.updatedAt
+    ]);
+  });
+  return csvFromRows(headers, rows);
+}
+
+function quotationsSummaryCsv(snapshot) {
+  const headers = [
+    "Quotation No / Old Ref No",
+    "Customer Name",
+    "Phone",
+    "Area",
+    "Address",
+    "Appointment Date",
+    "Status",
+    "Discount",
+    "Deposit",
+    "Balance",
+    "Total",
+    "Created At",
+    "Updated At"
+  ];
+  const rows = snapshot.quotations.map((quote) => [
+    getQuotationDisplayNo(quote),
+    quote.customer?.name || quote.customerName,
+    quote.customer?.phone || quote.phone,
+    quote.customer?.area || quote.area,
+    quote.customer?.address || quote.address,
+    quote.appointmentDate || quote.appointment_date,
+    quote.status,
+    quote.discount,
+    quote.deposit,
+    quote.balance,
+    quote.total,
+    quote.createdAt,
+    quote.updatedAt
+  ]);
+  return csvFromRows(headers, rows);
+}
+
+function findExportProduction(order, snapshot) {
+  const orderNo = exportOrderNo(order);
+  return snapshot.productionJobs.find((job) => job.orderId === order.id || sameRef(job.orderNo || job.orderNumber, orderNo)) || null;
+}
+
+function findExportInstallation(order, snapshot) {
+  const orderNo = exportOrderNo(order);
+  return snapshot.installationJobs.find((job) => job.orderId === order.id || sameRef(job.orderNo || job.orderNumber, orderNo)) || null;
+}
+
+function findExportWarranty(order, snapshot, installation) {
+  const orderNo = exportOrderNo(order);
+  return snapshot.warrantyCards.find((card) => card.orderId === order.id || sameRef(card.orderNo || card.orderNumber, orderNo) || (installation?.installationNumber && card.installationJobNo === installation.installationNumber)) || null;
+}
+
+function warrantySummaryText(warranty) {
+  if (!warranty) return "";
+  return [warranty.warrantyNo, warranty.warrantyPeriod, warranty.startDate].filter(Boolean).join(" | ");
+}
+
+function exportOrderNo(order) {
+  return order.orderNo || order.orderNumber || "";
+}
+
+function exportQuoteNo(order) {
+  return order.quoteNumber || order.quotationNo || order.quoteNo || order.refNo || "";
+}
+
+function sameRef(left, right) {
+  return String(left || "").trim().toUpperCase() === String(right || "").trim().toUpperCase();
+}
+
+function countItems(orders) {
+  return orders.reduce((sum, order) => sum + (Array.isArray(order.items) ? order.items.length : 0), 0);
+}
+
+function csvFromRows(headers, rows) {
+  return [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n");
+}
+
+function csvCell(value) {
+  const text = String(value ?? "");
+  return /[",\r\n]/.test(text) ? `"${text.replaceAll("\"", "\"\"")}"` : text;
+}
+
+function downloadTextFile(content, filename, type = "text/plain;charset=utf-8") {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportTimestamp() {
+  return new Date().toISOString().slice(0, 16).replace("T", "-").replace(":", "-");
+}
+
+function setOrderExportStatus(message, type = "info") {
+  const status = document.querySelector("#orderExportStatus");
+  if (!status) return;
+  status.textContent = message;
+  status.dataset.type = type;
 }
 
 function orderResetToolsHtml() {

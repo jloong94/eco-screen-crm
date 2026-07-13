@@ -2,6 +2,15 @@ import { defaultCompanySettings, defaultProducts, defaultUsers } from "./data.js
 import { loadJson, saveJson, storageKeys } from "./storage.js";
 import { isCloudConfigured, saveData, syncToCloud } from "./cloudSync.js";
 
+const orderConversionCollections = [
+  "orders",
+  "productionJobs",
+  "installationJobs",
+  "warrantyCards",
+  "quotations"
+];
+const workflowCollections = new Set(orderConversionCollections);
+
 const users = normalizeUsers(loadJson(storageKeys.users, defaultUsers));
 const currentUserId = localStorage.getItem(storageKeys.currentUserId) || "";
 const currentUser = users.find((user) => user.userId === currentUserId && user.active !== false) || null;
@@ -93,6 +102,58 @@ export function persistQuotations() {
 export function persistOrders() {
   saveJson(storageKeys.orders, state.orders);
   return syncCollectionNow("orders");
+}
+
+export function persistOrderConversionLocally() {
+  const previousValues = new Map(orderConversionCollections.map((collection) => [
+    collection,
+    localStorage.getItem(storageKeys[collection])
+  ]));
+
+  try {
+    orderConversionCollections.forEach((collection) => {
+      saveJson(storageKeys[collection], state[collection]);
+    });
+    return { ok: true };
+  } catch (error) {
+    previousValues.forEach((value, collection) => {
+      try {
+        if (value === null) localStorage.removeItem(storageKeys[collection]);
+        else localStorage.setItem(storageKeys[collection], value);
+      } catch {
+        // Keep the original persistence error as the user-facing failure.
+      }
+    });
+    return { ok: false, reason: error.message || "Local order save failed." };
+  }
+}
+
+export async function syncOrderConversionCollections() {
+  const results = await Promise.all(orderConversionCollections.map(async (collection) => {
+    try {
+      return { collection, ...await syncCollectionNow(collection) };
+    } catch (error) {
+      return { collection, ok: false, reason: error.message || "Cloud sync failed." };
+    }
+  }));
+  const localOnly = results.every((result) => !result.ok && result.reason === "Local Mode Only");
+  const failures = results.filter((result) => !result.ok && result.reason !== "Local Mode Only");
+  const reason = failures.map((result) => `${result.collection}: ${result.reason}`).join("; ");
+
+  if (failures.length) {
+    updateCloudStatus({
+      status: "Cloud Sync Failed",
+      connected: false,
+      lastError: reason
+    });
+  }
+
+  return {
+    ok: failures.length === 0,
+    localOnly,
+    reason,
+    results
+  };
 }
 
 export function persistAdsEntries() {
@@ -374,8 +435,49 @@ function applyCollection(collection, incoming, normalizer) {
   if (!Array.isArray(incoming)) return;
   const localRows = Array.isArray(state[collection]) ? state[collection] : [];
   if (localRows.length > 0 && incoming.length === 0) return;
-  state[collection] = normalizer ? normalizer(incoming) : incoming;
+  const rows = workflowCollections.has(collection)
+    ? mergeCurrentWorkflowRows(localRows, incoming)
+    : incoming;
+  state[collection] = normalizer ? normalizer(rows) : rows;
   saveJson(storageKeys[collection], state[collection]);
+}
+
+function mergeCurrentWorkflowRows(localRows, incomingRows) {
+  const rows = new Map();
+  incomingRows.forEach((row) => rows.set(workflowRowKey(row), row));
+  localRows.forEach((row) => {
+    const key = workflowRowKey(row);
+    const incoming = rows.get(key);
+    if (!incoming || preferLocalWorkflowRow(row, incoming)) rows.set(key, row);
+  });
+  return [...rows.values()];
+}
+
+function workflowRowKey(row = {}) {
+  return row.id
+    || row.userId
+    || row.quoteNumber
+    || row.quotationNo
+    || row.orderNumber
+    || row.orderNo
+    || row.productionNumber
+    || row.installationNumber
+    || row.warrantyNo
+    || JSON.stringify(row);
+}
+
+function preferLocalWorkflowRow(local, incoming) {
+  const localTime = workflowRowTime(local);
+  const incomingTime = workflowRowTime(incoming);
+  if (Number.isFinite(localTime) && Number.isFinite(incomingTime)) return localTime >= incomingTime;
+  if (Number.isFinite(localTime)) return true;
+  if (Number.isFinite(incomingTime)) return false;
+  return true;
+}
+
+function workflowRowTime(row = {}) {
+  const value = Date.parse(row.updatedAt || row.createdAt || row.updated_at || row.created_at || "");
+  return Number.isFinite(value) ? value : NaN;
 }
 
 function persistLocalSnapshot() {
