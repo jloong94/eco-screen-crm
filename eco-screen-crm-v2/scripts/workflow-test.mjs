@@ -27,7 +27,12 @@ const {
   state
 } = await import("../src/state.js");
 const { runtimeEnv } = await import("../src/env.js");
-const { convertQuoteToOrder } = await import("../src/workflow.js");
+const { lineTotal } = await import("../src/calculations.js");
+const {
+  convertQuoteToOrder,
+  monthlyOrderSequence,
+  nextSalesOrderNumber
+} = await import("../src/workflow.js");
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -79,7 +84,31 @@ resetWorkflowState();
 runtimeEnv.VITE_SUPABASE_URL = "";
 runtimeEnv.VITE_SUPABASE_ANON_KEY = "";
 
+const defaultPriceItem = makeQuoteItem();
+assert(Number(defaultPriceItem.unitPrice) > 0, "Pricing: selecting/defaulting a product should provide its selling price");
+defaultPriceItem.width = "1000";
+defaultPriceItem.height = "1000";
+defaultPriceItem.quantity = "1";
+defaultPriceItem.minimumSqft = 0;
+defaultPriceItem.unitPrice = "125.50";
+const customUnitPriceTotal = lineTotal(defaultPriceItem);
+assert(customUnitPriceTotal > 0, "Pricing: manually edited unit price should calculate a line total");
+defaultPriceItem.manualFinalPrice = "800";
+assert(lineTotal(defaultPriceItem) === 800, "Pricing: manual final price should override the calculated line total");
+
+state.orders = [
+  { id: "old-1", orderNo: "SO-2607-001" },
+  { id: "old-9", orderNumber: "SO-2607-009" }
+];
+assert(nextSalesOrderNumber(new Date("2026-07-14T00:00:00Z")) === "SO2607010", "Numbering: old dashed numbers should contribute to the monthly sequence");
+state.orders.push({ id: "new-999", orderNo: "SO2607999" });
+assert(nextSalesOrderNumber(new Date("2026-07-14T00:00:00Z")) === "SO26071000", "Numbering: sequence should continue beyond 999");
+assert(monthlyOrderSequence("SO-2607-009", "26", "07") === 9, "Numbering: old dashed format should parse");
+assert(monthlyOrderSequence("SO2607010", "26", "07") === 10, "Numbering: new compact format should parse");
+resetWorkflowState();
+
 const quoteA = validQuote("TEST-A", "Customer A");
+quoteA.items[0].unitPrice = "125.50";
 state.quotations = [quoteA];
 const first = await convertQuoteToOrder(quoteA.id);
 assert(first.ok, "A: valid quotation should convert");
@@ -90,6 +119,7 @@ assert(state.orders[0].customer.phone === "0123456789", "A: customer details sho
 assert(state.orders[0].appointmentDate === "2026-07-20", "A: appointment should be copied");
 assert(state.orders[0].remark === "Quotation remark", "A: quotation remark should be copied");
 assert(state.orders[0].items[0].installationLocation === "Living", "A: item details should be copied");
+assert(Number(state.orders[0].items[0].unitPrice) === 125.5, "A: manually edited unit price should be preserved in the order");
 assert(state.productionJobs.length === 1, "A: one production job should be created");
 assert(state.installationJobs.length === 1, "A: one installation job should be created");
 assert(state.quotations[0].status === "won", "A: quotation should be marked won");
@@ -110,6 +140,9 @@ const concurrent = await Promise.all([
 assert(concurrent.some((result) => result.ok), "C: one concurrent conversion should succeed");
 assert(state.orders.filter((order) => order.quoteId === quoteB.id).length === 1, "C: concurrent clicks must create one order only");
 assert(new Set(state.orders.map((order) => order.orderNo)).size === state.orders.length, "C: order numbers must be unique");
+const firstSequence = monthlyOrderSequence(state.orders.find((order) => order.quoteId === quoteA.id).orderNo, String(new Date().getFullYear()).slice(-2), String(new Date().getMonth() + 1).padStart(2, "0"));
+const secondSequence = monthlyOrderSequence(state.orders.find((order) => order.quoteId === quoteB.id).orderNo, String(new Date().getFullYear()).slice(-2), String(new Date().getMonth() + 1).padStart(2, "0"));
+assert(secondSequence === firstSequence + 1, "C: the next quotation should receive the next monthly order sequence");
 
 const emptyQuote = validQuote("TEST-EMPTY", "Empty Quote");
 emptyQuote.items = [];
@@ -152,6 +185,8 @@ assert(persistedOrders.some((order) => order.quoteId === quoteB.id), "G: second 
 assert(persistedOrders.some((order) => order.quoteId === quoteC.id), "G: cloud-failed order should survive browser refresh storage reload");
 
 console.log([
+  "Editable unit price and manual final price: passed",
+  "Monthly SO numbering including legacy formats and >999: passed",
   "Convert valid quotation: passed",
   "Duplicate and double-click prevention: passed",
   "Missing item validation: passed",

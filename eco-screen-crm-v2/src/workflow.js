@@ -1,4 +1,5 @@
 import {
+  activeProducts,
   nextInstallationNumber,
   nextProductionNumber,
   nextWarrantyNumber,
@@ -8,12 +9,14 @@ import {
   persistOrders,
   persistProductionJobs,
   persistWarrantyCards,
+  productById,
   state,
   syncOrderConversionCollections,
   uid
 } from "./state.js";
 import {
   autoCalculatedPrice,
+  chargeableSqft,
   hasManualFinalPrice,
   itemWithCalculatedTotals,
   lineTotal,
@@ -91,6 +94,8 @@ const progressCategories = [
 
 let activeCompletionJobId = null;
 const convertingQuoteIds = new Set();
+let editingOrderId = "";
+let orderEditorDraft = null;
 let orderSearch = {
   orderNumber: "",
   customerName: "",
@@ -166,8 +171,8 @@ export async function convertQuoteToOrder(quoteId) {
     localCommitted = true;
 
     const baseMessage = existing
-      ? `Order already exists. Order No: ${getOrderDisplayNo(order)}`
-      : `Order created successfully. Order No: ${getOrderDisplayNo(order)}`;
+      ? `Existing order reused: ${getOrderDisplayNo(order)}`
+      : `Order created: ${getOrderDisplayNo(order)}`;
     showWorkflowMessage(`${baseMessage} Saved locally. Syncing cloud...`, "info");
 
     const cloudSync = await syncOrderConversionCollections();
@@ -233,11 +238,11 @@ export function nextSalesOrderNumber(date = new Date()) {
   const year = String(date.getFullYear()).slice(-2);
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const prefix = `SO${year}${month}`;
-  const usedNumbers = new Set(state.orders.map((order) => normalizeRefNo(order.orderNo || order.orderNumber)).filter(Boolean));
-  const highest = [...usedNumbers]
-    .filter((number) => number.startsWith(prefix))
-    .map((number) => Number(number.slice(prefix.length)))
-    .filter(Number.isFinite)
+  const references = state.orders.flatMap((order) => [order.orderNo, order.orderNumber]).filter(Boolean);
+  const usedNumbers = new Set(references.map(normalizeRefNo).filter(Boolean));
+  const highest = references
+    .map((number) => monthlyOrderSequence(number, year, month))
+    .filter((number) => Number.isInteger(number) && number > 0)
     .reduce((max, number) => Math.max(max, number), 0);
   let next = highest + 1;
   let orderNumber = `${prefix}${String(next).padStart(3, "0")}`;
@@ -246,6 +251,14 @@ export function nextSalesOrderNumber(date = new Date()) {
     orderNumber = `${prefix}${String(next).padStart(3, "0")}`;
   }
   return orderNumber;
+}
+
+export function monthlyOrderSequence(value, year, month) {
+  const compact = normalizeRefNo(value).replace(/\s+/g, "");
+  const match = compact.match(new RegExp(`^SO-?${year}${month}-?(\\d+)$`));
+  if (!match) return 0;
+  const sequence = Number(match[1]);
+  return Number.isSafeInteger(sequence) && sequence > 0 ? sequence : 0;
 }
 
 export function createOrderFromQuote(quote) {
@@ -519,6 +532,7 @@ export function attachWorkflowEvents() {
   document.querySelector("#orderTools")?.addEventListener("click", handleOrderToolsClick);
   document.querySelector("#orderProgressBoard")?.addEventListener("click", handleOrderToolsClick);
   document.querySelector("#orderList")?.addEventListener("click", handleOrderClick);
+  document.querySelector("#orderList")?.addEventListener("input", handleOrderItemInput);
   document.querySelector("#orderList")?.addEventListener("change", handleOrderChange);
   document.querySelector("#productionList")?.addEventListener("click", handleProductionClick);
   document.querySelector("#productionList")?.addEventListener("change", handleProductionChange);
@@ -616,6 +630,7 @@ function renderCompactOrderRow(order) {
       <div><span>${t("Production")}: ${statusLabel(getOrderProductionStatus(order, productionJob))}</span><span>${t("Installation")}: ${statusLabel(getOrderInstallationStatus(order, installationJob))}</span></div>
       <div><span>${t("Remaining Balance")}: ${money(getRemainingBalance(order, installationJob))}</span><span>Updated: ${formatShortDate(order.updatedAt || order.createdAt)}</span></div>
       ${orderActionsHtml(order)}
+      ${editingOrderId === order.id && orderEditorDraft ? orderItemEditorHtml(orderEditorDraft) : ""}
     </article>
   `;
 }
@@ -628,9 +643,72 @@ function orderActionsHtml(order) {
       ${canSendOrder() ? `<button class="btn" type="button" data-send-production="${order.id}">${t("Send to Production")}</button><button class="btn" type="button" data-send-installer="${order.id}">${t("Send to Installer")}</button><button class="btn" type="button" data-update-order-status="${order.id}">${t("Update Status")}</button>` : ""}
       <button class="btn" type="button" data-whatsapp-order="${order.id}">${t("WhatsApp Customer")}</button>
       <button class="btn" type="button" data-highlight-order="${order.id}">${t("Search / Open Customer")}</button>
+      ${canEditOrder() ? `<button class="btn" type="button" data-edit-order-items="${order.id}">${editingOrderId === order.id ? t("Close Item Editor") : t("Edit Order Items")}</button>` : ""}
       ${isBossOrAdmin() ? `<button class="btn danger" type="button" data-move-follow-up="${order.id}">${t("Move Back to Follow Up")}</button>` : ""}
     </div>
   `;
+}
+
+function orderItemEditorHtml(order) {
+  return `
+    <section class="order-item-editor" data-order-item-editor="${order.id}">
+      <div class="section-head">
+        <div>
+          <h3>${t("Edit Order Items")}</h3>
+          <p class="muted-text">${t("Order No")}: ${escapeHtml(getOrderDisplayNo(order))} (${t("Read only")})</p>
+        </div>
+        <div class="actions">
+          <button class="btn primary" type="button" data-save-order-items="${order.id}">${t("Save Order Items")}</button>
+          <button class="btn" type="button" data-cancel-order-items="${order.id}">${t("Cancel")}</button>
+        </div>
+      </div>
+      <div class="order-edit-items">
+        ${order.items.map((item, index) => orderItemEditCardHtml(order.id, item, index)).join("")}
+      </div>
+      <div class="order-editor-summary">
+        <span>${t("Subtotal")} <strong data-order-editor-summary="subtotal">${money(order.subtotal)}</strong></span>
+        <span>${t("Discount")} <strong>${money(order.discount)}</strong></span>
+        <span>${t("Total")} <strong data-order-editor-summary="total">${money(order.total)}</strong></span>
+        <span>${t("Deposit")} <strong>${money(order.deposit)}</strong></span>
+        <span>${t("Balance")} <strong data-order-editor-summary="balance">${money(order.balance)}</strong></span>
+      </div>
+    </section>
+  `;
+}
+
+function orderItemEditCardHtml(orderId, item, index) {
+  return `
+    <article class="order-item-edit-card" data-order-edit-item="${item.id}">
+      <strong>${t("Product")} ${index + 1}</strong>
+      <div class="form-grid compact">
+        <label>${t("Product")}<select data-order-id="${orderId}" data-order-item-id="${item.id}" data-order-item-field="productId">${orderProductOptions(item)}</select></label>
+        ${orderItemInput(t("Width mm"), orderId, item.id, "width", item.width, "decimal")}
+        ${orderItemInput(t("Height mm"), orderId, item.id, "height", item.height, "decimal")}
+        ${orderItemInput(t("Quantity"), orderId, item.id, "quantity", item.quantity, "decimal")}
+        ${orderItemInput(t("Color"), orderId, item.id, "color", item.color)}
+        ${orderItemInput(t("Installation Location"), orderId, item.id, "installationLocation", item.installationLocation)}
+        ${orderItemInput(t("Unit Price"), orderId, item.id, "unitPrice", item.unitPrice, "decimal")}
+        ${orderItemInput(t("Manual Final Price"), orderId, item.id, "manualFinalPrice", item.manualFinalPrice, "decimal", "Optional final RM")}
+        <label>${t("ft2 / Area")}<input value="${chargeableSqft(item).toFixed(2)}" data-order-line="${item.id}" data-order-line-field="area" readonly /></label>
+        <label>${t("Auto Calculated Price")}<input value="${money(autoCalculatedPrice(item))}" data-order-line="${item.id}" data-order-line-field="auto" readonly /></label>
+        <label>${t("Line Total")}<input value="${money(lineTotal(item))}" data-order-line="${item.id}" data-order-line-field="total" readonly /></label>
+        <label class="wide">${t("Remark")}<textarea rows="2" data-order-id="${orderId}" data-order-item-id="${item.id}" data-order-item-field="remark">${escapeHtml(item.remark || "")}</textarea></label>
+      </div>
+    </article>
+  `;
+}
+
+function orderItemInput(label, orderId, itemId, field, value = "", inputMode = "", placeholder = "") {
+  return `<label>${label}<input ${inputMode ? `inputmode="${inputMode}"` : ""} data-order-id="${orderId}" data-order-item-id="${itemId}" data-order-item-field="${field}" value="${escapeHtml(value ?? "")}" placeholder="${escapeHtml(placeholder)}" /></label>`;
+}
+
+function orderProductOptions(item) {
+  const products = activeProducts();
+  const selected = state.products.find((product) => product.id === item.productId);
+  if (selected && !products.some((product) => product.id === selected.id)) products.push(selected);
+  const options = products.map((product) => `<option value="${product.id}" ${product.id === item.productId ? "selected" : ""}>${escapeHtml(product.name)}</option>`).join("");
+  if (selected || !item.productName) return options;
+  return `<option value="" selected>${escapeHtml(item.productName)}</option>${options}`;
 }
 
 function renderOrderProgressCard(order) {
@@ -701,6 +779,15 @@ function sortedOrders(rows) {
 
 function normalizeText(value) {
   return String(value || "").toLowerCase().trim();
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
 function getOrderProductionJob(order) {
@@ -1023,6 +1110,9 @@ function handleOrderClick(event) {
   const moveFollowUpId = event.target.dataset.moveFollowUp;
   const whatsappId = event.target.dataset.whatsappOrder;
   const highlightId = event.target.dataset.highlightOrder;
+  const editItemsId = event.target.dataset.editOrderItems;
+  const saveItemsId = event.target.dataset.saveOrderItems;
+  const cancelItemsId = event.target.dataset.cancelOrderItems;
   if (page) {
     orderSearch = { ...orderSearch, page: Number(page) || 1 };
     renderOrderList();
@@ -1035,9 +1125,16 @@ function handleOrderClick(event) {
   if (moveFollowUpId) moveOrderBackToFollowUpFlow(moveFollowUpId);
   if (whatsappId) whatsappOrderCustomer(whatsappId);
   if (highlightId) highlightOrder(highlightId);
+  if (editItemsId) toggleOrderItemEditor(editItemsId);
+  if (saveItemsId) saveOrderItemEditor(saveItemsId, event.target);
+  if (cancelItemsId) closeOrderItemEditor();
 }
 
 function handleOrderChange(event) {
+  if (event.target.dataset.orderItemField) {
+    handleOrderItemInput(event);
+    return;
+  }
   if (!canEditOrder()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
   const id = event.target.dataset.orderId;
   const field = event.target.dataset.orderField;
@@ -1052,6 +1149,165 @@ function handleOrderChange(event) {
   if (field === "installationDate") syncJobInstallationDate(id, event.target.value);
   persistOrders();
   renderOrders();
+}
+
+function toggleOrderItemEditor(orderId) {
+  if (!canEditOrder()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+  if (editingOrderId === orderId) {
+    closeOrderItemEditor();
+    return;
+  }
+  const order = findOrder(orderId);
+  if (!order) return showWorkflowMessage("Order not found.", "error");
+  editingOrderId = orderId;
+  orderEditorDraft = {
+    ...structuredCloneSafe(order),
+    items: (order.items || []).map((item) => ({ ...item, id: item.id || uid("item") }))
+  };
+  recalculateOrderEditorDraft();
+  renderOrderList();
+  setTimeout(() => document.querySelector(`[data-order-item-editor="${orderId}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+}
+
+function closeOrderItemEditor() {
+  editingOrderId = "";
+  orderEditorDraft = null;
+  renderOrderList();
+}
+
+function handleOrderItemInput(event) {
+  const orderId = event.target.dataset.orderId;
+  const itemId = event.target.dataset.orderItemId;
+  const field = event.target.dataset.orderItemField;
+  if (!orderId || !itemId || !field || orderId !== editingOrderId || orderEditorDraft?.id !== orderId) return;
+  if (!canEditOrder()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+  const item = orderEditorDraft.items.find((row) => row.id === itemId);
+  if (!item) return;
+
+  if (field === "productId") {
+    const product = productById(event.target.value);
+    Object.assign(item, {
+      productId: product.id,
+      productName: product.name,
+      category: product.category,
+      calculationType: product.calculationType || "sqft",
+      minimumSqft: Number(product.minimumSqft || 0),
+      unitPrice: Number(product.sellingPrice || 0)
+    });
+    const priceInput = document.querySelector(`[data-order-item-id="${itemId}"][data-order-item-field="unitPrice"]`);
+    if (priceInput) priceInput.value = item.unitPrice;
+  } else if (["width", "height", "quantity", "unitPrice", "manualFinalPrice"].includes(field)) {
+    item[field] = event.target.value.replace(/[^\d.]/g, "");
+  } else {
+    item[field] = event.target.value;
+  }
+
+  recalculateOrderEditorDraft();
+  updateOrderEditorMetrics(itemId);
+}
+
+function recalculateOrderEditorDraft() {
+  if (!orderEditorDraft) return;
+  orderEditorDraft.items = orderEditorDraft.items.map((item) => itemWithCalculatedTotals(item));
+  const totals = quoteTotals(orderEditorDraft.items, orderEditorDraft.discount, orderEditorDraft.deposit);
+  const installationJob = getOrderInstallationJob(orderEditorDraft);
+  orderEditorDraft.subtotal = totals.subtotal;
+  orderEditorDraft.total = totals.total;
+  orderEditorDraft.balance = Math.max(totals.balance - toNumber(installationJob?.amountCollected), 0);
+}
+
+function updateOrderEditorMetrics(itemId) {
+  const item = orderEditorDraft?.items.find((row) => row.id === itemId);
+  if (!item) return;
+  const values = {
+    area: chargeableSqft(item).toFixed(2),
+    auto: money(autoCalculatedPrice(item)),
+    total: money(lineTotal(item))
+  };
+  Object.entries(values).forEach(([field, value]) => {
+    const output = document.querySelector(`[data-order-line="${itemId}"][data-order-line-field="${field}"]`);
+    if (output) output.value = value;
+  });
+  ["subtotal", "total", "balance"].forEach((field) => {
+    const output = document.querySelector(`[data-order-editor-summary="${field}"]`);
+    if (output) output.textContent = money(orderEditorDraft[field]);
+  });
+}
+
+async function saveOrderItemEditor(orderId, button) {
+  if (!canEditOrder()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+  if (!orderEditorDraft || editingOrderId !== orderId || orderEditorDraft.id !== orderId) return showWorkflowMessage("Order editor data is unavailable.", "error");
+  const original = findOrder(orderId);
+  if (!original) return showWorkflowMessage("Order not found.", "error");
+  button.disabled = true;
+  button.textContent = t("Saving...");
+
+  const previousState = {
+    orders: state.orders,
+    productionJobs: state.productionJobs,
+    installationJobs: state.installationJobs
+  };
+  const now = new Date().toISOString();
+  const items = orderEditorDraft.items.map((item) => itemWithCalculatedTotals(item));
+  const totals = quoteTotals(items, original.discount, original.deposit);
+  const installationJob = getOrderInstallationJob(original);
+  const amountCollected = toNumber(installationJob?.amountCollected);
+  const remainingBalance = Math.max(totals.balance - amountCollected, 0);
+  const updatedOrder = {
+    ...original,
+    items,
+    subtotal: totals.subtotal,
+    total: totals.total,
+    balance: remainingBalance,
+    updatedAt: now
+  };
+
+  state.orders = state.orders.map((order) => order.id === orderId ? updatedOrder : order);
+  state.productionJobs = state.productionJobs.map((job) => isJobForOrder(job, original) ? {
+    ...job,
+    items: items.map((item) => ({ ...item })),
+    updatedAt: now
+  } : job);
+  state.installationJobs = state.installationJobs.map((job) => isJobForOrder(job, original) ? {
+    ...job,
+    items: items.map((item) => ({ ...item })),
+    balanceToCollect: totals.balance,
+    balance: Math.max(totals.balance - toNumber(job.amountCollected), 0),
+    updatedAt: now
+  } : job);
+
+  const localSave = persistOrderConversionLocally();
+  if (!localSave.ok) {
+    state.orders = previousState.orders;
+    state.productionJobs = previousState.productionJobs;
+    state.installationJobs = previousState.installationJobs;
+    button.disabled = false;
+    button.textContent = t("Save Order Items");
+    return showWorkflowMessage(`Failed to save order locally: ${localSave.reason}`, "error");
+  }
+
+  editingOrderId = "";
+  orderEditorDraft = null;
+  renderOrders();
+  showWorkflowMessage(`Order items saved locally: ${getOrderDisplayNo(updatedOrder)}. Syncing cloud...`, "info");
+  const cloudSync = await syncOrderConversionCollections();
+  if (!cloudSync.ok && !cloudSync.localOnly) {
+    showWorkflowMessage(`Order items saved locally but cloud sync failed: ${cloudSync.reason}`, "warning");
+    return;
+  }
+  showWorkflowMessage(`Order items updated: ${getOrderDisplayNo(updatedOrder)}`, "success");
+}
+
+function isJobForOrder(job, order) {
+  if (job.orderId && job.orderId === order.id) return true;
+  const orderNo = normalizeRefNo(getOrderDisplayNo(order));
+  return Boolean(orderNo && normalizeRefNo(job.orderNo || job.orderNumber) === orderNo);
+}
+
+function structuredCloneSafe(value) {
+  return typeof structuredClone === "function"
+    ? structuredClone(value)
+    : JSON.parse(JSON.stringify(value));
 }
 
 function handleOrderSearchInput(event) {

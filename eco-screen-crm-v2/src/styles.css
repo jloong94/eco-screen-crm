@@ -443,6 +443,42 @@ input:focus, select:focus, textarea:focus {
   color: var(--muted);
   font-size: 12px;
 }
+.order-item-editor {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+.order-edit-items {
+  display: grid;
+  gap: 16px;
+}
+.order-item-edit-card {
+  display: grid;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.order-item-edit-card:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+.order-editor-summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px 18px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.order-editor-summary span {
+  display: inline-flex;
+  gap: 6px;
+  color: var(--text);
+  font-size: 13px;
+}
 .pagination-row {
   display: flex;
   align-items: center;
@@ -709,6 +745,9 @@ input:focus, select:focus, textarea:focus {
     border-radius: 12px;
   }
   .form-grid, .item-grid, .form-grid.compact { grid-template-columns: 1fr; gap: 10px; }
+  .order-item-editor { overflow: hidden; }
+  .order-editor-summary { display: grid; grid-template-columns: 1fr 1fr; justify-content: stretch; }
+  .order-editor-summary span { justify-content: space-between; }
   .photo-grid, .checklist-grid { grid-template-columns: 1fr; }
   .panel-head, .section-head, .item-head { align-items: stretch; flex-direction: column; }
   .actions, .role-selector { width: 100%; }
