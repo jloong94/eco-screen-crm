@@ -479,6 +479,42 @@ input:focus, select:focus, textarea:focus {
   color: var(--text);
   font-size: 13px;
 }
+.order-status-action {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.order-status-action label {
+  flex: 1 1 260px;
+  min-width: 0;
+  margin: 0;
+}
+.order-number-editor {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 360px) auto;
+  align-items: end;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--soft);
+}
+.order-number-editor p {
+  margin: 4px 0 0;
+}
+.order-number-editor label {
+  min-width: 0;
+  margin: 0;
+}
 .pagination-row {
   display: flex;
   align-items: center;
@@ -748,6 +784,17 @@ input:focus, select:focus, textarea:focus {
   .order-item-editor { overflow: hidden; }
   .order-editor-summary { display: grid; grid-template-columns: 1fr 1fr; justify-content: stretch; }
   .order-editor-summary span { justify-content: space-between; }
+  .order-status-action,
+  .order-number-editor {
+    display: grid;
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+  .order-status-action .btn,
+  .order-number-editor .btn {
+    width: 100%;
+    min-height: 50px;
+  }
   .photo-grid, .checklist-grid { grid-template-columns: 1fr; }
   .panel-head, .section-head, .item-head { align-items: stretch; flex-direction: column; }
   .actions, .role-selector { width: 100%; }

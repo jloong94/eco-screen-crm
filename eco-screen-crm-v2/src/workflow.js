@@ -96,6 +96,7 @@ let activeCompletionJobId = null;
 const convertingQuoteIds = new Set();
 let editingOrderId = "";
 let orderEditorDraft = null;
+let editingOrderNumberId = "";
 let orderSearch = {
   orderNumber: "",
   customerName: "",
@@ -640,12 +641,52 @@ function orderActionsHtml(order) {
     <div class="actions">
       <button class="btn" type="button" data-view-order="${order.id}">${t("View Order")}</button>
       <button class="btn primary" type="button" data-print-order="${order.id}">${t("Print Order")}</button>
-      ${canSendOrder() ? `<button class="btn" type="button" data-send-production="${order.id}">${t("Send to Production")}</button><button class="btn" type="button" data-send-installer="${order.id}">${t("Send to Installer")}</button><button class="btn" type="button" data-update-order-status="${order.id}">${t("Update Status")}</button>` : ""}
+      ${canSendOrder() ? `<button class="btn" type="button" data-send-production="${order.id}">${t("Send to Production")}</button><button class="btn" type="button" data-send-installer="${order.id}">${t("Send to Installer")}</button>` : ""}
       <button class="btn" type="button" data-whatsapp-order="${order.id}">${t("WhatsApp Customer")}</button>
       <button class="btn" type="button" data-highlight-order="${order.id}">${t("Search / Open Customer")}</button>
       ${canEditOrder() ? `<button class="btn" type="button" data-edit-order-items="${order.id}">${editingOrderId === order.id ? t("Close Item Editor") : t("Edit Order Items")}</button>` : ""}
+      ${isBossOrAdmin() ? `<button class="btn" type="button" data-edit-order-number="${order.id}">${editingOrderNumberId === order.id ? t("Cancel Order Number Edit") : t("Edit Order Number")}</button>` : ""}
       ${isBossOrAdmin() ? `<button class="btn danger" type="button" data-move-follow-up="${order.id}">${t("Move Back to Follow Up")}</button>` : ""}
     </div>
+    ${canSendOrder() ? orderStatusActionHtml(order) : ""}
+    ${editingOrderNumberId === order.id && isBossOrAdmin() ? orderNumberEditorHtml(order) : ""}
+  `;
+}
+
+function orderStatusActionHtml(order) {
+  return `
+    <div class="order-status-action">
+      <label>${t("Order Status")}
+        <select data-order-status-select="${order.id}">${orderStatusOptions(order.status)}</select>
+      </label>
+      <button class="btn" type="button" data-update-order-status="${order.id}">${t("Update Status")}</button>
+    </div>
+  `;
+}
+
+function orderStatusOptions(currentStatus) {
+  const values = orderStatuses.includes(currentStatus) || !currentStatus
+    ? orderStatuses
+    : [currentStatus, ...orderStatuses];
+  return values.map((status) => `<option value="${escapeHtml(status)}" ${status === currentStatus ? "selected" : ""}>${statusLabel(status)}</option>`).join("");
+}
+
+function orderNumberEditorHtml(order) {
+  const currentNumber = getOrderDisplayNo(order);
+  return `
+    <section class="order-number-editor" data-order-number-editor="${order.id}">
+      <div>
+        <strong>${t("Current Order Number")}: ${escapeHtml(currentNumber)}</strong>
+        <p class="muted-text">${t("Recommended format")}: SOYYMMNNN (${t("Example")}: SO2607001)</p>
+      </div>
+      <label>${t("New Order Number")}
+        <input data-order-number-input="${order.id}" value="${escapeHtml(currentNumber)}" autocomplete="off" />
+      </label>
+      <div class="actions">
+        <button class="btn primary" type="button" data-save-order-number="${order.id}">${t("Save Order Number")}</button>
+        <button class="btn" type="button" data-cancel-order-number="${order.id}">${t("Cancel")}</button>
+      </div>
+    </section>
   `;
 }
 
@@ -1113,6 +1154,9 @@ function handleOrderClick(event) {
   const editItemsId = event.target.dataset.editOrderItems;
   const saveItemsId = event.target.dataset.saveOrderItems;
   const cancelItemsId = event.target.dataset.cancelOrderItems;
+  const editOrderNumberId = event.target.dataset.editOrderNumber;
+  const saveOrderNumberId = event.target.dataset.saveOrderNumber;
+  const cancelOrderNumberId = event.target.dataset.cancelOrderNumber;
   if (page) {
     orderSearch = { ...orderSearch, page: Number(page) || 1 };
     renderOrderList();
@@ -1121,13 +1165,16 @@ function handleOrderClick(event) {
   if (viewId) printOrder(viewId);
   if (sendProductionId) sendOrderToProduction(sendProductionId);
   if (sendInstallerId) sendOrderToInstaller(sendInstallerId);
-  if (updateStatusId) updateOrderStatus(updateStatusId);
+  if (updateStatusId) updateOrderStatusFromCard(updateStatusId, event.target);
   if (moveFollowUpId) moveOrderBackToFollowUpFlow(moveFollowUpId);
   if (whatsappId) whatsappOrderCustomer(whatsappId);
   if (highlightId) highlightOrder(highlightId);
   if (editItemsId) toggleOrderItemEditor(editItemsId);
   if (saveItemsId) saveOrderItemEditor(saveItemsId, event.target);
   if (cancelItemsId) closeOrderItemEditor();
+  if (editOrderNumberId) toggleOrderNumberEditor(editOrderNumberId);
+  if (saveOrderNumberId) saveOrderNumberFromEditor(saveOrderNumberId, event.target);
+  if (cancelOrderNumberId) closeOrderNumberEditor();
 }
 
 function handleOrderChange(event) {
@@ -1159,6 +1206,7 @@ function toggleOrderItemEditor(orderId) {
   }
   const order = findOrder(orderId);
   if (!order) return showWorkflowMessage("Order not found.", "error");
+  editingOrderNumberId = "";
   editingOrderId = orderId;
   orderEditorDraft = {
     ...structuredCloneSafe(order),
@@ -1173,6 +1221,32 @@ function closeOrderItemEditor() {
   editingOrderId = "";
   orderEditorDraft = null;
   renderOrderList();
+}
+
+function toggleOrderNumberEditor(orderId) {
+  if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+  if (editingOrderNumberId === orderId) {
+    closeOrderNumberEditor();
+    return;
+  }
+  if (!findOrder(orderId)) return showWorkflowMessage("Order not found.", "error");
+  editingOrderId = "";
+  orderEditorDraft = null;
+  editingOrderNumberId = orderId;
+  renderOrderList();
+  setTimeout(() => document.querySelector(`[data-order-number-editor="${orderId}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+}
+
+function closeOrderNumberEditor() {
+  editingOrderNumberId = "";
+  renderOrderList();
+}
+
+function saveOrderNumberFromEditor(orderId, button) {
+  const input = button.closest("[data-order-number-editor]")?.querySelector("[data-order-number-input]")
+    || document.querySelector(`[data-order-number-input="${orderId}"]`);
+  if (!input) return showWorkflowMessage("Order number input is unavailable.", "error");
+  updateOrderNumber(orderId, input.value, { button });
 }
 
 function handleOrderItemInput(event) {
@@ -1337,7 +1411,8 @@ function handleOrderToolsClick(event) {
 function quickFindOrder() {
   const value = window.prompt("Enter order number");
   if (value === null) return;
-  const order = state.orders.find((row) => normalizeText(getOrderDisplayNo(row)).includes(normalizeText(value)));
+  const order = findOrderByNumber(value)
+    || state.orders.find((row) => normalizeText(getOrderDisplayNo(row)).includes(normalizeText(value)));
   if (!order) {
     showWorkflowMessage("Order not found", "error");
     return;
@@ -1370,12 +1445,228 @@ function whatsappOrderCustomer(orderId) {
   window.open(`https://wa.me/6${phone.replace(/^6/, "")}?text=${text}`, "_blank", "noopener");
 }
 
-function updateOrderStatus(orderId) {
+function updateOrderStatusFromCard(orderId, button) {
+  const select = button.closest("[data-order-card]")?.querySelector(`[data-order-status-select="${orderId}"]`)
+    || document.querySelector(`[data-order-status-select="${orderId}"]`);
+  if (!select) return showWorkflowMessage("Order status selector is unavailable.", "error");
+  updateOrderStatus(orderId, select.value, { button });
+}
+
+export async function updateOrderStatus(orderId, nextStatus, options = {}) {
+  if (!canSendOrder()) return failOrderUpdate("Permission denied: your role cannot perform this action.");
   const order = findOrder(orderId);
-  if (!order) return;
-  persistOrders();
-  renderOrders();
-  showWorkflowMessage(`Order status updated: ${order.status}`, "success");
+  if (!order) return failOrderUpdate("Order not found.");
+  const status = String(nextStatus || "").trim();
+  const validStatuses = new Set([...orderStatuses, order.status].filter(Boolean));
+  if (!status || !validStatuses.has(status)) return failOrderUpdate("Please select a valid order status.");
+
+  const button = options.button || null;
+  setOrderActionBusy(button, t("Updating..."));
+  const previousState = snapshotOrderWorkflowState();
+  let localCommitted = false;
+  try {
+    const now = new Date().toISOString();
+    state.orders = state.orders.map((row) => row.id === orderId ? {
+      ...row,
+      status,
+      isArchived: status === "Cancelled" ? true : row.isArchived,
+      archivedAt: status === "Cancelled" ? (row.archivedAt || now) : row.archivedAt,
+      updatedAt: now
+    } : row);
+
+    const localSave = persistOrderConversionLocally();
+    if (!localSave.ok) {
+      restoreConversionState(previousState);
+      renderOrders();
+      return failOrderUpdate(`Failed to save status locally: ${localSave.reason}`);
+    }
+    localCommitted = true;
+    showWorkflowMessage("Status saved locally. Syncing cloud...", "info");
+
+    const cloudSync = await syncOrderConversionCollections();
+    renderOrders();
+    if (!cloudSync.ok && !cloudSync.localOnly) {
+      const message = `Status updated locally but cloud sync failed: ${cloudSync.reason}`;
+      showWorkflowMessage(message, "warning");
+      return { ok: true, status, cloudOk: false, message };
+    }
+    showWorkflowMessage("Status updated successfully.", "success");
+    return { ok: true, status, cloudOk: !cloudSync.localOnly, localOnly: cloudSync.localOnly };
+  } catch (error) {
+    console.error("Update order status failed", error);
+    if (!localCommitted) {
+      restoreConversionState(previousState);
+      renderOrders();
+      return failOrderUpdate(`Failed to update status: ${error.message || "Unknown error"}`);
+    }
+    renderOrders();
+    const message = `Status updated locally but cloud sync failed: ${error.message || "Unknown cloud error"}`;
+    showWorkflowMessage(message, "warning");
+    return { ok: true, status, cloudOk: false, message };
+  } finally {
+    restoreOrderActionButton(button, t("Update Status"));
+  }
+}
+
+export async function updateOrderNumber(orderId, rawOrderNumber, options = {}) {
+  if (!isBossOrAdmin()) return failOrderUpdate("Permission denied: your role cannot perform this action.");
+  const order = findOrder(orderId);
+  if (!order) return failOrderUpdate("Order not found.");
+  const nextOrderNumber = String(rawOrderNumber ?? "").trim().toUpperCase();
+  if (!nextOrderNumber) return failOrderUpdate("Order number cannot be blank.");
+  const oldOrderNumber = getOrderDisplayNo(order);
+  const normalizedNext = normalizeRefNo(nextOrderNumber);
+  const duplicate = state.orders.some((row) => row.id !== orderId && [row.orderNo, row.orderNumber].some((value) => normalizeRefNo(value) === normalizedNext));
+  if (duplicate) return failOrderUpdate("This order number is already in use.");
+  if (String(oldOrderNumber ?? "").trim() === nextOrderNumber) {
+    editingOrderNumberId = "";
+    renderOrders();
+    showWorkflowMessage(`Order number updated to ${nextOrderNumber}`, "success");
+    return { ok: true, orderNumber: nextOrderNumber, unchanged: true };
+  }
+
+  if (options.confirmChange !== false) {
+    const confirmed = window.confirm(`Change order number from ${oldOrderNumber} to ${nextOrderNumber}?`);
+    if (!confirmed) return { ok: false, cancelled: true, message: "Order number change cancelled." };
+  }
+
+  const button = options.button || null;
+  setOrderActionBusy(button, t("Saving..."));
+  const previousState = snapshotOrderWorkflowState();
+  let localCommitted = false;
+  try {
+    const now = new Date().toISOString();
+    const oldNormalized = normalizeRefNo(oldOrderNumber);
+    state.orders = state.orders.map((row) => row.id === orderId
+      ? updateOrderReferenceFields(row, orderId, oldNormalized, nextOrderNumber, now)
+      : row);
+    state.quotations = state.quotations.map((quote) => isQuotationLinkedToOrder(quote, order, oldNormalized)
+      ? updateOrderReferenceFields({ ...quote, orderId }, orderId, oldNormalized, nextOrderNumber, now)
+      : quote);
+    state.productionJobs = state.productionJobs.map((job) => isRecordLinkedToOrder(job, orderId, oldNormalized)
+      ? updateOrderReferenceFields(job, orderId, oldNormalized, nextOrderNumber, now)
+      : job);
+    state.installationJobs = state.installationJobs.map((job) => isRecordLinkedToOrder(job, orderId, oldNormalized)
+      ? updateOrderReferenceFields(job, orderId, oldNormalized, nextOrderNumber, now)
+      : job);
+    state.warrantyCards = state.warrantyCards.map((card) => isRecordLinkedToOrder(card, orderId, oldNormalized)
+      ? updateOrderReferenceFields(card, orderId, oldNormalized, nextOrderNumber, now)
+      : card);
+
+    const localSave = persistOrderConversionLocally();
+    if (!localSave.ok) {
+      restoreConversionState(previousState);
+      renderOrders();
+      return failOrderUpdate(`Failed to save order number locally: ${localSave.reason}`);
+    }
+    localCommitted = true;
+    editingOrderNumberId = "";
+    if (orderSearch.highlightId === orderId || normalizeRefNo(orderSearch.orderNumber) === oldNormalized) {
+      orderSearch = { ...orderSearch, orderNumber: nextOrderNumber, highlightId: orderId };
+    }
+    showWorkflowMessage(`Order number saved locally as ${nextOrderNumber}. Syncing cloud...`, "info");
+
+    const cloudSync = await syncOrderConversionCollections();
+    renderOrders();
+    if (!cloudSync.ok && !cloudSync.localOnly) {
+      const message = `Order number updated locally to ${nextOrderNumber}, but cloud sync failed: ${cloudSync.reason}`;
+      showWorkflowMessage(message, "warning");
+      return { ok: true, orderNumber: nextOrderNumber, cloudOk: false, message };
+    }
+    showWorkflowMessage(`Order number updated to ${nextOrderNumber}`, "success");
+    return { ok: true, orderNumber: nextOrderNumber, cloudOk: !cloudSync.localOnly, localOnly: cloudSync.localOnly };
+  } catch (error) {
+    console.error("Update order number failed", error);
+    if (!localCommitted) {
+      restoreConversionState(previousState);
+      renderOrders();
+      return failOrderUpdate(`Failed to update order number: ${error.message || "Unknown error"}`);
+    }
+    renderOrders();
+    const message = `Order number updated locally to ${nextOrderNumber}, but cloud sync failed: ${error.message || "Unknown cloud error"}`;
+    showWorkflowMessage(message, "warning");
+    return { ok: true, orderNumber: nextOrderNumber, cloudOk: false, message };
+  } finally {
+    restoreOrderActionButton(button, t("Save Order Number"));
+  }
+}
+
+export function findOrderByNumber(value) {
+  const normalized = normalizeRefNo(value);
+  if (!normalized) return null;
+  return state.orders.find((order) => [order.orderNo, order.orderNumber].some((number) => normalizeRefNo(number) === normalized)) || null;
+}
+
+function snapshotOrderWorkflowState() {
+  return {
+    orders: state.orders,
+    quotations: state.quotations,
+    productionJobs: state.productionJobs,
+    installationJobs: state.installationJobs,
+    warrantyCards: state.warrantyCards
+  };
+}
+
+function isQuotationLinkedToOrder(quote, order, oldNormalized) {
+  if (quote.orderId) return quote.orderId === order.id;
+  if (quote.id && [order.quoteId, order.quotationId].includes(quote.id)) return true;
+  return Boolean(oldNormalized && [quote.orderNo, quote.orderNumber].some((value) => normalizeRefNo(value) === oldNormalized));
+}
+
+function isRecordLinkedToOrder(record, orderId, oldNormalized) {
+  if (record.orderId) return record.orderId === orderId;
+  return Boolean(oldNormalized && [record.orderNo, record.orderNumber, record.orderReference, record.orderRef].some((value) => normalizeRefNo(value) === oldNormalized));
+}
+
+function updateOrderReferenceFields(record, orderId, oldNormalized, nextOrderNumber, now) {
+  const next = {
+    ...record,
+    orderId,
+    orderNo: nextOrderNumber,
+    orderNumber: nextOrderNumber,
+    updatedAt: now
+  };
+  if (Object.prototype.hasOwnProperty.call(record, "orderReference")) next.orderReference = nextOrderNumber;
+  if (Object.prototype.hasOwnProperty.call(record, "orderRef")) next.orderRef = nextOrderNumber;
+  if (Object.prototype.hasOwnProperty.call(record, "order_no")) next.order_no = nextOrderNumber;
+  if (Object.prototype.hasOwnProperty.call(record, "order_number")) next.order_number = nextOrderNumber;
+  return updateEmbeddedPaymentReferences(next, orderId, oldNormalized, nextOrderNumber);
+}
+
+function updateEmbeddedPaymentReferences(record, orderId, oldNormalized, nextOrderNumber) {
+  const next = { ...record };
+  ["payments", "paymentRecords", "collections", "collectionRecords"].forEach((field) => {
+    if (!Array.isArray(record[field])) return;
+    next[field] = record[field].map((entry) => {
+      const entryRef = normalizeRefNo(entry.orderNo || entry.orderNumber || entry.orderReference || entry.orderRef || entry.order_no || entry.order_number);
+      if (entry.orderId !== orderId && (!oldNormalized || entryRef !== oldNormalized)) return entry;
+      const updated = { ...entry, orderId };
+      ["orderNo", "orderNumber", "orderReference", "orderRef", "order_no", "order_number"].forEach((key) => {
+        if (Object.prototype.hasOwnProperty.call(entry, key)) updated[key] = nextOrderNumber;
+      });
+      return updated;
+    });
+  });
+  return next;
+}
+
+function setOrderActionBusy(button, label) {
+  if (!button) return;
+  button.disabled = true;
+  button.dataset.originalLabel = button.textContent || "";
+  button.textContent = label;
+}
+
+function restoreOrderActionButton(button, fallbackLabel) {
+  if (!button || !button.isConnected) return;
+  button.disabled = false;
+  button.textContent = button.dataset.originalLabel || fallbackLabel;
+  delete button.dataset.originalLabel;
+}
+
+function failOrderUpdate(message) {
+  showWorkflowMessage(message, "error");
+  return { ok: false, message };
 }
 
 function moveSelectedOrdersBackToFollowUp() {
