@@ -20,7 +20,14 @@ import {
   quoteTotals,
   toNumber
 } from "./calculations.js";
-import { convertQuoteToOrder, getQuotationDisplayNo, normalizeRefNo, renderWorkflowModules } from "./workflow.js";
+import {
+  convertQuoteToOrder,
+  getQuotationDisplayNo,
+  openOrderForQuotation,
+  quotationOrderAction,
+  renderWorkflowModules,
+  updateQuotationStatus
+} from "./workflow.js";
 import { normalizeStatus, statusLabel, t } from "./i18n.js";
 import { isBossOrAdmin } from "./permissions.js";
 
@@ -72,7 +79,9 @@ function updateQuoteHeaderFromEvent(event) {
   if (customerMap[id]) quote.customer[customerMap[id]] = event.target.value;
   else if (id === "quoteNumber") quote.quoteNumber = event.target.value;
   else if (id === "appointmentDate") quote.appointmentDate = event.target.value;
-  else if (id === "quoteStatus") quote.status = event.target.value;
+  else if (id === "quoteStatus") {
+    if (event.type === "change") saveQuotationStatusFromEvent(event);
+  }
   else if (id === "quoteRemark") quote.remark = event.target.value;
   else if (id === "discount") {
     quote.discount = toNumber(event.target.value);
@@ -81,6 +90,37 @@ function updateQuoteHeaderFromEvent(event) {
     quote.deposit = toNumber(event.target.value);
     updateQuoteSummary();
   }
+}
+
+async function saveQuotationStatusFromEvent(event) {
+  const quote = ensureCurrentQuote();
+  const previousStatus = normalizeStatus(quote.status);
+  const nextStatus = normalizeStatus(event.target.value);
+  const isSaved = state.quotations.some((row) => row.id === quote.id);
+  if (!isSaved) {
+    quote.status = nextStatus;
+    event.target.value = nextStatus;
+    setSaveStatus("Save the quotation first. The selected status will be saved with it.", "info");
+    renderQuotationList();
+    return;
+  }
+
+  event.target.disabled = true;
+  setSaveStatus("Saving quotation status...", "info");
+  const statusSave = updateQuotationStatus(quote.id, nextStatus);
+  renderQuotationList();
+  const result = await statusSave;
+  if (!result.ok) {
+    quote.status = previousStatus;
+    if (event.target.isConnected) event.target.value = previousStatus;
+    setSaveStatus(result.message, "error");
+  } else {
+    quote.status = result.status;
+    if (event.target.isConnected) event.target.value = result.status;
+    setSaveStatus(result.message, result.cloudOk === false && !result.localOnly ? "warning" : "success");
+  }
+  if (event.target.isConnected) event.target.disabled = false;
+  renderQuotationList();
 }
 
 export function addItem() {
@@ -318,16 +358,9 @@ export function newQuote() {
 export function renderQuotationList() {
   const list = document.querySelector("#quotationList");
   const cloudIsLoading = state.cloud.status === "Checking cloud...";
-  list.innerHTML = state.quotations.length ? state.quotations.map((quote) => `
-    <article class="quote-row">
-      <button type="button" data-open-quote="${quote.id}">
-        <span><strong>${escapeHtml(getQuotationDisplayNo(quote))}</strong><small>${escapeHtml(quote.customer.name || "-")} | ${statusLabel(quote.status)}</small></span>
-        <span>${money(quote.total || 0)}</span>
-      </button>
-      <button class="btn primary" type="button" data-convert-quote="${quote.id}" ${cloudIsLoading ? "disabled" : ""} title="${cloudIsLoading ? "Waiting for cloud data to finish loading" : ""}">${t("Convert to Order")}</button>
-      ${isBossOrAdmin() ? `<button class="btn danger" type="button" data-delete-quote="${quote.id}">${t("Delete")}</button>` : ""}
-    </article>
-  `).join("") : `<p class="muted-text">${t("No saved quotations yet.")}</p>`;
+  list.innerHTML = state.quotations.length
+    ? state.quotations.map((quote) => quotationListRowHtml(quote, cloudIsLoading)).join("")
+    : `<p class="muted-text">${t("No saved quotations yet.")}</p>`;
   list.querySelectorAll("[data-open-quote]").forEach((button) => {
     button.addEventListener("click", () => {
       const quote = state.quotations.find((row) => row.id === button.dataset.openQuote);
@@ -353,9 +386,34 @@ export function renderQuotationList() {
       }
     });
   });
+  list.querySelectorAll("[data-open-linked-order]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const result = await openOrderForQuotation(button.dataset.openLinkedOrder);
+      if (!result.ok) setSaveStatus(result.message, "error");
+    });
+  });
   list.querySelectorAll("[data-delete-quote]").forEach((button) => {
     button.addEventListener("click", () => deleteQuotation(button.dataset.deleteQuote));
   });
+}
+
+function quotationListRowHtml(quote, cloudIsLoading) {
+  const action = quotationOrderAction(quote);
+  const orderNumber = action.order?.orderNo || action.order?.orderNumber || "";
+  return `
+    <article class="quote-row">
+      <button type="button" data-open-quote="${quote.id}">
+        <span><strong>${escapeHtml(getQuotationDisplayNo(quote))}</strong><small>${escapeHtml(quote.customer.name || "-")} | ${statusLabel(quote.status)}</small>${action.warning ? `<small class="warning-text">${t(action.warning)}</small>` : ""}</span>
+        <span>${money(quote.total || 0)}</span>
+      </button>
+      ${action.order
+        ? `<button class="btn primary" type="button" data-open-linked-order="${quote.id}">${t("Open Order")}: ${escapeHtml(orderNumber || "-")}</button>`
+        : action.canConvert
+          ? `<button class="btn primary" type="button" data-convert-quote="${quote.id}" ${cloudIsLoading ? "disabled" : ""} title="${cloudIsLoading ? "Waiting for cloud data to finish loading" : ""}">${t("Convert to Order")}</button>`
+          : ""}
+      ${isBossOrAdmin() ? `<button class="btn danger" type="button" data-delete-quote="${quote.id}">${t("Delete")}</button>` : ""}
+    </article>
+  `;
 }
 
 function deleteQuotation(quoteId) {
@@ -393,12 +451,7 @@ function deleteQuotation(quoteId) {
 }
 
 function quotationHasLinkedOrder(quote) {
-  const quoteNo = normalizeRefNo(getQuotationDisplayNo(quote));
-  return state.orders.some((order) => {
-    const sameQuoteId = quote.id && (order.quoteId === quote.id || order.quotationId === quote.id);
-    const orderNo = normalizeRefNo(order.orderNo || order.orderNumber || order.quoteNumber || order.quotationNo);
-    return sameQuoteId || (quoteNo && orderNo && orderNo === quoteNo);
-  });
+  return Boolean(quotationOrderAction(quote).order);
 }
 
 function setSaveStatus(message, type = "info") {

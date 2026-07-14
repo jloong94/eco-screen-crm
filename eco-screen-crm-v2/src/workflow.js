@@ -76,6 +76,7 @@ const orderFilters = [
   { id: "touch-up", label: "Touch Up" },
   { id: "completed", label: "Completed / Serviced" },
   { id: "archived", label: "Cancelled / Archived" },
+  { id: "duplicate-archived", label: "Show Archived Duplicates" },
   { id: "today-installation", label: "Today Installation" },
   { id: "week-installation", label: "This Week Installation" },
   { id: "overdue-installation", label: "Overdue Installation" },
@@ -97,6 +98,9 @@ const convertingQuoteIds = new Set();
 let editingOrderId = "";
 let orderEditorDraft = null;
 let editingOrderNumberId = "";
+let duplicateScanVisible = false;
+let duplicateScanResult = null;
+let duplicateArchiveBusy = false;
 let orderSearch = {
   orderNumber: "",
   customerName: "",
@@ -121,11 +125,14 @@ export async function convertQuoteToOrder(quoteId) {
   let localCommitted = false;
   try {
     const sourceQuote = getQuoteById(lockKey);
+    const existing = findExistingOrderForQuote(sourceQuote);
+    if (!existing && normalizeStatus(sourceQuote?.status) !== "won") {
+      return failConversion("Quotation status must be Won before conversion.");
+    }
     const validation = validateQuoteForOrder(sourceQuote);
     if (!validation.ok) return failConversion(validation.message);
     const quote = quotationForConversion(sourceQuote);
     const quoteDisplayNo = ensureQuotationDisplayNo(quote);
-    const existing = findExistingOrderForQuote(quote);
     const order = existing || createOrderFromQuote(quote);
     if (!order) return failConversion("Failed to save order.");
     const now = new Date().toISOString();
@@ -137,6 +144,7 @@ export async function convertQuoteToOrder(quoteId) {
       quotationNo: quoteDisplayNo,
       quoteNo: quoteDisplayNo,
       orderId: order.id,
+      linkedOrderId: order.id,
       orderNo: getOrderDisplayNo(order),
       orderNumber: getOrderDisplayNo(order),
       converted: true,
@@ -163,6 +171,7 @@ export async function convertQuoteToOrder(quoteId) {
     state.productionJobs = workflowJobs.productionJobs;
     state.installationJobs = workflowJobs.installationJobs;
     state.warrantyCards = nextWarrantyCards;
+    if (state.currentQuote?.id === sourceQuote.id) state.currentQuote = structuredCloneSafe(updatedQuote);
 
     const localSave = persistOrderConversionLocally();
     if (!localSave.ok) {
@@ -172,7 +181,7 @@ export async function convertQuoteToOrder(quoteId) {
     localCommitted = true;
 
     const baseMessage = existing
-      ? `Existing order reused: ${getOrderDisplayNo(order)}`
+      ? `Existing Order found: ${getOrderDisplayNo(order)}`
       : `Order created: ${getOrderDisplayNo(order)}`;
     showWorkflowMessage(`${baseMessage} Saved locally. Syncing cloud...`, "info");
 
@@ -219,7 +228,7 @@ function quotationForConversion(quote) {
   return {
     ...quote,
     customer: customerFromQuotation(quote),
-    items: quote.items.map((item) => ({ ...item }))
+    items: (Array.isArray(quote.items) ? quote.items : []).map((item) => ({ ...item }))
   };
 }
 
@@ -458,7 +467,7 @@ function restoreConversionState(previousState) {
 }
 
 function failConversion(message, extra = {}) {
-  console.error("Convert to Order:", message);
+  console.warn("Convert to Order:", message);
   showWorkflowMessage(message, "error");
   return { ok: false, message, ...extra };
 }
@@ -497,18 +506,142 @@ function getOrderDisplayNo(order = {}) {
   return String(order.orderNo || order.orderNumber || order.quoteNumber || order.quotationNo || "").trim();
 }
 
-function findExistingOrderForQuote(quote) {
-  const byQuoteId = state.orders.find((order) => quote.id && (order.quoteId === quote.id || order.quotationId === quote.id));
-  if (byQuoteId) return byQuoteId;
+export function findExistingOrderForQuote(quote) {
+  if (!quote || typeof quote !== "object") return null;
 
-  const quoteNo = normalizeRefNo(getQuotationDisplayNo(quote));
-  if (!quoteNo) return null;
-  return state.orders.find((order) => {
-    if (order.quoteId || order.quotationId) return false;
-    const orderNo = normalizeRefNo(order.orderNo || order.orderNumber);
-    const orderQuoteNo = normalizeRefNo(order.quoteNumber || order.quotationNo || order.quoteNo);
-    return (orderQuoteNo && orderQuoteNo === quoteNo) || (orderNo && orderNo === quoteNo);
-  }) || null;
+  const linkedOrderId = String(quote.linkedOrderId || quote.orderId || "").trim();
+  if (linkedOrderId) {
+    const linked = state.orders.find((order) => String(order.id || "") === linkedOrderId);
+    if (linked) return resolveMainOrder(linked);
+  }
+
+  if (quote.id) {
+    const byQuoteId = state.orders.find((order) => order.quoteId === quote.id || order.quotationId === quote.id);
+    if (byQuoteId) return resolveMainOrder(byQuoteId);
+  }
+
+  const quoteReferences = new Set(quotationReferenceValues(quote));
+  if (!quoteReferences.size) return null;
+  const byExactReference = state.orders.find((order) => {
+    const linkedReferences = quotationReferenceValues(order);
+    if (linkedReferences.some((reference) => quoteReferences.has(reference))) return true;
+    if (order.quoteId || order.quotationId || linkedReferences.length) return false;
+    const legacyOrderNumber = normalizeRefNo(order.orderNo || order.orderNumber);
+    return Boolean(legacyOrderNumber && quoteReferences.has(legacyOrderNumber));
+  });
+  return byExactReference ? resolveMainOrder(byExactReference) : null;
+}
+
+export function quotationOrderAction(quote) {
+  const order = findExistingOrderForQuote(quote);
+  const status = normalizeStatus(quote?.status);
+  return {
+    status,
+    order,
+    canConvert: status === "won" && !order,
+    warning: order && status !== "won" ? "This quotation already has an Order." : ""
+  };
+}
+
+export async function updateQuotationStatus(quoteId, nextStatus) {
+  const quote = getQuoteById(quoteId);
+  if (!quote) return failQuotationStatus("Quotation not found.");
+  const normalized = normalizeStatus(nextStatus);
+  if (!["quoted", "follow_up", "won", "lost"].includes(normalized)) {
+    return failQuotationStatus("Please select a valid quotation status.");
+  }
+  const existingOrder = findExistingOrderForQuote(quote);
+  if (existingOrder && normalized !== "won") {
+    return failQuotationStatus("An Order already exists. Update the Order status instead.", { order: existingOrder });
+  }
+
+  const previousQuotations = state.quotations;
+  const previousCurrentQuote = state.currentQuote;
+  const now = new Date().toISOString();
+  const updatedQuote = { ...quote, status: normalized, updatedAt: now };
+  state.quotations = state.quotations.map((row) => row.id === quote.id ? updatedQuote : row);
+  if (state.currentQuote?.id === quote.id) state.currentQuote = { ...state.currentQuote, status: normalized, updatedAt: now };
+
+  try {
+    const cloudSync = await persistQuotations();
+    const cloudFailed = !cloudSync.ok && cloudSync.reason !== "Local Mode Only";
+    const message = cloudFailed
+      ? `Quotation status saved locally but cloud sync failed: ${cloudSync.reason}`
+      : cloudSync.reason === "Local Mode Only"
+        ? "Quotation status saved locally."
+        : "Quotation status saved.";
+    showWorkflowMessage(message, cloudFailed ? "warning" : "success");
+    return { ok: true, status: normalized, order: existingOrder, cloudOk: cloudSync.ok, localOnly: cloudSync.reason === "Local Mode Only", message };
+  } catch (error) {
+    state.quotations = previousQuotations;
+    state.currentQuote = previousCurrentQuote;
+    return failQuotationStatus(`Failed to save quotation status: ${error.message || "Unknown error"}`);
+  }
+}
+
+export async function openOrderForQuotation(quoteId) {
+  const quote = getQuoteById(quoteId);
+  if (!quote) return failQuotationStatus("Quotation not found.");
+  const order = findExistingOrderForQuote(quote);
+  if (!order) return failQuotationStatus("Order not found.");
+
+  const repaired = repairQuotationLinkObject(quote, order);
+  const needsRepair = repaired.orderId !== quote.orderId
+    || repaired.linkedOrderId !== quote.linkedOrderId
+    || repaired.orderNo !== quote.orderNo
+    || repaired.orderNumber !== quote.orderNumber;
+  if (needsRepair) {
+    const previousQuotations = state.quotations;
+    state.quotations = state.quotations.map((row) => row.id === quote.id ? repaired : row);
+    if (state.currentQuote?.id === quote.id) state.currentQuote = { ...state.currentQuote, ...repaired };
+    try {
+      const cloudSync = await persistQuotations();
+      if (!cloudSync.ok && cloudSync.reason !== "Local Mode Only") {
+        showWorkflowMessage(`Quotation link repaired locally but cloud sync failed: ${cloudSync.reason}`, "warning");
+      }
+    } catch (error) {
+      state.quotations = previousQuotations;
+      return failQuotationStatus(`Failed to repair quotation link: ${error.message || "Unknown error"}`);
+    }
+  }
+
+  orderSearch = { ...orderSearch, orderNumber: getOrderDisplayNo(order), filter: "all", page: 1, highlightId: order.id };
+  document.querySelector?.('[data-page="orders"]')?.click();
+  setTimeout(() => document.querySelector?.(`[data-order-card="${order.id}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+  showWorkflowMessage(`Existing Order found: ${getOrderDisplayNo(order)}`, "success");
+  return { ok: true, order, repaired: needsRepair };
+}
+
+function quotationReferenceValues(record = {}) {
+  return [record.quoteNumber, record.quotationNo, record.quoteNo, record.quotationRef, record.quoteRef, record.refNo]
+    .map(normalizeRefNo)
+    .filter(Boolean);
+}
+
+function resolveMainOrder(order) {
+  if (!order || order.status !== "duplicate_archived" || !order.duplicateOfOrderId) return order;
+  return state.orders.find((row) => row.id === order.duplicateOfOrderId && row.status !== "duplicate_archived") || order;
+}
+
+function repairQuotationLinkObject(quote, order) {
+  const now = new Date().toISOString();
+  const orderNumber = getOrderDisplayNo(order);
+  return {
+    ...quote,
+    orderId: order.id,
+    linkedOrderId: order.id,
+    orderNo: orderNumber,
+    orderNumber,
+    converted: true,
+    convertedToOrder: true,
+    convertedAt: quote.convertedAt || now,
+    updatedAt: now
+  };
+}
+
+function failQuotationStatus(message, extra = {}) {
+  showWorkflowMessage(message, "error");
+  return { ok: false, message, ...extra };
 }
 
 function showWorkflowMessage(message, type = "info") {
@@ -595,13 +728,14 @@ function renderOrderProgressBoard() {
 function renderOrderTools() {
   const tools = document.querySelector("#orderTools");
   if (!tools) return;
+  const visibleFilters = orderFilters.filter((filter) => filter.id !== "duplicate-archived" || isBossOrAdmin());
   tools.innerHTML = `
     <section class="order-tools">
       <div class="form-grid compact">
         <label>${t("Search Order Number")}<input data-order-search="orderNumber" value="${orderSearch.orderNumber}" placeholder="ESO-2026-0001 or 0001" /></label>
         <label>${t("Search Customer Name")}<input data-order-search="customerName" value="${orderSearch.customerName}" placeholder="Customer name" /></label>
         <label>${t("Search Phone Number")}<input data-order-search="phone" value="${orderSearch.phone}" placeholder="0123456789" /></label>
-        <label>${t("Status")}<select data-order-search="status"><option value="">All status</option>${orderFilters.map((filter) => `<option value="${filter.id}" ${orderSearch.status === filter.id ? "selected" : ""}>${t(filter.label)}</option>`).join("")}</select></label>
+        <label>${t("Status")}<select data-order-search="status"><option value="">All status</option>${visibleFilters.map((filter) => `<option value="${filter.id}" ${orderSearch.status === filter.id ? "selected" : ""}>${t(filter.label)}</option>`).join("")}</select></label>
         <label>${t("Installation Date")}<input type="date" data-order-search="installationDate" value="${orderSearch.installationDate}" /></label>
         <label>Sort by<select data-order-search="sort">
           ${[["updated", "Latest Updated"], ["installationDate", "Installation Date"], ["orderNumber", "Order Number"]].map(([value, label]) => `<option value="${value}" ${orderSearch.sort === value ? "selected" : ""}>${label}</option>`).join("")}
@@ -611,13 +745,249 @@ function renderOrderTools() {
         <button class="btn primary" type="button" data-order-tool="search">${t("Search")}</button>
         <button class="btn" type="button" data-order-tool="clear">${t("Clear Search")}</button>
         <button class="btn" type="button" data-order-tool="find">${t("Find Order")}</button>
+        ${isBossOrAdmin() ? `<button class="btn" type="button" data-order-tool="duplicates">${t("Duplicate Order Check")}</button>` : ""}
         ${isBossOrAdmin() ? `<button class="btn danger" type="button" data-order-tool="move-selected-follow-up">${t("Move Selected to Follow Up")}</button>` : ""}
       </div>
       <div class="filter-tabs">
-        ${orderFilters.map((filter) => `<button class="filter-tab ${orderSearch.filter === filter.id ? "active" : ""}" type="button" data-order-filter="${filter.id}">${t(filter.label)}</button>`).join("")}
+        ${visibleFilters.map((filter) => `<button class="filter-tab ${orderSearch.filter === filter.id ? "active" : ""}" type="button" data-order-filter="${filter.id}">${t(filter.label)}</button>`).join("")}
       </div>
+      ${duplicateOrderPanelHtml()}
     </section>
   `;
+}
+
+export function scanDuplicateOrders() {
+  const entries = state.orders
+    .map((order, index) => ({ order, index, key: orderEntryKey(order, index) }))
+    .filter((entry) => entry.order.status !== "duplicate_archived");
+  const parent = new Map(entries.map((entry) => [entry.key, entry.key]));
+  const edges = [];
+  const find = (key) => {
+    let root = key;
+    while (parent.get(root) !== root) root = parent.get(root);
+    let current = key;
+    while (parent.get(current) !== current) {
+      const next = parent.get(current);
+      parent.set(current, root);
+      current = next;
+    }
+    return root;
+  };
+  const connect = (left, right, reason) => {
+    const leftRoot = find(left.key);
+    const rightRoot = find(right.key);
+    if (leftRoot !== rightRoot) parent.set(rightRoot, leftRoot);
+    edges.push({ left: left.key, right: right.key, reason });
+  };
+  const connectRows = (rows, reason) => {
+    if (rows.length < 2) return;
+    for (let index = 1; index < rows.length; index += 1) connect(rows[0], rows[index], reason);
+  };
+
+  groupedEntries(entries, (entry) => String(entry.order.id || "").trim())
+    .filter(([key, rows]) => key && rows.length > 1)
+    .forEach(([key, rows]) => connectRows(rows, `Same stable Order ID: ${key}`));
+  groupedEntries(entries, (entry) => orderQuotationId(entry.order))
+    .filter(([key, rows]) => key && rows.length > 1)
+    .forEach(([key, rows]) => connectRows(rows, `Same quotation ID: ${key}`));
+
+  const numberConflicts = [];
+  groupedEntries(entries, (entry) => normalizeRefNo(getOrderDisplayNo(entry.order)))
+    .filter(([key, rows]) => key && rows.length > 1)
+    .forEach(([orderNumber, rows]) => {
+      const quotationIds = new Set(rows.map((entry) => orderQuotationId(entry.order)).filter(Boolean));
+      if (quotationIds.size > 1) {
+        numberConflicts.push(makeDuplicateGroup("number-conflict", rows, [`Order Number Conflict: ${orderNumber} belongs to different quotations.`]));
+        return;
+      }
+      connectRows(rows, `Exact same Order No: ${orderNumber}`);
+    });
+
+  const components = new Map();
+  entries.forEach((entry) => {
+    const root = find(entry.key);
+    if (!components.has(root)) components.set(root, []);
+    components.get(root).push(entry);
+  });
+  const confirmedGroups = [...components.values()]
+    .filter((rows) => rows.length > 1)
+    .map((rows) => {
+      const keys = new Set(rows.map((entry) => entry.key));
+      const reasons = [...new Set(edges.filter((edge) => keys.has(edge.left) && keys.has(edge.right)).map((edge) => edge.reason))];
+      return makeDuplicateGroup("confirmed", rows, reasons);
+    });
+
+  const confirmedPairs = new Set();
+  confirmedGroups.forEach((group) => {
+    group.members.forEach((left, leftIndex) => group.members.slice(leftIndex + 1).forEach((right) => {
+      confirmedPairs.add(pairKey(left.key, right.key));
+    }));
+  });
+  const possibleGroups = [];
+  entries.forEach((left, leftIndex) => entries.slice(leftIndex + 1).forEach((right) => {
+    if (confirmedPairs.has(pairKey(left.key, right.key))) return;
+    const leftQuoteId = orderQuotationId(left.order);
+    const rightQuoteId = orderQuotationId(right.order);
+    if (!leftQuoteId || !rightQuoteId || leftQuoteId === rightQuoteId) return;
+    if (!samePossibleDuplicateSignature(left.order, right.order)) return;
+    possibleGroups.push(makeDuplicateGroup("possible", [left, right], ["Same phone, total and item details within 30 minutes, but different quotation IDs."]));
+  }));
+
+  return {
+    scannedAt: new Date().toISOString(),
+    confirmedGroups,
+    possibleGroups,
+    numberConflicts
+  };
+}
+
+function duplicateOrderPanelHtml() {
+  if (!isBossOrAdmin() || !duplicateScanVisible) return "";
+  const scan = duplicateScanResult || scanDuplicateOrders();
+  const issueCount = scan.confirmedGroups.length + scan.possibleGroups.length + scan.numberConflicts.length;
+  return `
+    <section class="duplicate-order-panel">
+      <div class="section-head">
+        <div>
+          <h3>${t("Duplicate Order Check")}</h3>
+          <p class="muted-text">${t("Preview only. Nothing is archived until a Main Order is selected and confirmed.")}</p>
+        </div>
+        <div class="actions">
+          <button class="btn" type="button" data-order-tool="duplicates-refresh">${t("Scan Again")}</button>
+          <button class="btn" type="button" data-order-tool="duplicates-close">${t("Close")}</button>
+        </div>
+      </div>
+      <div class="duplicate-summary">
+        <span>${t("Confirmed duplicate groups")}: <strong>${scan.confirmedGroups.length}</strong></span>
+        <span>${t("Order number conflicts")}: <strong>${scan.numberConflicts.length}</strong></span>
+        <span>${t("Possible duplicate groups")}: <strong>${scan.possibleGroups.length}</strong></span>
+      </div>
+      ${issueCount ? "" : `<p class="empty-state">${t("No duplicate orders detected.")}</p>`}
+      ${duplicateGroupsHtml(t("Confirmed Duplicates"), scan.confirmedGroups, "confirmed")}
+      ${duplicateGroupsHtml(t("Order Number Conflicts"), scan.numberConflicts, "conflict")}
+      ${duplicateGroupsHtml(t("Possible Duplicates"), scan.possibleGroups, "possible")}
+    </section>
+  `;
+}
+
+function duplicateGroupsHtml(title, groups, type) {
+  if (!groups.length) return "";
+  return `
+    <div class="duplicate-section">
+      <h4>${title}</h4>
+      ${groups.map((group) => `
+        <article class="duplicate-group-card" data-duplicate-group-card="${group.id}">
+          <p><strong>${escapeHtml(group.reasons.join(" | "))}</strong></p>
+          <div class="duplicate-member-list">
+            ${group.members.map((member, index) => duplicateMemberHtml(member, group, type === "confirmed", index === 0)).join("")}
+          </div>
+          ${type === "confirmed" ? `
+            <div class="actions">
+              <button class="btn danger" type="button" data-archive-duplicate-group="${group.id}" ${duplicateArchiveBusy ? "disabled" : ""}>${t("Archive Duplicate")}</button>
+            </div>
+          ` : type === "conflict" ? `<p class="warning-text">${t("Do not archive automatically. Open an order and edit one Order No manually.")}</p>` : `<p class="muted-text">${t("Possible duplicates are preview only and cannot be archived here.")}</p>`}
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function duplicateMemberHtml(member, group, selectable, checked) {
+  const order = member.order;
+  const details = duplicateOrderDetails(member);
+  return `
+    <div class="duplicate-member">
+      ${selectable ? `<label class="duplicate-main-choice"><input type="radio" name="duplicate-main-${group.id}" data-duplicate-main="${escapeHtml(member.key)}" ${checked ? "checked" : ""} /> ${t("Keep as Main Order")}</label>` : ""}
+      <div class="duplicate-member-grid">
+        <span>${t("Order ID")}<strong>${escapeHtml(order.id || "-")}</strong></span>
+        <span>${t("Order No")}<strong>${escapeHtml(getOrderDisplayNo(order) || "-")}</strong></span>
+        <span>${t("Quotation Number")}<strong>${escapeHtml(details.quotationNo || "-")}</strong></span>
+        <span>${t("Customer")}<strong>${escapeHtml(order.customer?.name || order.customerName || "-")}</strong></span>
+        <span>${t("Phone")}<strong>${escapeHtml(order.customer?.phone || order.phone || "-")}</strong></span>
+        <span>${t("Total")}<strong>${money(order.total)}</strong></span>
+        <span>${t("Created At")}<strong>${escapeHtml(order.createdAt || "-")}</strong></span>
+        <span>${t("Status")}<strong>${statusLabel(order.status || "-")}</strong></span>
+        <span>${t("Production job count")}<strong>${details.productionCount}</strong></span>
+        <span>${t("Installation job count")}<strong>${details.installationCount}</strong></span>
+      </div>
+      ${selectable ? "" : `<button class="btn" type="button" data-duplicate-open-order="${escapeHtml(order.id || "")}">${t("Open Order")}</button>`}
+    </div>
+  `;
+}
+
+function makeDuplicateGroup(type, rows, reasons) {
+  const sorted = [...rows].sort((left, right) => left.index - right.index);
+  return {
+    id: `${type}-${sorted.map((entry) => entry.index).join("-")}`,
+    type,
+    reasons,
+    members: sorted
+  };
+}
+
+function groupedEntries(entries, keyForEntry) {
+  const groups = new Map();
+  entries.forEach((entry) => {
+    const key = keyForEntry(entry);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(entry);
+  });
+  return [...groups.entries()];
+}
+
+function orderEntryKey(order, index) {
+  return `${String(order.id || "missing")}::${index}`;
+}
+
+function orderQuotationId(order = {}) {
+  return String(order.quotationId || order.quoteId || "").trim();
+}
+
+function pairKey(left, right) {
+  return [left, right].sort().join("|");
+}
+
+function samePossibleDuplicateSignature(left, right) {
+  const leftPhone = String(left.customer?.phone || left.phone || "").replace(/\D/g, "");
+  const rightPhone = String(right.customer?.phone || right.phone || "").replace(/\D/g, "");
+  if (!leftPhone || leftPhone !== rightPhone) return false;
+  if (left.total === undefined || left.total === null || left.total === "" || right.total === undefined || right.total === null || right.total === "") return false;
+  if (Number(left.total) !== Number(right.total)) return false;
+  if (!Array.isArray(left.items) || !left.items.length || !Array.isArray(right.items) || !right.items.length) return false;
+  if (savedItemSignature(left.items) !== savedItemSignature(right.items)) return false;
+  const leftCreated = Date.parse(left.createdAt || "");
+  const rightCreated = Date.parse(right.createdAt || "");
+  return Number.isFinite(leftCreated) && Number.isFinite(rightCreated) && Math.abs(leftCreated - rightCreated) <= 30 * 60 * 1000;
+}
+
+function savedItemSignature(items) {
+  return JSON.stringify(items.map((item) => ({
+    productId: item.productId ?? "",
+    productName: item.productName ?? "",
+    width: item.width ?? "",
+    height: item.height ?? "",
+    sqft: item.sqft ?? item.area ?? "",
+    quantity: item.quantity ?? "",
+    color: item.color ?? "",
+    location: item.installationLocation ?? item.location ?? "",
+    unitPrice: item.unitPrice ?? "",
+    manualFinalPrice: item.manualFinalPrice ?? "",
+    lineTotal: item.lineTotal ?? "",
+    remark: item.remark ?? ""
+  })));
+}
+
+function duplicateOrderDetails(member) {
+  const order = member.order;
+  const orderNumber = normalizeRefNo(getOrderDisplayNo(order));
+  const quotation = state.quotations.find((quote) => quote.id === order.quoteId || quote.id === order.quotationId);
+  const belongs = (record) => record.orderId === order.id
+    || (orderNumber && normalizeRefNo(record.orderNo || record.orderNumber) === orderNumber);
+  return {
+    quotationNo: order.quoteNumber || order.quotationNo || order.quoteNo || getQuotationDisplayNo(quotation || {}),
+    productionCount: state.productionJobs.filter(belongs).length,
+    installationCount: state.installationJobs.filter(belongs).length
+  };
 }
 
 function renderCompactOrderRow(order) {
@@ -637,6 +1007,17 @@ function renderCompactOrderRow(order) {
 }
 
 function orderActionsHtml(order) {
+  if (order.status === "duplicate_archived") {
+    const orderIndex = state.orders.indexOf(order);
+    return `
+      <div class="actions">
+        <button class="btn" type="button" data-view-order="${order.id}">${t("View Order")}</button>
+        <button class="btn" type="button" data-print-order="${order.id}">${t("Print Order")}</button>
+        ${isBossOrAdmin() ? `<button class="btn primary" type="button" data-restore-duplicate="${escapeHtml(orderEntryKey(order, orderIndex))}">${t("Restore Archived Duplicate")}</button>` : ""}
+      </div>
+      <p class="warning-text">${t("Archived duplicate of")} ${escapeHtml(order.duplicateOfOrderNo || order.duplicateOfOrderId || "-")} | ${escapeHtml(order.duplicateReason || "-")}</p>
+    `;
+  }
   return `
     <div class="actions">
       <button class="btn" type="button" data-view-order="${order.id}">${t("View Order")}</button>
@@ -798,15 +1179,16 @@ function matchesOrderSearch(order) {
 
 function matchesOrderFilter(order) {
   if (orderSearch.filter === "all") return true;
+  if (orderSearch.filter === "duplicate-archived") return order.status === "duplicate_archived";
   if (["today-installation", "week-installation", "overdue-installation"].includes(orderSearch.filter)) return matchesBoardDateFilter(order);
-  if (orderSearch.filter === "active") return !["archived", "completed"].includes(getOrderProgressCategory(order));
+  if (orderSearch.filter === "active") return !["archived", "duplicate-archived", "completed"].includes(getOrderProgressCategory(order));
   return getOrderProgressCategory(order) === orderSearch.filter;
 }
 
 function matchesProgressFilter(categoryId, order) {
   if (orderSearch.filter === "all") return true;
   if (["today-installation", "week-installation", "overdue-installation"].includes(orderSearch.filter)) return matchesBoardDateFilter(order);
-  if (orderSearch.filter === "active") return categoryId !== "archived" && categoryId !== "completed";
+  if (orderSearch.filter === "active") return !["archived", "duplicate-archived", "completed"].includes(categoryId);
   return categoryId === orderSearch.filter;
 }
 
@@ -905,6 +1287,7 @@ function getOrderProgressCategory(order) {
   const installationStatus = getOrderInstallationStatus(order, installationJob);
   const balance = getRemainingBalance(order, installationJob);
   const sentToProduction = order.sentToProduction === true || ["Sent to Production", "In Production", "Production Completed"].includes(order.status);
+  if (order.status === "duplicate_archived") return "duplicate-archived";
   if (order.isArchived || order.status === "Cancelled") return "archived";
   if (installationStatus === "touch_up" || order.status === "Touch Up") return "touch-up";
   if (installationStatus === "installed" && balance <= 0) return "completed";
@@ -1157,6 +1540,7 @@ function handleOrderClick(event) {
   const editOrderNumberId = event.target.dataset.editOrderNumber;
   const saveOrderNumberId = event.target.dataset.saveOrderNumber;
   const cancelOrderNumberId = event.target.dataset.cancelOrderNumber;
+  const restoreDuplicateKey = event.target.dataset.restoreDuplicate;
   if (page) {
     orderSearch = { ...orderSearch, page: Number(page) || 1 };
     renderOrderList();
@@ -1175,6 +1559,7 @@ function handleOrderClick(event) {
   if (editOrderNumberId) toggleOrderNumberEditor(editOrderNumberId);
   if (saveOrderNumberId) saveOrderNumberFromEditor(saveOrderNumberId, event.target);
   if (cancelOrderNumberId) closeOrderNumberEditor();
+  if (restoreDuplicateKey) restoreArchivedDuplicate(restoreDuplicateKey);
 }
 
 function handleOrderChange(event) {
@@ -1395,6 +1780,8 @@ function handleOrderSearchInput(event) {
 function handleOrderToolsClick(event) {
   const filter = event.target.dataset.orderFilter;
   const tool = event.target.dataset.orderTool;
+  const archiveGroupId = event.target.dataset.archiveDuplicateGroup;
+  const duplicateOrderId = event.target.dataset.duplicateOpenOrder;
   if (filter) {
     orderSearch = { ...orderSearch, filter, status: "", page: 1, highlightId: "" };
     renderOrders();
@@ -1406,6 +1793,289 @@ function handleOrderToolsClick(event) {
   }
   if (tool === "find") quickFindOrder();
   if (tool === "move-selected-follow-up") moveSelectedOrdersBackToFollowUp();
+  if (tool === "duplicates" || tool === "duplicates-refresh") {
+    if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+    duplicateScanVisible = true;
+    duplicateScanResult = scanDuplicateOrders();
+    renderOrderTools();
+  }
+  if (tool === "duplicates-close") {
+    duplicateScanVisible = false;
+    duplicateScanResult = null;
+    renderOrderTools();
+  }
+  if (archiveGroupId) archiveDuplicateGroupFromPanel(archiveGroupId, event.target);
+  if (duplicateOrderId) highlightOrder(duplicateOrderId);
+}
+
+async function archiveDuplicateGroupFromPanel(groupId, button) {
+  const groupCard = button.closest("[data-duplicate-group-card]");
+  const selectedMain = groupCard?.querySelector("[data-duplicate-main]:checked")?.dataset.duplicateMain;
+  if (!selectedMain) return showWorkflowMessage("Select the Main Order first.", "error");
+  button.disabled = true;
+  const originalLabel = button.textContent;
+  button.textContent = t("Archiving...");
+  const result = await archiveDuplicateGroup(groupId, selectedMain);
+  if (button.isConnected) {
+    button.disabled = false;
+    button.textContent = originalLabel;
+  }
+  if (result.ok) {
+    duplicateScanResult = scanDuplicateOrders();
+    orderSearch = { ...orderSearch, filter: "active", page: 1, highlightId: result.mainOrder.id };
+    renderOrders();
+  }
+}
+
+export async function archiveDuplicateGroup(groupId, mainMemberKey, options = {}) {
+  if (!isBossOrAdmin()) return failDuplicateAction("Permission denied: your role cannot perform this action.");
+  if (duplicateArchiveBusy) return failDuplicateAction("Duplicate archive is already in progress.");
+  const scan = scanDuplicateOrders();
+  const group = scan.confirmedGroups.find((row) => row.id === groupId);
+  if (!group) return failDuplicateAction("Confirmed duplicate group not found. Please scan again.");
+  const mainMember = group.members.find((member) => member.key === mainMemberKey);
+  if (!mainMember) return failDuplicateAction("Select the Main Order first.");
+  const duplicateMembers = group.members.filter((member) => member.key !== mainMember.key);
+  if (!duplicateMembers.length) return failDuplicateAction("No duplicate order selected for archiving.");
+
+  if (options.confirm !== false) {
+    const confirmation = window.prompt("Type ARCHIVE DUPLICATE to confirm. No order will be permanently deleted.");
+    if (confirmation !== "ARCHIVE DUPLICATE") return { ok: false, cancelled: true, message: "Archive cancelled." };
+  }
+  if (options.downloadBackup !== false && !downloadDuplicateArchiveBackup(group, mainMember)) {
+    return failDuplicateAction("Backup download failed. Duplicate orders were not changed.");
+  }
+
+  duplicateArchiveBusy = true;
+  const previousState = snapshotOrderWorkflowState();
+  let localCommitted = false;
+  try {
+    const now = new Date().toISOString();
+    const mainOrder = mainMember.order;
+    const mainOrderNo = getOrderDisplayNo(mainOrder);
+    const duplicateIndexes = new Set(duplicateMembers.map((member) => member.index));
+    const duplicateIds = new Set(duplicateMembers.map((member) => String(member.order.id || "")).filter((id) => id && id !== String(mainOrder.id || "")));
+    const duplicateNumbers = new Set(duplicateMembers
+      .map((member) => normalizeRefNo(getOrderDisplayNo(member.order)))
+      .filter((number) => number && number !== normalizeRefNo(mainOrderNo)));
+    const quotationIds = new Set(group.members.map((member) => orderQuotationId(member.order)).filter(Boolean));
+    const duplicateReason = group.reasons.join(" | ");
+    const archivedBy = state.currentUser?.name || state.currentUser?.username || state.currentUser?.userId || role();
+
+    state.orders = state.orders.map((order, index) => {
+      const withUpdatedPayments = relinkEmbeddedOrderReferences(order, duplicateIds, duplicateNumbers, mainOrder);
+      if (!duplicateIndexes.has(index)) return withUpdatedPayments;
+      return {
+        ...withUpdatedPayments,
+        statusBeforeDuplicateArchive: order.status,
+        isArchivedBeforeDuplicateArchive: order.isArchived === true,
+        archivedAtBeforeDuplicateArchive: order.archivedAt || null,
+        status: "duplicate_archived",
+        isArchived: true,
+        duplicateOfOrderId: mainOrder.id,
+        duplicateOfOrderNo: mainOrderNo,
+        duplicateReason,
+        archivedAt: now,
+        archivedBy,
+        updatedAt: now
+      };
+    });
+    state.quotations = state.quotations.map((quote) => quotationBelongsToDuplicateGroup(quote, quotationIds, duplicateIds, duplicateNumbers)
+      ? repairQuotationLinkObject(quote, mainOrder)
+      : quote);
+    state.productionJobs = state.productionJobs.map((job) => relinkWorkflowRecord(job, duplicateIds, duplicateNumbers, mainOrder, now));
+    state.installationJobs = state.installationJobs.map((job) => relinkWorkflowRecord(job, duplicateIds, duplicateNumbers, mainOrder, now));
+    state.warrantyCards = state.warrantyCards.map((card) => relinkWorkflowRecord(card, duplicateIds, duplicateNumbers, mainOrder, now));
+
+    const localSave = persistOrderConversionLocally();
+    if (!localSave.ok) {
+      restoreConversionState(previousState);
+      return failDuplicateAction(`Failed to archive duplicates locally: ${localSave.reason}`);
+    }
+    localCommitted = true;
+
+    const cloudSync = await syncOrderConversionCollections();
+    const cloudFailed = !cloudSync.ok && !cloudSync.localOnly;
+    const message = cloudFailed
+      ? `Duplicate cleanup saved locally but cloud sync failed: ${cloudSync.reason}`
+      : cloudSync.localOnly
+        ? "Duplicate orders archived locally."
+        : "Duplicate orders archived successfully.";
+    showWorkflowMessage(message, cloudFailed ? "warning" : "success");
+    return {
+      ok: true,
+      mainOrder,
+      archivedOrderIds: duplicateMembers.map((member) => member.order.id),
+      cloudOk: cloudSync.ok && !cloudSync.localOnly,
+      localOnly: cloudSync.localOnly,
+      message
+    };
+  } catch (error) {
+    console.error("Archive duplicate orders failed", error);
+    if (!localCommitted) {
+      restoreConversionState(previousState);
+      return failDuplicateAction(`Failed to archive duplicates: ${error.message || "Unknown error"}`);
+    }
+    const message = `Duplicate cleanup saved locally but cloud sync failed: ${error.message || "Unknown cloud error"}`;
+    showWorkflowMessage(message, "warning");
+    return { ok: true, mainOrder: mainMember.order, cloudOk: false, message };
+  } finally {
+    duplicateArchiveBusy = false;
+  }
+}
+
+export async function restoreArchivedDuplicate(memberKey, options = {}) {
+  if (!isBossOrAdmin()) return failDuplicateAction("Permission denied: your role cannot perform this action.");
+  const entry = state.orders
+    .map((order, index) => ({ order, index, key: orderEntryKey(order, index) }))
+    .find((member) => member.key === memberKey || (member.order.id === memberKey && member.order.status === "duplicate_archived"));
+  if (!entry || entry.order.status !== "duplicate_archived") return failDuplicateAction("Archived duplicate order not found.");
+  if (options.confirm !== false && !window.confirm(`Restore archived duplicate ${getOrderDisplayNo(entry.order)}?`)) {
+    return { ok: false, cancelled: true, message: "Restore cancelled." };
+  }
+
+  const previousState = snapshotOrderWorkflowState();
+  let localCommitted = false;
+  try {
+    const now = new Date().toISOString();
+    state.orders = state.orders.map((order, index) => index === entry.index ? {
+      ...order,
+      status: order.statusBeforeDuplicateArchive || "Confirmed",
+      isArchived: order.isArchivedBeforeDuplicateArchive === true,
+      archivedAt: order.archivedAtBeforeDuplicateArchive || null,
+      duplicateRestoredAt: now,
+      duplicateRestoredBy: state.currentUser?.name || state.currentUser?.username || role(),
+      updatedAt: now
+    } : order);
+    const localSave = persistOrderConversionLocally();
+    if (!localSave.ok) {
+      restoreConversionState(previousState);
+      return failDuplicateAction(`Failed to restore duplicate locally: ${localSave.reason}`);
+    }
+    localCommitted = true;
+    const cloudSync = await syncOrderConversionCollections();
+    duplicateScanResult = duplicateScanVisible ? scanDuplicateOrders() : null;
+    renderOrders();
+    if (!cloudSync.ok && !cloudSync.localOnly) {
+      const message = `Archived duplicate restored locally but cloud sync failed: ${cloudSync.reason}`;
+      showWorkflowMessage(message, "warning");
+      return { ok: true, cloudOk: false, message };
+    }
+    showWorkflowMessage("Archived duplicate restored.", "success");
+    return { ok: true, cloudOk: !cloudSync.localOnly, localOnly: cloudSync.localOnly };
+  } catch (error) {
+    console.error("Restore archived duplicate failed", error);
+    if (!localCommitted) {
+      restoreConversionState(previousState);
+      return failDuplicateAction(`Failed to restore duplicate: ${error.message || "Unknown error"}`);
+    }
+    const message = `Archived duplicate restored locally but cloud sync failed: ${error.message || "Unknown cloud error"}`;
+    showWorkflowMessage(message, "warning");
+    return { ok: true, cloudOk: false, message };
+  }
+}
+
+function quotationBelongsToDuplicateGroup(quote, quotationIds, duplicateIds, duplicateNumbers) {
+  if (quote.id && quotationIds.has(String(quote.id))) return true;
+  if (duplicateIds.has(String(quote.linkedOrderId || quote.orderId || ""))) return true;
+  return [quote.orderNo, quote.orderNumber].some((value) => duplicateNumbers.has(normalizeRefNo(value)));
+}
+
+function relinkWorkflowRecord(record, duplicateIds, duplicateNumbers, mainOrder, now) {
+  const orderReference = normalizeRefNo(record.orderNo || record.orderNumber || record.orderReference || record.orderRef);
+  const matches = duplicateIds.has(String(record.orderId || "")) || (orderReference && duplicateNumbers.has(orderReference));
+  const withUpdatedPayments = relinkEmbeddedOrderReferences(record, duplicateIds, duplicateNumbers, mainOrder);
+  if (!matches) return withUpdatedPayments;
+  return {
+    ...withUpdatedPayments,
+    orderId: mainOrder.id,
+    orderNo: getOrderDisplayNo(mainOrder),
+    orderNumber: getOrderDisplayNo(mainOrder),
+    duplicateRelinkedAt: now,
+    updatedAt: now
+  };
+}
+
+function relinkEmbeddedOrderReferences(record, duplicateIds, duplicateNumbers, mainOrder) {
+  const next = { ...record };
+  ["payments", "paymentRecords", "collections", "collectionRecords"].forEach((field) => {
+    if (!Array.isArray(record[field])) return;
+    next[field] = record[field].map((entry) => {
+      const orderReference = normalizeRefNo(entry.orderNo || entry.orderNumber || entry.orderReference || entry.orderRef || entry.order_no || entry.order_number);
+      const matches = duplicateIds.has(String(entry.orderId || "")) || (orderReference && duplicateNumbers.has(orderReference));
+      if (!matches) return entry;
+      const updated = { ...entry, orderId: mainOrder.id };
+      ["orderNo", "orderNumber", "orderReference", "orderRef", "order_no", "order_number"].forEach((key) => {
+        if (Object.prototype.hasOwnProperty.call(entry, key)) updated[key] = getOrderDisplayNo(mainOrder);
+      });
+      return updated;
+    });
+  });
+  return next;
+}
+
+function duplicateArchiveBackupPayload(group, mainMember) {
+  return {
+    type: "eco-screen-crm-v2-duplicate-order-archive-backup",
+    timestamp: new Date().toISOString(),
+    selectedMainOrderKey: mainMember.key,
+    selectedGroup: {
+      id: group.id,
+      reasons: group.reasons,
+      orderKeys: group.members.map((member) => member.key)
+    },
+    quotations: structuredCloneSafe(state.quotations),
+    orders: structuredCloneSafe(state.orders),
+    productionJobs: structuredCloneSafe(state.productionJobs),
+    installationJobs: structuredCloneSafe(state.installationJobs),
+    warrantyCards: structuredCloneSafe(state.warrantyCards),
+    paymentCollectionReferences: collectPaymentCollectionReferences()
+  };
+}
+
+function collectPaymentCollectionReferences() {
+  const references = [];
+  [
+    ["orders", state.orders],
+    ["productionJobs", state.productionJobs],
+    ["installationJobs", state.installationJobs],
+    ["warrantyCards", state.warrantyCards]
+  ].forEach(([collection, rows]) => rows.forEach((row) => {
+    ["payments", "paymentRecords", "collections", "collectionRecords"].forEach((field) => {
+      if (!Array.isArray(row[field]) || !row[field].length) return;
+      references.push({ collection, recordId: row.id || "", field, records: structuredCloneSafe(row[field]) });
+    });
+  }));
+  return references;
+}
+
+function downloadDuplicateArchiveBackup(group, mainMember) {
+  try {
+    if (typeof document?.createElement !== "function" || typeof URL?.createObjectURL !== "function") return false;
+    const payload = duplicateArchiveBackupPayload(group, mainMember);
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `eco-screen-crm-v2-backup-before-duplicate-archive-${backupTimestamp()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    return true;
+  } catch (error) {
+    console.error("Duplicate archive backup failed", error);
+    return false;
+  }
+}
+
+function backupTimestamp() {
+  return new Date().toISOString().replace(/[:T]/g, "-").replace(/\.\d{3}Z$/, "");
+}
+
+function failDuplicateAction(message) {
+  showWorkflowMessage(message, "error");
+  return { ok: false, message };
 }
 
 function quickFindOrder() {

@@ -29,12 +29,18 @@ const {
 const { runtimeEnv } = await import("../src/env.js");
 const { lineTotal } = await import("../src/calculations.js");
 const {
+  archiveDuplicateGroup,
   convertQuoteToOrder,
+  findExistingOrderForQuote,
   findOrderByNumber,
   monthlyOrderSequence,
   nextSalesOrderNumber,
+  quotationOrderAction,
+  restoreArchivedDuplicate,
+  scanDuplicateOrders,
   updateOrderNumber,
-  updateOrderStatus
+  updateOrderStatus,
+  updateQuotationStatus
 } = await import("../src/workflow.js");
 
 function assert(condition, message) {
@@ -113,6 +119,11 @@ resetWorkflowState();
 const quoteA = validQuote("TEST-A", "Customer A");
 quoteA.items[0].unitPrice = "125.50";
 state.quotations = [quoteA];
+assert(!quotationOrderAction(quoteA).canConvert, "A0: Quoted quotation must hide conversion");
+const quotedConversion = await convertQuoteToOrder(quoteA.id);
+assert(!quotedConversion.ok && state.orders.length === 0, "A0: non-Won quotation must not convert");
+const wonStatus = await updateQuotationStatus(quoteA.id, "won");
+assert(wonStatus.ok && quotationOrderAction(state.quotations[0]).canConvert, "A0: saving Won should enable conversion");
 const first = await convertQuoteToOrder(quoteA.id);
 assert(first.ok, "A: valid quotation should convert");
 assert(state.orders.length === 1, "A: exactly one order should be created");
@@ -127,14 +138,21 @@ assert(state.productionJobs.length === 1, "A: one production job should be creat
 assert(state.installationJobs.length === 1, "A: one installation job should be created");
 assert(state.quotations[0].status === "won", "A: quotation should be marked won");
 assert(state.quotations[0].orderId === state.orders[0].id, "A: quotation should store linked order id");
+assert(quotationOrderAction(state.quotations[0]).order?.id === state.orders[0].id, "A: converted quotation should expose Open Order instead of Convert");
+const blockedStatusRollback = await updateQuotationStatus(quoteA.id, "follow_up");
+assert(!blockedStatusRollback.ok && state.quotations[0].status === "won", "A: linked order should block Won rollback through quotation status");
 
+state.quotations[0] = { ...state.quotations[0], orderId: null, linkedOrderId: null, orderNo: null, orderNumber: null };
 const repeated = await convertQuoteToOrder(quoteA.id);
 assert(repeated.ok && repeated.existing, "B: repeated conversion should reuse existing order");
 assert(state.orders.length === 1, "B: repeated conversion must not create duplicate order");
 assert(state.productionJobs.length === 1, "B: repeated conversion must not duplicate production job");
 assert(state.installationJobs.length === 1, "B: repeated conversion must not duplicate installation job");
+assert(state.quotations[0].orderId === state.orders[0].id, "B: missing quotation link should be repaired to the existing order");
+assert(findExistingOrderForQuote(state.quotations[0])?.id === state.orders[0].id, "B: exact quotation ID lookup should find existing order");
 
 const quoteB = validQuote("TEST-B", "Customer B");
+quoteB.status = "won";
 state.quotations = [...state.quotations, quoteB];
 const concurrent = await Promise.all([
   convertQuoteToOrder(quoteB.id),
@@ -149,6 +167,7 @@ assert(secondSequence === firstSequence + 1, "C: the next quotation should recei
 
 const emptyQuote = validQuote("TEST-EMPTY", "Empty Quote");
 emptyQuote.items = [];
+emptyQuote.status = "won";
 state.quotations = [...state.quotations, emptyQuote];
 const beforeEmpty = state.orders.length;
 const emptyResult = await convertQuoteToOrder(emptyQuote.id);
@@ -159,6 +178,7 @@ runtimeEnv.VITE_SUPABASE_URL = "https://offline.example.invalid";
 runtimeEnv.VITE_SUPABASE_ANON_KEY = "test-key";
 globalThis.fetch = async () => { throw new Error("Simulated offline cloud"); };
 const quoteC = validQuote("TEST-C", "Customer C");
+quoteC.status = "won";
 state.quotations = [...state.quotations, quoteC];
 const cloudFailure = await convertQuoteToOrder(quoteC.id);
 assert(cloudFailure.ok, "E: cloud failure must not fail local conversion");
@@ -194,6 +214,7 @@ state.currentUser = { userId: "boss-test", username: "boss-test", role: "Boss", 
 state.role = "Boss";
 
 const editQuote = validQuote("EDIT-QUOTE", "Order Number Customer");
+editQuote.status = "won";
 state.quotations = [editQuote];
 const editConversion = await convertQuoteToOrder(editQuote.id);
 assert(editConversion.ok, "H: test order should be created for order-number editing");
@@ -291,6 +312,123 @@ assert(state.installationJobs.length === workflowCountsBeforeStatus.installation
 runtimeEnv.VITE_SUPABASE_URL = "";
 runtimeEnv.VITE_SUPABASE_ANON_KEY = "";
 
+resetWorkflowState();
+state.currentUser = { userId: "boss-test", username: "boss-test", name: "Boss Test", role: "Boss", active: true };
+state.role = "Boss";
+const duplicateQuote = validQuote("DUPLICATE-QUOTE", "Duplicate Customer");
+duplicateQuote.status = "won";
+state.quotations = [duplicateQuote];
+const duplicateBaseConversion = await convertQuoteToOrder(duplicateQuote.id);
+assert(duplicateBaseConversion.ok, "M: base order should be created for duplicate cleanup test");
+const duplicateMainOrder = state.orders[0];
+const duplicateOrder = {
+  ...JSON.parse(JSON.stringify(duplicateMainOrder)),
+  id: "duplicate-order-record",
+  orderNo: "SO2607998",
+  orderNumber: "SO2607998",
+  createdAt: new Date(Date.parse(duplicateMainOrder.createdAt) + 5 * 60 * 1000).toISOString(),
+  updatedAt: new Date(Date.parse(duplicateMainOrder.updatedAt) + 5 * 60 * 1000).toISOString(),
+  collectionRecords: [{ id: "duplicate-collection", orderId: "duplicate-order-record", orderNo: "SO2607998", amount: 10 }]
+};
+state.orders = [duplicateMainOrder, duplicateOrder];
+state.productionJobs.push({
+  ...JSON.parse(JSON.stringify(state.productionJobs[0])),
+  id: "duplicate-production-job",
+  orderId: duplicateOrder.id,
+  orderNo: duplicateOrder.orderNo,
+  orderNumber: duplicateOrder.orderNo
+});
+state.installationJobs.push({
+  ...JSON.parse(JSON.stringify(state.installationJobs[0])),
+  id: "duplicate-installation-job",
+  orderId: duplicateOrder.id,
+  orderNo: duplicateOrder.orderNo,
+  orderNumber: duplicateOrder.orderNo,
+  paymentRecords: [{ id: "duplicate-payment", orderId: duplicateOrder.id, orderNumber: duplicateOrder.orderNo, amount: 20 }]
+});
+state.warrantyCards = [{
+  id: "duplicate-warranty",
+  orderId: duplicateOrder.id,
+  orderNo: duplicateOrder.orderNo,
+  orderNumber: duplicateOrder.orderNo,
+  payments: [{ id: "warranty-payment", orderId: duplicateOrder.id, orderNo: duplicateOrder.orderNo }]
+}];
+state.quotations[0] = { ...state.quotations[0], orderId: duplicateOrder.id, linkedOrderId: duplicateOrder.id, orderNo: duplicateOrder.orderNo };
+const duplicateFinancialSnapshot = JSON.stringify({
+  items: duplicateMainOrder.items,
+  total: duplicateMainOrder.total,
+  deposit: duplicateMainOrder.deposit,
+  balance: duplicateMainOrder.balance,
+  status: duplicateMainOrder.status
+});
+const duplicateCountsSnapshot = {
+  orders: state.orders.length,
+  productionJobs: state.productionJobs.length,
+  installationJobs: state.installationJobs.length,
+  warrantyCards: state.warrantyCards.length
+};
+const duplicateScan = scanDuplicateOrders();
+const confirmedDuplicateGroup = duplicateScan.confirmedGroups.find((group) => group.members.some((member) => member.order.id === duplicateMainOrder.id)
+  && group.members.some((member) => member.order.id === duplicateOrder.id));
+assert(confirmedDuplicateGroup, "M: same quotation ID should be a confirmed duplicate group");
+const mainMemberKey = confirmedDuplicateGroup.members.find((member) => member.order.id === duplicateMainOrder.id).key;
+const archiveResult = await archiveDuplicateGroup(confirmedDuplicateGroup.id, mainMemberKey, { confirm: false, downloadBackup: false });
+assert(archiveResult.ok, "M: confirmed duplicate should archive with a selected Main Order");
+const archivedDuplicate = state.orders.find((order) => order.id === duplicateOrder.id);
+assert(archivedDuplicate.status === "duplicate_archived" && archivedDuplicate.isArchived, "M: duplicate order should remain stored as archived");
+assert(archivedDuplicate.duplicateOfOrderId === duplicateMainOrder.id, "M: archived duplicate should reference Main Order");
+assert(JSON.stringify({
+  items: state.orders.find((order) => order.id === duplicateMainOrder.id).items,
+  total: state.orders.find((order) => order.id === duplicateMainOrder.id).total,
+  deposit: state.orders.find((order) => order.id === duplicateMainOrder.id).deposit,
+  balance: state.orders.find((order) => order.id === duplicateMainOrder.id).balance,
+  status: state.orders.find((order) => order.id === duplicateMainOrder.id).status
+}) === duplicateFinancialSnapshot, "M: Main Order money, items and status must remain unchanged");
+assert(state.orders.length === duplicateCountsSnapshot.orders, "M: archive must not hard-delete an order");
+assert(state.productionJobs.length === duplicateCountsSnapshot.productionJobs, "M: archive must not delete production jobs");
+assert(state.installationJobs.length === duplicateCountsSnapshot.installationJobs, "M: archive must not delete installation jobs");
+assert(state.warrantyCards.length === duplicateCountsSnapshot.warrantyCards, "M: archive must not delete warranty cards");
+assert(state.quotations[0].orderId === duplicateMainOrder.id, "M: quotation should link to Main Order");
+assert(state.productionJobs.find((job) => job.id === "duplicate-production-job").orderId === duplicateMainOrder.id, "M: production reference should relink to Main Order");
+assert(state.installationJobs.find((job) => job.id === "duplicate-installation-job").orderId === duplicateMainOrder.id, "M: installation reference should relink to Main Order");
+assert(state.warrantyCards[0].orderId === duplicateMainOrder.id, "M: warranty reference should relink to Main Order");
+assert(state.installationJobs.find((job) => job.id === "duplicate-installation-job").paymentRecords[0].orderId === duplicateMainOrder.id, "M: payment reference should relink to Main Order");
+assert(JSON.parse(localStorage.getItem("ecoScreenV2.orders") || "[]").some((order) => order.id === duplicateOrder.id && order.status === "duplicate_archived"), "M: archived duplicate should survive refresh storage reload");
+
+const archivedMemberIndex = state.orders.findIndex((order) => order.id === duplicateOrder.id);
+const restoreResult = await restoreArchivedDuplicate(`${duplicateOrder.id}::${archivedMemberIndex}`, { confirm: false });
+assert(restoreResult.ok && state.orders.find((order) => order.id === duplicateOrder.id).status !== "duplicate_archived", "N: archived duplicate should be recoverable");
+
+runtimeEnv.VITE_SUPABASE_URL = "https://offline.example.invalid";
+runtimeEnv.VITE_SUPABASE_ANON_KEY = "test-key";
+globalThis.fetch = async () => { throw new Error("Simulated offline cloud"); };
+const offlineDuplicateScan = scanDuplicateOrders();
+const offlineDuplicateGroup = offlineDuplicateScan.confirmedGroups.find((group) => group.members.some((member) => member.order.id === duplicateOrder.id));
+const offlineMainKey = offlineDuplicateGroup.members.find((member) => member.order.id === duplicateMainOrder.id).key;
+const offlineArchive = await archiveDuplicateGroup(offlineDuplicateGroup.id, offlineMainKey, { confirm: false, downloadBackup: false });
+assert(offlineArchive.ok && offlineArchive.cloudOk === false, "N: cloud failure should not roll back local duplicate cleanup");
+assert(JSON.parse(localStorage.getItem("ecoScreenV2.orders") || "[]").some((order) => order.id === duplicateOrder.id && order.status === "duplicate_archived"), "N: cloud-failed cleanup should remain in local storage");
+
+runtimeEnv.VITE_SUPABASE_URL = "";
+runtimeEnv.VITE_SUPABASE_ANON_KEY = "";
+resetWorkflowState();
+const conflictItems = validQuote("CONFLICT-Q1").items;
+state.orders = [
+  { id: "conflict-a", quoteId: "quote-conflict-a", orderNo: "SO2607555", orderNumber: "SO2607555", customer: { phone: "0111111111" }, total: 500, items: conflictItems, createdAt: "2026-07-14T10:00:00.000Z" },
+  { id: "conflict-b", quoteId: "quote-conflict-b", orderNo: "SO2607555", orderNumber: "SO2607555", customer: { phone: "0222222222" }, total: 700, items: conflictItems, createdAt: "2026-07-14T10:10:00.000Z" }
+];
+const numberConflictScan = scanDuplicateOrders();
+assert(numberConflictScan.numberConflicts.length === 1, "O: same Order No on genuine different quotations should be a Number Conflict");
+assert(numberConflictScan.confirmedGroups.length === 0, "O: number conflict must not become an auto-archivable confirmed duplicate");
+
+state.orders = [
+  { id: "possible-a", quoteId: "possible-quote-a", orderNo: "SO2607556", customer: { phone: "0122222222" }, total: 800, items: conflictItems, createdAt: "2026-07-14T10:00:00.000Z" },
+  { id: "possible-b", quoteId: "possible-quote-b", orderNo: "SO2607557", customer: { phone: "0122222222" }, total: 800, items: JSON.parse(JSON.stringify(conflictItems)), createdAt: "2026-07-14T10:20:00.000Z" }
+];
+const possibleScan = scanDuplicateOrders();
+assert(possibleScan.possibleGroups.length === 1, "O: matching customer/total/items within 30 minutes should be previewed as possible duplicate");
+assert(possibleScan.confirmedGroups.length === 0, "O: possible duplicate must not be auto-archivable");
+
 console.log([
   "Editable unit price and manual final price: passed",
   "Monthly SO numbering including legacy formats and >999: passed",
@@ -302,5 +440,9 @@ console.log([
   "Refresh persistence: passed",
   "Boss order-number edit and linked references: passed",
   "Duplicate and role protection for order numbers: passed",
-  "Order status update, refresh persistence and cloud-failure fallback: passed"
+  "Order status update, refresh persistence and cloud-failure fallback: passed",
+  "Won-only conversion and linked-order status protection: passed",
+  "Confirmed duplicate scan, Main Order archive and linked reference repair: passed",
+  "Archived duplicate restore and cloud-failure local persistence: passed",
+  "Order number conflict and possible duplicate preview: passed"
 ].join("\n"));

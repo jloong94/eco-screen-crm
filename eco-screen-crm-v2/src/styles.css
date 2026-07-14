@@ -324,6 +324,70 @@ input:focus, select:focus, textarea:focus {
   padding: 12px;
   margin-bottom: 14px;
 }
+.duplicate-order-panel {
+  display: grid;
+  gap: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+.duplicate-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.duplicate-summary span {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  padding: 10px;
+}
+.duplicate-section {
+  display: grid;
+  gap: 10px;
+}
+.duplicate-section h4 { margin: 0; }
+.duplicate-group-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  padding: 12px;
+}
+.duplicate-group-card > p { margin: 0; }
+.duplicate-member-list { display: grid; gap: 8px; }
+.duplicate-member {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--soft);
+  padding: 10px;
+}
+.duplicate-main-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+}
+.duplicate-main-choice input { width: 18px; height: 18px; }
+.duplicate-member-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+.duplicate-member-grid span {
+  display: grid;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.duplicate-member-grid strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+.warning-text { color: #9a3412 !important; }
 .filter-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -716,6 +780,7 @@ input:focus, select:focus, textarea:focus {
   .progress-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .progress-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .compact-order-row { grid-template-columns: 1fr; }
+  .duplicate-member-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 640px) {
@@ -851,6 +916,8 @@ input:focus, select:focus, textarea:focus {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .duplicate-summary,
+  .duplicate-member-grid { grid-template-columns: 1fr; }
   .filter-tab {
     min-height: 44px;
     border-radius: 12px;

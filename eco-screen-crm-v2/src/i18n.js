@@ -2,6 +2,35 @@ import { state } from "./state.js";
 
 const zh = {
   "Eco Screen CRM V2": "Eco Screen CRM V2",
+  "Duplicate Order Check": "重复订单检查",
+  "Preview only. Nothing is archived until a Main Order is selected and confirmed.": "这里只预览。选择并确认主订单后才会归档。",
+  "Scan Again": "重新检查",
+  Close: "关闭",
+  "Confirmed duplicate groups": "确认重复组",
+  "Order number conflicts": "订单号码冲突",
+  "Possible duplicate groups": "可能重复组",
+  "No duplicate orders detected.": "没有发现重复订单。",
+  "Confirmed Duplicates": "确认重复订单",
+  "Order Number Conflicts": "订单号码冲突",
+  "Possible Duplicates": "可能重复订单",
+  "Keep as Main Order": "保留为主订单",
+  "Archive Duplicate": "归档重复订单",
+  "Show Archived Duplicates": "显示已归档重复订单",
+  "Restore Archived Duplicate": "恢复已归档重复订单",
+  "Archived duplicate of": "重复归档至",
+  "Order ID": "订单 ID",
+  "Quotation Number": "报价单号码",
+  Customer: "顾客",
+  "Created At": "建立时间",
+  "Production job count": "生产单数量",
+  "Installation job count": "安装单数量",
+  "Open Order": "打开订单",
+  "Do not archive automatically. Open an order and edit one Order No manually.": "不要自动归档。请打开订单并手动修改其中一个订单号码。",
+  "Possible duplicates are preview only and cannot be archived here.": "可能重复订单只供预览，不能在这里归档。",
+  "This quotation already has an Order.": "这张报价已经有订单。",
+  "An Order already exists. Update the Order status instead.": "订单已经存在，请改订单状态。",
+  "Quotation status must be Won before conversion.": "报价状态必须是成交后才能转换订单。",
+  "Archiving...": "归档中...",
   Dashboard: "仪表板",
   Quotation: "报价",
   Customers: "顾客",
@@ -270,7 +299,8 @@ export function statusLabel(value) {
       scheduled: "Scheduled",
       installed: "Installed",
       pending_collection: "Pending Collection",
-      touch_up: "Touch Up"
+      touch_up: "Touch Up",
+      duplicate_archived: "Archived Duplicate"
     },
     zh: {
       quoted: "报价",
@@ -284,7 +314,8 @@ export function statusLabel(value) {
       scheduled: "已安排",
       installed: "已安装",
       pending_collection: "等待收款",
-      touch_up: "手尾"
+      touch_up: "手尾",
+      duplicate_archived: "已归档重复订单"
     }
   };
   return labels[state.language === "zh" ? "zh" : "en"][normalized] || t(value || "-");
@@ -326,7 +357,8 @@ export function normalizeStatus(value) {
     scheduled: "scheduled",
     installed: "installed",
     pending_collection: "pending_collection",
-    touch_up: "touch_up"
+    touch_up: "touch_up",
+    duplicate_archived: "duplicate_archived"
   };
   return map[value] || value || "quoted";
 }
