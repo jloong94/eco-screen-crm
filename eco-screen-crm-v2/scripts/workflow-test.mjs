@@ -64,10 +64,14 @@ const {
 } = await import("../src/workflow.js");
 const { quotationsForTab } = await import("../src/quotations.js");
 const { isActiveOrderRecord, isActiveWorkflowRecord } = await import("../src/workflowIntegrity.js");
+const { isBossOrAdmin } = await import("../src/permissions.js");
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
+
+assert(isBossOrAdmin("Boss") && isBossOrAdmin(" boss ") && isBossOrAdmin("ADMIN") && isBossOrAdmin(" Admin "), "Boss/Admin recognition must ignore case and surrounding whitespace");
+assert(!isBossOrAdmin("Sales") && !isBossOrAdmin(""), "Non-Boss/Admin roles must remain restricted");
 
 function resetWorkflowState() {
   state.quotations = [];

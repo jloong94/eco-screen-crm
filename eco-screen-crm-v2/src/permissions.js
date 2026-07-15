@@ -34,7 +34,8 @@ export function role() {
 }
 
 export function isBossOrAdmin(userRole = role()) {
-  return ["Boss", "Admin"].includes(userRole);
+  const normalizedRole = String(userRole ?? "").trim().toLowerCase();
+  return normalizedRole === "boss" || normalizedRole === "admin";
 }
 
 export function canAccessPage(userRole, page) {
