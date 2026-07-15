@@ -31,6 +31,9 @@ import {
 import { normalizeStatus, statusLabel, t } from "./i18n.js";
 import { isBossOrAdmin } from "./permissions.js";
 
+const quotationTabs = ["quoted", "follow_up", "won", "lost"];
+let activeQuotationTab = "quoted";
+
 export function renderQuotationForm() {
   const quote = ensureCurrentQuote();
   document.querySelector("#quoteNumber").value = getQuotationDisplayNo(quote);
@@ -361,9 +364,21 @@ export function renderQuotationList() {
   const list = document.querySelector("#quotationList");
   if (!list) return;
   const cloudIsLoading = state.cloud.status === "Checking cloud...";
-  list.innerHTML = state.quotations.length
-    ? state.quotations.map((quote) => quotationListRowHtml(quote, cloudIsLoading)).join("")
-    : `<p class="muted-text">${t("No saved quotations yet.")}</p>`;
+  const rows = quotationsForTab(activeQuotationTab);
+  list.innerHTML = `
+    <div class="filter-tabs" aria-label="Quotation status">
+      ${quotationTabs.map((status) => `<button class="filter-tab ${activeQuotationTab === status ? "active" : ""}" type="button" data-quotation-tab="${status}">${statusLabel(status)} (${quotationsForTab(status).length})</button>`).join("")}
+    </div>
+    ${rows.length
+      ? rows.map((quote) => quotationListRowHtml(quote, cloudIsLoading, activeQuotationTab)).join("")
+      : `<p class="muted-text">${t("No saved quotations yet.")}</p>`}
+  `;
+  list.querySelectorAll("[data-quotation-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      activeQuotationTab = quotationTabs.includes(button.dataset.quotationTab) ? button.dataset.quotationTab : "quoted";
+      renderQuotationList();
+    });
+  });
   list.querySelectorAll("[data-open-quote]").forEach((button) => {
     button.addEventListener("click", () => {
       const quote = state.quotations.find((row) => row.id === button.dataset.openQuote);
@@ -400,8 +415,19 @@ export function renderQuotationList() {
   });
 }
 
-function quotationListRowHtml(quote, cloudIsLoading) {
-  const action = quotationOrderAction(quote);
+export function quotationsForTab(tab, quotations = state.quotations) {
+  const status = quotationTabs.includes(tab) ? tab : "quoted";
+  return quotations.filter((quote) => {
+    if (normalizeStatus(quote.status) !== status) return false;
+    if (status !== "follow_up") return true;
+    return !String(quote.linkedOrderId || quote.orderId || "").trim();
+  });
+}
+
+function quotationListRowHtml(quote, cloudIsLoading, tab) {
+  const action = tab === "won"
+    ? quotationOrderAction(quote)
+    : { order: null, canConvert: false, warning: "" };
   const orderNumber = action.order?.orderNo || action.order?.orderNumber || "";
   return `
     <article class="quote-row">

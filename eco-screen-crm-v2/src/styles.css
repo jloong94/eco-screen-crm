@@ -440,6 +440,30 @@ input:focus, select:focus, textarea:focus {
   height: 18px;
   flex: 0 0 auto;
 }
+.workflow-integrity-table {
+  width: 100%;
+  min-width: 1900px;
+  border-collapse: collapse;
+  background: white;
+}
+.workflow-integrity-table th,
+.workflow-integrity-table td {
+  border: 1px solid var(--line);
+  padding: 8px;
+  text-align: left;
+  vertical-align: top;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.workflow-integrity-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--soft);
+}
+.workflow-integrity-table label { display: grid; gap: 6px; min-width: 210px; }
+.workflow-integrity-table input,
+.workflow-integrity-table select { min-width: 200px; }
 .internal-details {
   border: 1px dashed var(--line);
   border-radius: 8px;

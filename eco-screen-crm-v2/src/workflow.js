@@ -11,6 +11,7 @@ import {
   persistWarrantyCards,
   productById,
   state,
+  stateSnapshot,
   syncOrderConversionCollections,
   uid
 } from "./state.js";
@@ -36,6 +37,7 @@ import {
   isBossOrAdmin,
   role
 } from "./permissions.js";
+import { isActiveOrderRecord, isActiveWorkflowRecord, scanWorkflowIntegrity as scanWorkflowIntegrityRecords } from "./workflowIntegrity.js";
 
 const orderStatuses = [
   "Confirmed",
@@ -68,19 +70,12 @@ const warrantyTerms = [
   "Warranty is valid only with this warranty card and order record."
 ];
 const orderFilters = [
-  { id: "active", label: "All Active" },
-  { id: "new", label: "New Orders" },
-  { id: "in-production", label: "In Production" },
-  { id: "waiting-installation", label: "Waiting Installation" },
-  { id: "pending-collection", label: "Pending Collection" },
-  { id: "touch-up", label: "Touch Up" },
-  { id: "completed", label: "Completed / Serviced" },
-  { id: "archived", label: "Cancelled / Archived" },
-  { id: "duplicate-archived", label: "Show Archived Duplicates" },
-  { id: "today-installation", label: "Today Installation" },
-  { id: "week-installation", label: "This Week Installation" },
-  { id: "overdue-installation", label: "Overdue Installation" },
-  { id: "all", label: "All Orders" }
+  { id: "all", label: "All Orders" },
+  { id: "pending", label: "Pending" },
+  { id: "production", label: "Production" },
+  { id: "installation", label: "Installation" },
+  { id: "completed", label: "Completed" },
+  { id: "duplicate-archived", label: "Archived duplicates" }
 ];
 
 const progressCategories = [
@@ -108,11 +103,13 @@ let productionDuplicateScanResult = null;
 let productionDuplicateArchiveBusy = false;
 let showArchivedProductionDuplicates = false;
 const productionDuplicateMainSelections = new Map();
+let workflowIntegrityVisible = false;
+let workflowIntegrityResult = null;
 let orderSearch = {
   orderNumber: "",
   customerName: "",
   phone: "",
-  filter: "active",
+  filter: "all",
   status: "",
   installationDate: "",
   sort: "updated",
@@ -143,6 +140,15 @@ export async function convertQuoteToOrder(quoteId) {
     const order = existing || createOrderFromQuote(quote);
     if (!order) return failConversion("Failed to save order.");
     const now = new Date().toISOString();
+    const workflowJobs = upsertWorkflowJobsForOrder(order, state.productionJobs, state.installationJobs);
+    const linkedOrder = {
+      ...order,
+      productionJobId: workflowJobs.productionJob.id,
+      installationJobId: workflowJobs.installationJob.id,
+      productionStatus: normalizeProductionStatus(workflowJobs.productionJob.status, order.sentToProduction === true),
+      installationStatus: normalizeInstallationStatus(workflowJobs.installationJob.status),
+      updatedAt: now
+    };
     const updatedQuote = {
       ...quote,
       status: "won",
@@ -150,21 +156,22 @@ export async function convertQuoteToOrder(quoteId) {
       quoteNumber: quoteDisplayNo,
       quotationNo: quoteDisplayNo,
       quoteNo: quoteDisplayNo,
-      orderId: order.id,
-      linkedOrderId: order.id,
-      orderNo: getOrderDisplayNo(order),
-      orderNumber: getOrderDisplayNo(order),
+      orderId: linkedOrder.id,
+      linkedOrderId: linkedOrder.id,
+      orderNo: getOrderDisplayNo(linkedOrder),
+      orderNumber: getOrderDisplayNo(linkedOrder),
       converted: true,
       convertedToOrder: true,
       convertedAt: quote.convertedAt || now,
       updatedAt: now
     };
-    const workflowJobs = upsertWorkflowJobsForOrder(order, state.productionJobs, state.installationJobs);
-    const nextWarrantyCards = updateWarrantyOrderNumbers(order, state.warrantyCards);
+    const nextWarrantyCards = updateWarrantyOrderNumbers(linkedOrder, state.warrantyCards);
     const nextQuotations = state.quotations.map((row) => (
       row === sourceQuote || (sourceQuote.id && row.id === sourceQuote.id) ? updatedQuote : row
     ));
-    const nextOrders = existing ? state.orders : [order, ...state.orders];
+    const nextOrders = existing
+      ? state.orders.map((row) => row.id === linkedOrder.id ? linkedOrder : row)
+      : [linkedOrder, ...state.orders];
 
     previousState = {
       orders: state.orders,
@@ -188,8 +195,8 @@ export async function convertQuoteToOrder(quoteId) {
     localCommitted = true;
 
     const baseMessage = existing
-      ? `Existing Order found: ${getOrderDisplayNo(order)}`
-      : `Order created: ${getOrderDisplayNo(order)}`;
+      ? `Existing Order found: ${getOrderDisplayNo(linkedOrder)}`
+      : `Order created: ${getOrderDisplayNo(linkedOrder)}`;
     showWorkflowMessage(`${baseMessage} Saved locally. Syncing cloud...`, "info");
 
     const cloudSync = await syncOrderConversionCollections();
@@ -200,11 +207,11 @@ export async function convertQuoteToOrder(quoteId) {
         ? `${baseMessage} Saved locally.`
         : baseMessage;
     showWorkflowMessage(message, cloudFailed ? "warning" : "success");
-    openOrderInOrders(order, message, cloudFailed ? "warning" : "success");
+    openOrderInOrders(linkedOrder, message, cloudFailed ? "warning" : "success");
     return {
       ok: true,
       message,
-      order,
+      order: linkedOrder,
       existing: Boolean(existing),
       cloudOk: cloudSync.ok && !cloudSync.localOnly,
       localOnly: cloudSync.localOnly
@@ -224,9 +231,7 @@ export async function convertQuoteToOrder(quoteId) {
 }
 
 export function getQuoteById(quoteId) {
-  return state.quotations.find((row) => row.id === quoteId)
-    || state.quotations.find((row) => getQuotationDisplayNo(row) === quoteId)
-    || null;
+  return state.quotations.find((row) => String(row.id || "") === String(quoteId || "")) || null;
 }
 
 function quotationForConversion(quote) {
@@ -362,7 +367,7 @@ function upsertWorkflowJobsForOrder(order, productionJobs, installationJobs) {
     nextProductionJobs = [createProductionJobFromOrder(order), ...productionJobs];
   }
 
-  const installationJob = installationJobs.find((job) => job.orderId === order.id || normalizeRefNo(job.orderNumber || job.orderNo) === normalizeRefNo(orderNo));
+  const installationJob = installationJobs.find((job) => isActiveWorkflowRecord(job) && String(job.orderId || "") === String(order.id || ""));
   let nextInstallationJobs;
   if (installationJob) {
     const updatedInstallationJob = {
@@ -388,25 +393,19 @@ function upsertWorkflowJobsForOrder(order, productionJobs, installationJobs) {
 
   return {
     productionJobs: nextProductionJobs,
-    installationJobs: nextInstallationJobs
+    installationJobs: nextInstallationJobs,
+    productionJob: nextProductionJobs.find((job) => job.id === (productionJob?.id || nextProductionJobs[0].id)),
+    installationJob: nextInstallationJobs.find((job) => job.id === (installationJob?.id || nextInstallationJobs[0].id))
   };
 }
 
 export function isArchivedProductionJob(job = {}) {
-  return job.isArchived === true || String(job.status || "").toLowerCase() === "duplicate_archived";
+  return job.isArchived === true || ["duplicate_archived", "cancelled_archived"].includes(String(job.status || "").toLowerCase());
 }
 
 export function activeProductionJobForOrder(order = {}, productionJobs = state.productionJobs) {
-  const activeJobs = productionJobs.filter((job) => !isArchivedProductionJob(job));
-  const exactId = order.id ? activeJobs.find((job) => String(job.orderId || "") === String(order.id)) : null;
-  if (exactId) return exactId;
-  const resolvedId = String(order.id || "");
-  const resolved = activeJobs.find((job) => String(resolveProductionOrderId(job) || "") === resolvedId);
-  if (resolved) return resolved;
-  const orderNo = normalizeRefNo(getOrderDisplayNo(order));
-  return orderNo
-    ? activeJobs.find((job) => normalizeRefNo(job.orderNumber || job.orderNo) === orderNo) || null
-    : null;
+  if (!order.id) return null;
+  return productionJobs.find((job) => !isArchivedProductionJob(job) && String(job.orderId || "") === String(order.id)) || null;
 }
 
 function updateWarrantyOrderNumbers(order, warrantyCards) {
@@ -525,7 +524,7 @@ function ensureQuotationDisplayNo(quote = {}) {
 }
 
 function getOrderDisplayNo(order = {}) {
-  return String(order.orderNo || order.orderNumber || order.quoteNumber || order.quotationNo || "").trim();
+  return String(order.orderNo || order.orderNumber || "").trim();
 }
 
 export function findExistingOrderForQuote(quote) {
@@ -534,24 +533,15 @@ export function findExistingOrderForQuote(quote) {
   const linkedOrderId = String(quote.linkedOrderId || quote.orderId || "").trim();
   if (linkedOrderId) {
     const linked = state.orders.find((order) => String(order.id || "") === linkedOrderId);
-    if (linked) return resolveMainOrder(linked);
+    const resolved = resolveMainOrder(linked);
+    if (resolved && isActiveOrderRecord(resolved)) return resolved;
   }
 
   if (quote.id) {
-    const byQuoteId = state.orders.find((order) => order.quoteId === quote.id || order.quotationId === quote.id);
+    const byQuoteId = state.orders.find((order) => isActiveOrderRecord(order) && (order.quoteId === quote.id || order.quotationId === quote.id));
     if (byQuoteId) return resolveMainOrder(byQuoteId);
   }
-
-  const quoteReferences = new Set(quotationReferenceValues(quote));
-  if (!quoteReferences.size) return null;
-  const byExactReference = state.orders.find((order) => {
-    const linkedReferences = quotationReferenceValues(order);
-    if (linkedReferences.some((reference) => quoteReferences.has(reference))) return true;
-    if (order.quoteId || order.quotationId || linkedReferences.length) return false;
-    const legacyOrderNumber = normalizeRefNo(order.orderNo || order.orderNumber);
-    return Boolean(legacyOrderNumber && quoteReferences.has(legacyOrderNumber));
-  });
-  return byExactReference ? resolveMainOrder(byExactReference) : null;
+  return null;
 }
 
 export function quotationOrderAction(quote) {
@@ -607,40 +597,14 @@ export async function openOrderForQuotation(quoteId) {
   const order = findExistingOrderForQuote(quote);
   if (!order) return failQuotationStatus("Order not found.");
 
-  const repaired = repairQuotationLinkObject(quote, order);
-  const needsRepair = repaired.orderId !== quote.orderId
-    || repaired.linkedOrderId !== quote.linkedOrderId
-    || repaired.orderNo !== quote.orderNo
-    || repaired.orderNumber !== quote.orderNumber;
-  if (needsRepair) {
-    const previousQuotations = state.quotations;
-    state.quotations = state.quotations.map((row) => row.id === quote.id ? repaired : row);
-    if (state.currentQuote?.id === quote.id) state.currentQuote = { ...state.currentQuote, ...repaired };
-    try {
-      const cloudSync = await persistQuotations();
-      if (!cloudSync.ok && cloudSync.reason !== "Local Mode Only") {
-        showWorkflowMessage(`Quotation link repaired locally but cloud sync failed: ${cloudSync.reason}`, "warning");
-      }
-    } catch (error) {
-      state.quotations = previousQuotations;
-      return failQuotationStatus(`Failed to repair quotation link: ${error.message || "Unknown error"}`);
-    }
-  }
-
   const message = `Existing Order found: ${getOrderDisplayNo(order)}`;
   openOrderInOrders(order, message, "success");
-  return { ok: true, order, repaired: needsRepair };
-}
-
-function quotationReferenceValues(record = {}) {
-  return [record.quoteNumber, record.quotationNo, record.quoteNo, record.quotationRef, record.quoteRef, record.refNo]
-    .map(normalizeRefNo)
-    .filter(Boolean);
+  return { ok: true, order, repaired: false };
 }
 
 function resolveMainOrder(order) {
-  if (!order || order.status !== "duplicate_archived" || !order.duplicateOfOrderId) return order;
-  return state.orders.find((row) => row.id === order.duplicateOfOrderId && row.status !== "duplicate_archived") || order;
+  if (!order || String(order.status || "").toLowerCase() !== "duplicate_archived" || !order.duplicateOfOrderId) return order;
+  return state.orders.find((row) => row.id === order.duplicateOfOrderId && isActiveOrderRecord(row)) || order;
 }
 
 function repairQuotationLinkObject(quote, order) {
@@ -695,7 +659,7 @@ function openOrderInOrders(order, message, type = "success") {
   if (ordersNavigation && state.currentPage !== "orders") ordersNavigation.click();
   else renderOrders();
   setTimeout(() => {
-    document.querySelector?.(`[data-order-card="${order.id}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    document.querySelector?.(`[data-order-id="${order.id}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
     showWorkflowMessage(message, type);
   }, 50);
 }
@@ -755,7 +719,7 @@ function renderOrderProgressBoard() {
     board.innerHTML = "";
     return;
   }
-  const filtered = state.orders.filter((order) => order.status !== "duplicate_archived" && matchesOrderSearch(order) && matchesBoardDateFilter(order));
+  const filtered = state.orders.filter((order) => isActiveOrderRecord(order) && matchesOrderSearch(order) && matchesBoardDateFilter(order));
   board.innerHTML = `
     <section class="progress-board">
       <div class="section-head">
@@ -795,12 +759,13 @@ function renderOrderTools() {
         <button class="btn" type="button" data-order-tool="clear">${t("Clear Search")}</button>
         <button class="btn" type="button" data-order-tool="find">${t("Find Order")}</button>
         ${isBossOrAdmin() ? `<button class="btn" type="button" data-order-tool="duplicates">${t("Duplicate Order Check")}</button>` : ""}
-        ${isBossOrAdmin() ? `<button class="btn danger" type="button" data-order-tool="move-selected-follow-up">${t("Move Selected to Follow Up")}</button>` : ""}
+        ${isBossOrAdmin() ? `<button class="btn" type="button" data-order-tool="workflow-integrity">Workflow Integrity Check</button>` : ""}
       </div>
       <div class="filter-tabs">
         ${visibleFilters.map((filter) => `<button class="filter-tab ${orderSearch.filter === filter.id ? "active" : ""}" type="button" data-order-filter="${filter.id}">${t(filter.label)}</button>`).join("")}
       </div>
       ${duplicateOrderPanelHtml()}
+      ${workflowIntegrityPanelHtml()}
     </section>
   `;
 }
@@ -1064,8 +1029,7 @@ function renderCompactOrderRow(order) {
   const productionJob = getOrderProductionJob(order);
   const installationJob = getOrderInstallationJob(order);
   return `
-    <article class="compact-order-row ${orderSearch.highlightId === order.id ? "highlight-card" : ""}" data-order-card="${order.id}">
-      ${isBossOrAdmin() ? `<label class="checkbox-row"><input type="checkbox" data-order-select="${order.id}" /> Select</label>` : ""}
+    <article class="compact-order-row ${orderSearch.highlightId === order.id ? "highlight-card" : ""}" data-order-card="${escapeHtml(order.id)}" data-order-id="${escapeHtml(order.id)}">
       <div><strong>${getOrderDisplayNo(order)}</strong><span>${t("Quote")}: ${order.quoteNumber || order.quotationNo || "-"} | ${order.customer?.name || "-"} | ${order.customer?.phone || "-"}</span></div>
       <div><span>${order.customer?.area || "-"}</span><span>${order.installationDate || installationJob?.installationDate || "-"}</span></div>
       <div><span>${t("Production")}: ${statusLabel(getOrderProductionStatus(order, productionJob))}</span><span>${t("Installation")}: ${statusLabel(getOrderInstallationStatus(order, installationJob))}</span></div>
@@ -1097,7 +1061,6 @@ function orderActionsHtml(order) {
       <button class="btn" type="button" data-highlight-order="${order.id}">${t("Search / Open Customer")}</button>
       ${canEditOrder() ? `<button class="btn" type="button" data-edit-order-items="${order.id}">${editingOrderId === order.id ? t("Close Item Editor") : t("Edit Order Items")}</button>` : ""}
       ${isBossOrAdmin() ? `<button class="btn" type="button" data-edit-order-number="${order.id}">${editingOrderNumberId === order.id ? t("Cancel Order Number Edit") : t("Edit Order Number")}</button>` : ""}
-      ${isBossOrAdmin() ? `<button class="btn danger" type="button" data-move-follow-up="${order.id}">${t("Move Back to Follow Up")}</button>` : ""}
     </div>
     ${canSendOrder() ? orderStatusActionHtml(order) : ""}
     ${editingOrderNumberId === order.id && isBossOrAdmin() ? orderNumberEditorHtml(order) : ""}
@@ -1207,7 +1170,7 @@ function renderOrderProgressCard(order) {
   const productionJob = getOrderProductionJob(order);
   const installationJob = getOrderInstallationJob(order);
   return `
-    <article class="progress-card ${orderSearch.highlightId === order.id ? "highlight-card" : ""}" data-order-card="${order.id}">
+    <article class="progress-card ${orderSearch.highlightId === order.id ? "highlight-card" : ""}" data-order-card="${escapeHtml(order.id)}" data-order-id="${escapeHtml(order.id)}">
       <strong>${getOrderDisplayNo(order)}</strong>
       <p class="muted-text">${t("Quote")}: ${order.quoteNumber || order.quotationNo || "-"}</p>
       <p>${order.customer?.name || "-"} | ${order.customer?.phone || "-"}</p>
@@ -1244,22 +1207,90 @@ function matchesOrderSearch(order) {
   return (!orderSearch.orderNumber || orderNumber.includes(normalizeText(orderSearch.orderNumber)) || quotationNumber.includes(normalizeText(orderSearch.orderNumber)))
     && (!orderSearch.customerName || customerName.includes(normalizeText(orderSearch.customerName)))
     && (!orderSearch.phone || phone.includes(normalizeText(orderSearch.phone)))
-    && (!orderSearch.status || getOrderProgressCategory(order) === orderSearch.status)
+    && (!orderSearch.status || matchesOrderNavigationFilter(order, orderSearch.status))
     && (!orderSearch.installationDate || installDate === orderSearch.installationDate);
 }
 
 function matchesOrderFilter(order) {
-  if (orderSearch.filter === "all") return order.status !== "duplicate_archived";
-  if (orderSearch.filter === "duplicate-archived") return order.status === "duplicate_archived";
-  if (["today-installation", "week-installation", "overdue-installation"].includes(orderSearch.filter)) return matchesBoardDateFilter(order);
-  if (orderSearch.filter === "active") return !["archived", "duplicate-archived", "completed"].includes(getOrderProgressCategory(order));
-  return getOrderProgressCategory(order) === orderSearch.filter;
+  return matchesOrderNavigationFilter(order, orderSearch.filter);
+}
+
+function matchesOrderNavigationFilter(order, filter) {
+  if (filter === "duplicate-archived") return isBossOrAdmin() && String(order.status || "").toLowerCase() === "duplicate_archived";
+  if (!isActiveOrderRecord(order)) return false;
+  if (filter === "all") return true;
+  if (filter === "pending") return getOrderProgressCategory(order) === "new";
+  if (filter === "production") return ["in-production", "waiting-installation"].includes(getOrderProgressCategory(order));
+  if (filter === "installation") return ["waiting-installation", "pending-collection", "touch-up"].includes(getOrderProgressCategory(order));
+  if (filter === "completed") return getOrderProgressCategory(order) === "completed";
+  if (["today-installation", "week-installation", "overdue-installation"].includes(filter)) return matchesBoardDateFilter(order);
+  return getOrderProgressCategory(order) === filter;
+}
+
+export function scanWorkflowIntegrity(snapshot = state) {
+  return scanWorkflowIntegrityRecords(snapshot);
+}
+
+function workflowIntegrityPanelHtml() {
+  if (!isBossOrAdmin() || !workflowIntegrityVisible) return "";
+  const scan = workflowIntegrityResult || scanWorkflowIntegrity();
+  return `
+    <section class="duplicate-order-panel workflow-integrity-panel">
+      <div class="section-head">
+        <div>
+          <h3>Workflow Integrity Check</h3>
+          <p class="muted-text">Preview only. Scanning does not modify, rename, merge, archive, create or sync any record.</p>
+        </div>
+        <div class="actions">
+          <button class="btn" type="button" data-order-tool="workflow-integrity-refresh">Scan Again</button>
+          <button class="btn" type="button" data-order-tool="workflow-integrity-close">Close</button>
+        </div>
+      </div>
+      <div class="duplicate-summary">
+        ${"ABCDEFGHIJKLM".split("").map((category) => `<span>${category}: <strong>${scan.categories[category].length}</strong></span>`).join("")}
+      </div>
+      ${scan.issues.length ? `
+        <div style="overflow-x:auto">
+          <table class="workflow-integrity-table">
+            <thead><tr><th>Select</th><th>Category</th><th>Record type</th><th>Stable ID</th><th>Order No</th><th>Quotation No</th><th>Customer</th><th>Phone</th><th>Amount</th><th>Status</th><th>Linked IDs</th><th>Problem</th><th>Recommended action</th></tr></thead>
+            <tbody>${scan.issues.map((issue) => workflowIntegrityIssueRow(issue)).join("")}</tbody>
+          </table>
+        </div>
+        <p class="muted-text">Select one issue at a time. Relationship repairs require an exact stable ID; duplicate archives require selecting the exact Main record.</p>
+        <button class="btn primary" type="button" data-order-tool="workflow-integrity-repair">Repair Selected Record</button>
+      ` : `<p class="empty-state">No workflow integrity conflicts detected.</p>`}
+    </section>
+  `;
+}
+
+function workflowIntegrityIssueRow(issue) {
+  const repair = issue.repair;
+  const selector = repair ? `<label><input type="radio" name="workflow-integrity-issue" data-workflow-integrity-issue="${escapeHtml(issue.id)}" /> ${workflowIntegrityRepairInput(issue)}</label>` : "Preview only";
+  return `
+    <tr data-workflow-integrity-row="${escapeHtml(issue.id)}">
+      <td>${selector}</td><td>${escapeHtml(issue.category)}</td><td>${escapeHtml(issue.recordType)}</td><td>${escapeHtml(issue.stableId || "-")}</td>
+      <td>${escapeHtml(issue.orderNo || "-")}</td><td>${escapeHtml(issue.quotationNo || "-")}</td><td>${escapeHtml(issue.customer || "-")}</td>
+      <td>${escapeHtml(issue.phone || "-")}</td><td>${escapeHtml(issue.amount === "" ? "-" : issue.amount)}</td><td>${escapeHtml(issue.status || "-")}</td>
+      <td>${escapeHtml(issue.linkedIds || "-")}</td><td>${escapeHtml(issue.problem)}</td><td>${escapeHtml(issue.recommendedAction)}</td>
+    </tr>
+  `;
+}
+
+function workflowIntegrityRepairInput(issue) {
+  if (issue.repair.type === "order-status") {
+    return `<select data-workflow-integrity-status>${orderStatuses.map((status) => `<option value="${escapeHtml(status)}">${statusLabel(status)}</option>`).join("")}</select>`;
+  }
+  const targetId = issue.repair.targetId || "";
+  return `<input data-workflow-integrity-target value="${escapeHtml(targetId)}" placeholder="${escapeHtml(issue.repair.targetLabel || "Exact target stable ID")}" ${targetId ? "readonly" : ""} />`;
 }
 
 function matchesProgressFilter(categoryId, order) {
+  if (!isActiveOrderRecord(order)) return false;
   if (orderSearch.filter === "all") return true;
   if (["today-installation", "week-installation", "overdue-installation"].includes(orderSearch.filter)) return matchesBoardDateFilter(order);
-  if (orderSearch.filter === "active") return !["archived", "duplicate-archived", "completed"].includes(categoryId);
+  if (orderSearch.filter === "pending") return categoryId === "new";
+  if (orderSearch.filter === "production") return ["in-production", "waiting-installation"].includes(categoryId);
+  if (orderSearch.filter === "installation") return ["waiting-installation", "pending-collection", "touch-up"].includes(categoryId);
   return categoryId === orderSearch.filter;
 }
 
@@ -1289,8 +1320,7 @@ function getOrderProductionJob(order) {
 }
 
 function getOrderInstallationJob(order) {
-  const orderNo = getOrderDisplayNo(order);
-  return state.installationJobs.find((job) => job.orderId === order.id || normalizeRefNo(job.orderNumber || job.orderNo) === normalizeRefNo(orderNo)) || null;
+  return state.installationJobs.find((job) => isActiveWorkflowRecord(job) && String(job.orderId || "") === String(order.id || "")) || null;
 }
 
 function getOrderBalance(order) {
@@ -1301,8 +1331,9 @@ function getOrderBalance(order) {
 function normalizeProductionStatus(value, sentToProduction = false) {
   const map = {
     "Not Sent": "not_produced",
-    "Pending": sentToProduction ? "in_production" : "not_produced",
-    "Pending Production": sentToProduction ? "in_production" : "not_produced",
+    "Pending": "not_produced",
+    "Pending Production": "not_produced",
+    not_started: "not_produced",
     "In Production": "in_production",
     "Production Completed": "completed",
     Completed: "completed",
@@ -1456,10 +1487,8 @@ export function productionJobsForDisplay(jobs = state.productionJobs, showArchiv
 }
 
 export function linkedOrderForProduction(job = {}) {
-  const byId = job.orderId ? state.orders.find((order) => String(order.id || "") === String(job.orderId)) : null;
-  if (byId) return byId;
-  const reference = normalizeRefNo(job.orderNo || job.orderNumber);
-  return reference ? state.orders.find((order) => normalizeRefNo(getOrderDisplayNo(order)) === reference) || null : null;
+  if (!job.orderId) return null;
+  return state.orders.find((order) => isActiveOrderRecord(order) && String(order.id || "") === String(job.orderId)) || null;
 }
 
 function resolveProductionOrderId(job = {}) {
@@ -1671,10 +1700,8 @@ function productionDuplicateMemberRowHtml(member, group, selectable) {
 function productionInstallationLinks(job = {}) {
   const explicit = state.installationJobs.filter((installation) => String(installation.productionJobId || "") === String(job.id || ""));
   const orderId = String(resolveProductionOrderId(job) || "");
-  const orderNo = normalizeRefNo(productionOrderReference(job));
   const linked = explicit.length ? explicit : state.installationJobs.filter((installation) => (
-    (orderId && String(installation.orderId || "") === orderId)
-    || (orderNo && normalizeRefNo(installation.orderNo || installation.orderNumber) === orderNo)
+    orderId && String(installation.orderId || "") === orderId
   ));
   return linked.map((installation) => installation.installationNumber || installation.id || "Linked Installation").join(", ");
 }
@@ -2107,7 +2134,6 @@ function handleOrderClick(event) {
   const sendProductionId = event.target.dataset.sendProduction;
   const sendInstallerId = event.target.dataset.sendInstaller;
   const updateStatusId = event.target.dataset.updateOrderStatus;
-  const moveFollowUpId = event.target.dataset.moveFollowUp;
   const whatsappId = event.target.dataset.whatsappOrder;
   const highlightId = event.target.dataset.highlightOrder;
   const editItemsId = event.target.dataset.editOrderItems;
@@ -2126,7 +2152,6 @@ function handleOrderClick(event) {
   if (sendProductionId) sendOrderToProduction(sendProductionId);
   if (sendInstallerId) sendOrderToInstaller(sendInstallerId);
   if (updateStatusId) updateOrderStatusFromCard(updateStatusId, event.target);
-  if (moveFollowUpId) moveOrderBackToFollowUpFlow(moveFollowUpId);
   if (whatsappId) whatsappOrderCustomer(whatsappId);
   if (highlightId) highlightOrder(highlightId);
   if (editItemsId) toggleOrderItemEditor(editItemsId);
@@ -2334,9 +2359,7 @@ async function saveOrderItemEditor(orderId, button) {
 }
 
 function isJobForOrder(job, order) {
-  if (job.orderId && job.orderId === order.id) return true;
-  const orderNo = normalizeRefNo(getOrderDisplayNo(order));
-  return Boolean(orderNo && normalizeRefNo(job.orderNo || job.orderNumber) === orderNo);
+  return Boolean(job.orderId && order.id && String(job.orderId) === String(order.id));
 }
 
 function structuredCloneSafe(value) {
@@ -2374,11 +2397,23 @@ function handleOrderToolsClick(event) {
   }
   if (tool === "search") renderOrders();
   if (tool === "clear") {
-    orderSearch = { orderNumber: "", customerName: "", phone: "", filter: "active", status: "", installationDate: "", sort: "updated", page: 1, highlightId: "" };
+    orderSearch = { orderNumber: "", customerName: "", phone: "", filter: "all", status: "", installationDate: "", sort: "updated", page: 1, highlightId: "" };
     renderOrders();
   }
   if (tool === "find") quickFindOrder();
-  if (tool === "move-selected-follow-up") moveSelectedOrdersBackToFollowUp();
+  if (tool === "workflow-integrity" || tool === "workflow-integrity-refresh") {
+    if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+    workflowIntegrityVisible = true;
+    workflowIntegrityResult = scanWorkflowIntegrity();
+    renderOrderTools();
+    showWorkflowMessage("Workflow Integrity Check updated. Preview only; no records changed.", "success");
+  }
+  if (tool === "workflow-integrity-close") {
+    workflowIntegrityVisible = false;
+    workflowIntegrityResult = null;
+    renderOrderTools();
+  }
+  if (tool === "workflow-integrity-repair") repairSelectedWorkflowIntegrityIssue(event.target);
   if (tool === "duplicates" || tool === "duplicates-refresh") {
     if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
     if (tool === "duplicates-refresh" || !duplicateScanVisible) duplicateMainSelections.clear();
@@ -2397,6 +2432,186 @@ function handleOrderToolsClick(event) {
   }
   if (archiveGroupId) archiveDuplicateGroupFromPanel(archiveGroupId, event.target);
   if (duplicateOrderId) highlightOrder(duplicateOrderId);
+}
+
+async function repairSelectedWorkflowIntegrityIssue(button) {
+  const panel = button.closest(".workflow-integrity-panel");
+  const selected = panel?.querySelector("[data-workflow-integrity-issue]:checked");
+  if (!selected) return showWorkflowMessage("Select one repairable Workflow Integrity issue first.", "error");
+  const row = selected.closest("[data-workflow-integrity-row]");
+  const targetId = row?.querySelector("[data-workflow-integrity-target]")?.value?.trim() || "";
+  const nextStatus = row?.querySelector("[data-workflow-integrity-status]")?.value || "";
+  button.disabled = true;
+  const originalLabel = button.textContent;
+  button.textContent = "Repairing...";
+  const result = await repairWorkflowIntegrityIssue(selected.dataset.workflowIntegrityIssue, { targetId, nextStatus });
+  if (button.isConnected) {
+    button.disabled = false;
+    button.textContent = originalLabel;
+  }
+  if (!result?.ok) return;
+  workflowIntegrityResult = scanWorkflowIntegrity();
+  renderWorkflowModules();
+}
+
+export async function repairWorkflowIntegrityIssue(issueId, values = {}, options = {}) {
+  if (!isBossOrAdmin()) return failWorkflowIntegrityRepair("Permission denied: your role cannot perform this action.");
+  const scan = scanWorkflowIntegrity();
+  const issue = scan.issues.find((row) => row.id === issueId);
+  if (!issue?.repair) return failWorkflowIntegrityRepair("Repairable Workflow Integrity issue not found. Scan again.");
+  const targetId = String(values.targetId || issue.repair.targetId || "").trim();
+  const nextStatus = String(values.nextStatus || "").trim();
+  const exactRecords = workflowIntegrityRecordsForIssue(issue, targetId);
+
+  if (options.downloadBackup !== false && !downloadWorkflowIntegrityBackup(issue, exactRecords)) {
+    return failWorkflowIntegrityRepair("Full JSON backup download failed. No workflow records were changed.");
+  }
+  if (options.confirm !== false) {
+    const confirmation = window.prompt([
+      `Selected category: ${issue.category}`,
+      `Problem: ${issue.problem}`,
+      "Exact records involved:",
+      JSON.stringify(exactRecords, null, 2),
+      "Type REPAIR WORKFLOW to confirm. No record will be permanently deleted."
+    ].join("\n"));
+    if (confirmation !== "REPAIR WORKFLOW") return { ok: false, cancelled: true, message: "Workflow repair cancelled." };
+  }
+
+  if (issue.repair.type === "archive-order") {
+    const group = scanDuplicateOrders().confirmedGroups.find((candidate) => candidate.members.length === issue.repair.recordIds.length
+      && issue.repair.recordIds.every((id) => candidate.members.some((member) => String(member.order.id || "") === id)));
+    const main = group?.members.find((member) => String(member.order.id || "") === targetId);
+    if (!group || !main) return failWorkflowIntegrityRepair("These Orders are not a confirmed duplicate group, or the exact Main Order ID is invalid.");
+    return archiveDuplicateGroup(group.id, main.key, { confirm: false, downloadBackup: false });
+  }
+  if (issue.repair.type === "archive-production") {
+    const group = scanDuplicateProductionJobs().confirmedGroups.find((candidate) => candidate.members.length === issue.repair.recordIds.length
+      && issue.repair.recordIds.every((id) => candidate.members.some((member) => String(member.job.id || "") === id)));
+    const main = group?.members.find((member) => String(member.job.id || "") === targetId);
+    if (!group || !main) return failWorkflowIntegrityRepair("These Production Jobs are not a confirmed duplicate group, or the exact Main Production ID is invalid.");
+    return archiveProductionDuplicateGroup(group.id, main.key, { confirm: false, downloadBackup: false });
+  }
+
+  const previousState = snapshotOrderWorkflowState();
+  const now = new Date().toISOString();
+  let localCommitted = false;
+  try {
+    if (issue.repair.type === "quote-order") {
+      const quote = state.quotations.find((row) => String(row.id || "") === String(issue.repair.recordId || ""));
+      const order = state.orders.find((row) => isActiveOrderRecord(row) && String(row.id || "") === targetId);
+      if (!quote || !order) return failWorkflowIntegrityRepair("Exact Quotation or active Order stable ID was not found.");
+      state.quotations = state.quotations.map((row) => row.id === quote.id ? repairQuotationLinkObject(row, order) : row);
+    } else if (issue.repair.type === "order-quote") {
+      const order = state.orders.find((row) => String(row.id || "") === String(issue.repair.recordId || ""));
+      const quote = state.quotations.find((row) => String(row.id || "") === targetId);
+      if (!order || !quote) return failWorkflowIntegrityRepair("Exact Order or Quotation stable ID was not found.");
+      const quoteNo = getQuotationDisplayNo(quote);
+      state.orders = state.orders.map((row) => row.id === order.id ? {
+        ...row,
+        quoteId: quote.id,
+        quotationId: quote.id,
+        quoteNumber: quoteNo,
+        quotationNo: quoteNo,
+        updatedAt: now
+      } : row);
+    } else if (issue.repair.type === "order-production") {
+      const order = state.orders.find((row) => isActiveOrderRecord(row) && String(row.id || "") === String(issue.repair.recordId || ""));
+      const job = state.productionJobs.find((row) => !isArchivedProductionJob(row) && String(row.id || "") === targetId);
+      if (!order || !job || String(job.orderId || "") !== String(order.id || "")) return failWorkflowIntegrityRepair("Exact active Order/Production IDs do not form a valid relationship.");
+      state.orders = state.orders.map((row) => row.id === order.id ? { ...row, productionJobId: job.id, updatedAt: now } : row);
+    } else if (issue.repair.type === "production-order") {
+      const job = state.productionJobs.find((row) => !isArchivedProductionJob(row) && String(row.id || "") === String(issue.repair.recordId || ""));
+      const order = state.orders.find((row) => isActiveOrderRecord(row) && String(row.id || "") === targetId);
+      if (!job || !order) return failWorkflowIntegrityRepair("Exact active Production/Order stable ID was not found.");
+      state.productionJobs = state.productionJobs.map((row) => row.id === job.id ? {
+        ...row,
+        orderId: order.id,
+        orderNo: getOrderDisplayNo(order),
+        orderNumber: getOrderDisplayNo(order),
+        updatedAt: now
+      } : row);
+    } else if (issue.repair.type === "order-status") {
+      if (!orderStatuses.includes(nextStatus)) return failWorkflowIntegrityRepair("Choose a valid Order status before repairing.");
+      const order = state.orders.find((row) => String(row.id || "") === String(issue.repair.recordId || ""));
+      if (!order || String(order.status || "").toLowerCase() !== "follow_up") return failWorkflowIntegrityRepair("The exact invalid follow_up Order was not found.");
+      state.orders = state.orders.map((row) => row.id === order.id ? {
+        ...row,
+        status: nextStatus,
+        isArchived: nextStatus === "Cancelled" ? true : false,
+        archivedAt: nextStatus === "Cancelled" ? now : null,
+        updatedAt: now
+      } : row);
+    } else {
+      return failWorkflowIntegrityRepair("Unsupported workflow repair action.");
+    }
+
+    const localSave = persistOrderConversionLocally();
+    if (!localSave.ok) {
+      restoreConversionState(previousState);
+      return failWorkflowIntegrityRepair(`Failed to save workflow repair locally: ${localSave.reason}`);
+    }
+    localCommitted = true;
+    workflowIntegrityResult = scanWorkflowIntegrity();
+    renderWorkflowModules();
+    showWorkflowMessage("Workflow repair saved locally. Syncing cloud...", "info");
+    const cloudSync = await syncOrderConversionCollections();
+    if (!cloudSync.ok && !cloudSync.localOnly) {
+      const message = `Workflow repair saved locally but cloud sync failed: ${cloudSync.reason}`;
+      showWorkflowMessage(message, "warning");
+      return { ok: true, cloudOk: false, message };
+    }
+    showWorkflowMessage("Selected workflow relationship repaired.", "success");
+    return { ok: true, cloudOk: !cloudSync.localOnly, localOnly: cloudSync.localOnly };
+  } catch (error) {
+    if (!localCommitted) {
+      restoreConversionState(previousState);
+      return failWorkflowIntegrityRepair(`Workflow repair failed before local commit: ${error.message || "Unknown error"}`);
+    }
+    const message = `Workflow repair saved locally but cloud sync failed: ${error.message || "Unknown cloud error"}`;
+    showWorkflowMessage(message, "warning");
+    return { ok: true, cloudOk: false, message };
+  }
+}
+
+function workflowIntegrityRecordsForIssue(issue, targetId) {
+  const ids = new Set([issue.repair?.recordId, ...(issue.repair?.recordIds || []), targetId].filter(Boolean).map(String));
+  return Object.fromEntries([
+    ["quotations", state.quotations],
+    ["orders", state.orders],
+    ["productionJobs", state.productionJobs],
+    ["installationJobs", state.installationJobs]
+  ].map(([collection, rows]) => [collection, structuredCloneSafe(rows.filter((row) => ids.has(String(row.id || ""))))]));
+}
+
+function downloadWorkflowIntegrityBackup(issue, exactRecords) {
+  try {
+    if (typeof document?.createElement !== "function" || typeof URL?.createObjectURL !== "function") return false;
+    const payload = {
+      type: "eco-screen-crm-v2-full-backup-before-workflow-repair",
+      timestamp: new Date().toISOString(),
+      issue,
+      exactRecords,
+      state: structuredCloneSafe(stateSnapshot())
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `eco-screen-crm-v2-full-backup-before-workflow-repair-${backupTimestamp()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    return true;
+  } catch (error) {
+    console.error("Workflow integrity backup failed", error);
+    return false;
+  }
+}
+
+function failWorkflowIntegrityRepair(message) {
+  showWorkflowMessage(message, "error");
+  return { ok: false, message };
 }
 
 async function archiveDuplicateGroupFromPanel(groupId, button) {
@@ -2681,15 +2896,14 @@ function failDuplicateAction(message) {
 function quickFindOrder() {
   const value = window.prompt("Enter order number");
   if (value === null) return;
-  const order = findOrderByNumber(value)
-    || state.orders.find((row) => normalizeText(getOrderDisplayNo(row)).includes(normalizeText(value)));
+  const order = findOrderByNumber(value);
   if (!order) {
     showWorkflowMessage("Order not found", "error");
     return;
   }
   orderSearch = { ...orderSearch, orderNumber: value, filter: "all", highlightId: order.id };
   renderOrders();
-  setTimeout(() => document.querySelector(`[data-order-card="${order.id}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+  setTimeout(() => document.querySelector(`[data-order-id="${order.id}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
   showWorkflowMessage(`Order found: ${getOrderDisplayNo(order)}`, "success");
 }
 
@@ -2703,7 +2917,7 @@ function highlightOrder(orderId) {
     highlightId: order.id
   };
   renderOrders();
-  setTimeout(() => document.querySelector(`[data-order-card="${order.id}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+  setTimeout(() => document.querySelector(`[data-order-id="${order.id}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
 }
 
 function whatsappOrderCustomer(orderId) {
@@ -2864,7 +3078,7 @@ export async function updateOrderNumber(orderId, rawOrderNumber, options = {}) {
 export function findOrderByNumber(value) {
   const normalized = normalizeRefNo(value);
   if (!normalized) return null;
-  return state.orders.find((order) => [order.orderNo, order.orderNumber].some((number) => normalizeRefNo(number) === normalized)) || null;
+  return state.orders.find((order) => isActiveOrderRecord(order) && [order.orderNo, order.orderNumber].some((number) => normalizeRefNo(number) === normalized)) || null;
 }
 
 function snapshotOrderWorkflowState() {
@@ -2877,15 +3091,14 @@ function snapshotOrderWorkflowState() {
   };
 }
 
-function isQuotationLinkedToOrder(quote, order, oldNormalized) {
-  if (quote.orderId) return quote.orderId === order.id;
+function isQuotationLinkedToOrder(quote, order) {
+  if (quote.orderId || quote.linkedOrderId) return [quote.orderId, quote.linkedOrderId].includes(order.id);
   if (quote.id && [order.quoteId, order.quotationId].includes(quote.id)) return true;
-  return Boolean(oldNormalized && [quote.orderNo, quote.orderNumber].some((value) => normalizeRefNo(value) === oldNormalized));
+  return false;
 }
 
-function isRecordLinkedToOrder(record, orderId, oldNormalized) {
-  if (record.orderId) return record.orderId === orderId;
-  return Boolean(oldNormalized && [record.orderNo, record.orderNumber, record.orderReference, record.orderRef].some((value) => normalizeRefNo(value) === oldNormalized));
+function isRecordLinkedToOrder(record, orderId) {
+  return Boolean(record.orderId && record.orderId === orderId);
 }
 
 function updateOrderReferenceFields(record, orderId, oldNormalized, nextOrderNumber, now) {
@@ -2903,13 +3116,12 @@ function updateOrderReferenceFields(record, orderId, oldNormalized, nextOrderNum
   return updateEmbeddedPaymentReferences(next, orderId, oldNormalized, nextOrderNumber);
 }
 
-function updateEmbeddedPaymentReferences(record, orderId, oldNormalized, nextOrderNumber) {
+function updateEmbeddedPaymentReferences(record, orderId, _oldNormalized, nextOrderNumber) {
   const next = { ...record };
   ["payments", "paymentRecords", "collections", "collectionRecords"].forEach((field) => {
     if (!Array.isArray(record[field])) return;
     next[field] = record[field].map((entry) => {
-      const entryRef = normalizeRefNo(entry.orderNo || entry.orderNumber || entry.orderReference || entry.orderRef || entry.order_no || entry.order_number);
-      if (entry.orderId !== orderId && (!oldNormalized || entryRef !== oldNormalized)) return entry;
+      if (entry.orderId !== orderId) return entry;
       const updated = { ...entry, orderId };
       ["orderNo", "orderNumber", "orderReference", "orderRef", "order_no", "order_number"].forEach((key) => {
         if (Object.prototype.hasOwnProperty.call(entry, key)) updated[key] = nextOrderNumber;
@@ -2940,23 +3152,12 @@ function failOrderUpdate(message) {
 }
 
 function moveSelectedOrdersBackToFollowUp() {
-  if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
-  const selectedIds = [...document.querySelectorAll("[data-order-select]:checked")].map((input) => input.dataset.orderSelect);
-  if (!selectedIds.length) return showWorkflowMessage("Please select at least one order.", "warning");
-  const confirmation = window.prompt(`Move ${selectedIds.length} selected order(s) back to Follow Up?\nType FOLLOW UP to confirm.`);
-  if (confirmation !== "FOLLOW UP") return showWorkflowMessage("Move back cancelled.", "warning");
-  const result = moveOrdersBackToFollowUp(selectedIds);
-  persistMovedBackOrders(result);
+  return showWorkflowMessage("Follow Up is a Quotation status. Existing Orders are preserved and cannot be moved into Follow Up.", "warning");
 }
 
 function moveOrderBackToFollowUpFlow(orderId) {
-  if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
-  const order = findOrder(orderId);
-  if (!order) return showWorkflowMessage("Order not found.", "error");
-  const confirmation = window.prompt(`Move ${getOrderDisplayNo(order)} back to Follow Up?\nType FOLLOW UP to confirm.`);
-  if (confirmation !== "FOLLOW UP") return showWorkflowMessage("Move back cancelled.", "warning");
-  const result = moveOrdersBackToFollowUp([orderId]);
-  persistMovedBackOrders(result);
+  if (!findOrder(orderId)) return showWorkflowMessage("Order not found.", "error");
+  return showWorkflowMessage("Follow Up is a Quotation status. This Order was not changed or removed.", "warning");
 }
 
 function moveOrdersBackToFollowUp(orderIds) {
@@ -3016,37 +3217,62 @@ function persistMovedBackOrders(result) {
   showWorkflowMessage("Moving order(s) back to Follow Up...", "info");
 }
 
-function sendOrderToProduction(orderId) {
+export async function sendOrderToProduction(orderId) {
   if (!canSendOrder()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
   const order = findOrder(orderId);
   if (!order) return showWorkflowMessage("Order not found.", "error");
   const existing = activeProductionJobForOrder(order);
   const wasAlreadySent = order.sentToProduction === true || ["Sent to Production", "Production Completed"].includes(order.status);
-  order.status = "Sent to Production";
-  order.sentToProduction = true;
-  order.productionStatus = "in_production";
-  order.updatedAt = new Date().toISOString();
+  const previousState = snapshotOrderWorkflowState();
+  const now = new Date().toISOString();
+  const orderNo = getOrderDisplayNo(order);
+  const productionJob = existing
+    ? {
+      ...existing,
+      orderId: order.id,
+      orderNo,
+      orderNumber: orderNo,
+      installationDate: order.installationDate || existing.installationDate || "",
+      status: normalizeProductionStatus(existing.status, true),
+      updatedAt: now
+    }
+    : { ...createProductionJobFromOrder(order), status: "not_produced", updatedAt: now };
+  const productionStatus = normalizeProductionStatus(productionJob.status, true);
+  state.productionJobs = existing
+    ? state.productionJobs.map((job) => job.id === existing.id ? productionJob : job)
+    : [productionJob, ...state.productionJobs];
+  state.orders = state.orders.map((row) => row.id === order.id ? {
+    ...row,
+    status: "Sent to Production",
+    sentToProduction: true,
+    productionStatus,
+    productionJobId: productionJob.id,
+    updatedAt: now
+  } : row);
 
-  if (existing) {
-    const orderNo = getOrderDisplayNo(order);
-    existing.orderId = order.id;
-    existing.orderNo = orderNo;
-    existing.orderNumber = orderNo;
-    existing.installationDate = order.installationDate || existing.installationDate || "";
-    if (normalizeProductionStatus(existing.status, true) !== "completed") existing.status = "in_production";
-    existing.updatedAt = new Date().toISOString();
-    persistOrders();
-    persistProductionJobs();
+  const localSave = persistOrderConversionLocally();
+  if (!localSave.ok) {
+    restoreConversionState(previousState);
     renderWorkflowModules();
-    showWorkflowMessage(wasAlreadySent ? "Production job already exists" : "Order sent to Production", wasAlreadySent ? "warning" : "success");
-    return;
+    return showWorkflowMessage(`Failed to send Order to Production locally: ${localSave.reason}`, "error");
   }
-
-  state.productionJobs = [{ ...createProductionJobFromOrder(order), status: "in_production" }, ...state.productionJobs];
-  persistOrders();
-  persistProductionJobs();
   renderWorkflowModules();
-  showWorkflowMessage("Order sent to Production", "success");
+  showWorkflowMessage(wasAlreadySent ? "Production job already exists. Exact link saved locally." : "Order sent to Production locally. Syncing cloud...", wasAlreadySent ? "warning" : "info");
+  try {
+    const cloudSync = await syncOrderConversionCollections();
+    if (!cloudSync.ok && !cloudSync.localOnly) {
+      const message = `Order and Production link saved locally but cloud sync failed: ${cloudSync.reason}`;
+      showWorkflowMessage(message, "warning");
+      return { ok: true, productionJob, cloudOk: false, message };
+    }
+    const message = wasAlreadySent ? "Production job already exists" : "Order sent to Production";
+    showWorkflowMessage(message, wasAlreadySent ? "warning" : "success");
+    return { ok: true, productionJob, cloudOk: !cloudSync.localOnly, localOnly: cloudSync.localOnly, message };
+  } catch (error) {
+    const message = `Order and Production link saved locally but cloud sync failed: ${error.message || "Unknown cloud error"}`;
+    showWorkflowMessage(message, "warning");
+    return { ok: true, productionJob, cloudOk: false, message };
+  }
 }
 
 function sendOrderToInstaller(orderId) {
@@ -3163,25 +3389,46 @@ function handleProductionChange(event) {
   renderProductionJobs();
 }
 
-export function markProductionStatus(jobId, status) {
+export async function markProductionStatus(jobId, status) {
   if (!canEditProduction()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
   const job = state.productionJobs.find((row) => row.id === jobId);
   if (!job || !status) return;
   if (isArchivedProductionJob(job)) return showWorkflowMessage("Restore this archived Production Job before changing its status.", "error");
   const normalizedStatus = normalizeProductionStatus(status, true);
-  job.status = normalizedStatus;
-  job.updatedAt = new Date().toISOString();
-  const order = findOrder(job.orderId);
-  if (order) {
-    order.status = normalizedStatus === "completed" ? "Production Completed" : normalizedStatus === "in_production" ? "Sent to Production" : "Confirmed";
-    order.sentToProduction = normalizedStatus !== "not_produced";
-    order.productionStatus = normalizedStatus;
-    order.updatedAt = new Date().toISOString();
+  const previousState = snapshotOrderWorkflowState();
+  const now = new Date().toISOString();
+  state.productionJobs = state.productionJobs.map((row) => row.id === jobId ? { ...row, status: normalizedStatus, updatedAt: now } : row);
+  state.orders = state.orders.map((order) => order.id === job.orderId ? {
+    ...order,
+    status: normalizedStatus === "completed" ? "Production Completed" : normalizedStatus === "in_production" ? "Sent to Production" : "Confirmed",
+    sentToProduction: normalizedStatus !== "not_produced",
+    productionStatus: normalizedStatus,
+    productionJobId: job.id,
+    updatedAt: now
+  } : order);
+  const localSave = persistOrderConversionLocally();
+  if (!localSave.ok) {
+    restoreConversionState(previousState);
+    renderWorkflowModules();
+    return showWorkflowMessage(`Failed to save Production status locally: ${localSave.reason}`, "error");
   }
-  persistProductionJobs();
-  persistOrders();
   renderWorkflowModules();
-  showWorkflowMessage(normalizedStatus === "completed" ? "Production marked completed" : "Production marked in progress", "success");
+  showWorkflowMessage("Production and Order status saved locally. Syncing cloud...", "info");
+  try {
+    const cloudSync = await syncOrderConversionCollections();
+    if (!cloudSync.ok && !cloudSync.localOnly) {
+      const message = `Production and Order status saved locally but cloud sync failed: ${cloudSync.reason}`;
+      showWorkflowMessage(message, "warning");
+      return { ok: true, status: normalizedStatus, cloudOk: false, message };
+    }
+    const message = normalizedStatus === "completed" ? "Production marked completed" : normalizedStatus === "in_production" ? "Production marked in progress" : "Production marked not started";
+    showWorkflowMessage(message, "success");
+    return { ok: true, status: normalizedStatus, cloudOk: !cloudSync.localOnly, localOnly: cloudSync.localOnly, message };
+  } catch (error) {
+    const message = `Production and Order status saved locally but cloud sync failed: ${error.message || "Unknown cloud error"}`;
+    showWorkflowMessage(message, "warning");
+    return { ok: true, status: normalizedStatus, cloudOk: false, message };
+  }
 }
 
 function handleInstallationClick(event) {

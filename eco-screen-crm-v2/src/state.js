@@ -446,34 +446,27 @@ function applyCollection(collection, incoming, normalizer) {
   const localRows = Array.isArray(state[collection]) ? state[collection] : [];
   if (localRows.length > 0 && incoming.length === 0) return;
   const rows = workflowCollections.has(collection)
-    ? mergeCurrentWorkflowRows(localRows, incoming)
+    ? mergeCurrentWorkflowRows(localRows, incoming, collection)
     : incoming;
   state[collection] = normalizer ? normalizer(rows) : rows;
   saveJson(storageKeys[collection], state[collection]);
 }
 
-function mergeCurrentWorkflowRows(localRows, incomingRows) {
+function mergeCurrentWorkflowRows(localRows, incomingRows, collection) {
   const rows = new Map();
-  incomingRows.forEach((row) => rows.set(workflowRowKey(row), row));
+  incomingRows.forEach((row) => rows.set(workflowRowKey(row, collection), row));
   localRows.forEach((row) => {
-    const key = workflowRowKey(row);
+    const key = workflowRowKey(row, collection);
     const incoming = rows.get(key);
     if (!incoming || preferLocalWorkflowRow(row, incoming)) rows.set(key, row);
   });
   return [...rows.values()];
 }
 
-function workflowRowKey(row = {}) {
+function workflowRowKey(row = {}, collection = "workflow") {
   return row.id
-    || row.userId
-    || row.quoteNumber
-    || row.quotationNo
-    || row.orderNumber
-    || row.orderNo
-    || row.productionNumber
-    || row.installationNumber
-    || row.warrantyNo
-    || JSON.stringify(row);
+    ? `${collection}:id:${row.id}`
+    : `${collection}:missing-stable-id:${JSON.stringify(row)}`;
 }
 
 function preferLocalWorkflowRow(local, incoming) {
