@@ -1265,7 +1265,9 @@ function workflowIntegrityPanelHtml() {
 
 function workflowIntegrityIssueRow(issue) {
   const repair = issue.repair;
-  const selector = repair ? `<label><input type="radio" name="workflow-integrity-issue" data-workflow-integrity-issue="${escapeHtml(issue.id)}" /> ${workflowIntegrityRepairInput(issue)}</label>` : "Preview only";
+  const selector = repair
+    ? `<label class="workflow-integrity-selector"><input type="radio" name="workflow-integrity-issue" data-workflow-integrity-issue="${escapeHtml(issue.id)}" /> Select</label>${workflowIntegrityRepairInput(issue)}`
+    : "Preview only";
   return `
     <tr data-workflow-integrity-row="${escapeHtml(issue.id)}">
       <td>${selector}</td><td>${escapeHtml(issue.category)}</td><td>${escapeHtml(issue.recordType)}</td><td>${escapeHtml(issue.stableId || "-")}</td>
@@ -1280,8 +1282,120 @@ function workflowIntegrityRepairInput(issue) {
   if (issue.repair.type === "order-status") {
     return `<select data-workflow-integrity-status>${orderStatuses.map((status) => `<option value="${escapeHtml(status)}">${statusLabel(status)}</option>`).join("")}</select>`;
   }
+  if (issue.repair.type === "order-ownership") return safeOrderOwnershipRepairHtml(issue);
   const targetId = issue.repair.targetId || "";
   return `<input data-workflow-integrity-target value="${escapeHtml(targetId)}" placeholder="${escapeHtml(issue.repair.targetLabel || "Exact target stable ID")}" ${targetId ? "readonly" : ""} />`;
+}
+
+export function buildSafeOrderOwnershipComparison(quotationId, orderId, snapshot = state) {
+  const quote = (snapshot.quotations || []).find((row) => String(row.id || "") === String(quotationId || "")) || null;
+  const order = (snapshot.orders || []).find((row) => isActiveOrderRecord(row) && String(row.id || "") === String(orderId || "")) || null;
+  if (!quote || !order) return null;
+  const productionJobs = (snapshot.productionJobs || []).filter((row) => String(row.orderId || "") === String(order.id || ""));
+  const installationJobs = (snapshot.installationJobs || []).filter((row) => String(row.orderId || "") === String(order.id || ""));
+  const targetOrderNo = getOrderDisplayNo(order);
+  const conflicts = (snapshot.orders || []).filter((row) => isActiveOrderRecord(row)
+    && String(row.id || "") !== String(order.id || "")
+    && normalizeRefNo(getOrderDisplayNo(row))
+    && normalizeRefNo(getOrderDisplayNo(row)) === normalizeRefNo(targetOrderNo));
+  return {
+    quotation: ownershipRecordView(quote, "quotation", snapshot),
+    order: ownershipRecordView(order, "order", snapshot),
+    productionJobIds: productionJobs.map((row) => String(row.id || "")),
+    installationJobIds: installationJobs.map((row) => String(row.id || "")),
+    forwardLink: {
+      orderId: String(quote.orderId || ""),
+      linkedOrderId: String(quote.linkedOrderId || ""),
+      orderNo: String(quote.orderNo || ""),
+      orderNumber: String(quote.orderNumber || "")
+    },
+    reverseLink: {
+      quoteId: String(order.quoteId || ""),
+      quotationId: String(order.quotationId || ""),
+      quoteNumber: String(order.quoteNumber || ""),
+      quotationNo: String(order.quotationNo || "")
+    },
+    conflicts: conflicts.map((row) => ownershipRecordView(row, "order", snapshot))
+  };
+}
+
+function ownershipRecordView(record, type, snapshot) {
+  const customer = record.customer && typeof record.customer === "object" ? record.customer : {};
+  const id = String(record.id || "");
+  return {
+    type,
+    id,
+    orderNo: type === "order" ? getOrderDisplayNo(record) : String(record.orderNo || record.orderNumber || ""),
+    quotationNo: type === "quotation" ? getQuotationDisplayNo(record) : String(record.quotationNo || record.quoteNumber || ""),
+    customer: String(customer.name ?? record.customerName ?? ""),
+    phone: String(customer.phone ?? record.phone ?? ""),
+    items: structuredCloneSafe(Array.isArray(record.items) ? record.items : []),
+    total: record.total ?? record.amount ?? "",
+    deposit: record.deposit ?? "",
+    balance: record.balance ?? "",
+    productionJobIds: (snapshot.productionJobs || []).filter((row) => String(row.orderId || "") === id).map((row) => String(row.id || "")),
+    installationJobIds: (snapshot.installationJobs || []).filter((row) => String(row.orderId || "") === id).map((row) => String(row.id || "")),
+    forwardLinks: type === "quotation" ? {
+      orderId: String(record.orderId || ""),
+      linkedOrderId: String(record.linkedOrderId || "")
+    } : {},
+    reverseLinks: type === "order" ? {
+      quoteId: String(record.quoteId || ""),
+      quotationId: String(record.quotationId || "")
+    } : {}
+  };
+}
+
+function safeOrderOwnershipRepairHtml(issue) {
+  const comparison = buildSafeOrderOwnershipComparison(issue.repair.quotationId, issue.repair.orderId);
+  if (!comparison) return `<span class="danger-text">Exact Quotation or active Order is no longer available. Scan again.</span>`;
+  return `
+    <details class="safe-ownership-repair" open>
+      <summary>Safe Order Ownership Repair</summary>
+      <p class="danger-text"><strong>Exact stable IDs only.</strong> Customer, items and financial values will never be copied or merged.</p>
+      <div class="safe-ownership-grid">
+        ${ownershipRecordHtml("Correct Quotation candidate", comparison.quotation)}
+        ${ownershipRecordHtml("Correct Order candidate", comparison.order)}
+      </div>
+      <div class="safe-ownership-links">
+        <div><strong>Existing forward links</strong><pre>${escapeHtml(JSON.stringify(comparison.forwardLink, null, 2))}</pre></div>
+        <div><strong>Existing reverse links</strong><pre>${escapeHtml(JSON.stringify(comparison.reverseLink, null, 2))}</pre></div>
+      </div>
+      <label>Correct Quotation stable ID<input data-order-ownership-quotation-id placeholder="Type the exact Quotation stable ID" /></label>
+      <label>Correct Order stable ID<input data-order-ownership-order-id placeholder="Type the exact Order stable ID" /></label>
+      ${comparison.conflicts.length ? `
+        <div class="safe-ownership-conflict">
+          <strong>Order Number Ownership Conflict</strong>
+          <p>${escapeHtml(comparison.order.orderNo)} is also used by the following exact Order record(s). Each must receive a new unused SO number first.</p>
+          ${comparison.conflicts.map((conflict) => `
+            ${ownershipRecordHtml("Conflicting Order", conflict)}
+            <label>Conflicting Order stable ID<input data-order-ownership-conflict-id="${escapeHtml(conflict.id)}" placeholder="Type ${escapeHtml(conflict.id)}" /></label>
+            <label>New unused SO number for this exact Order<input data-order-ownership-replacement data-conflict-order-id="${escapeHtml(conflict.id)}" placeholder="Example: ${escapeHtml(nextSalesOrderNumber())}" /></label>
+          `).join("")}
+        </div>
+      ` : `<p class="muted-text">No active Order Number Ownership Conflict was found for ${escapeHtml(comparison.order.orderNo)}.</p>`}
+      <p class="muted-text">A full JSON backup and a complete field-by-field change preview are required before the confirmation phrase REPAIR ORDER OWNERSHIP is accepted.</p>
+    </details>
+  `;
+}
+
+function ownershipRecordHtml(title, record) {
+  return `<div class="safe-ownership-record">
+    <strong>${escapeHtml(title)}</strong>
+    <dl>
+      <dt>${record.type === "quotation" ? "Quotation" : "Order"} stable ID</dt><dd>${escapeHtml(record.id || "-")}</dd>
+      <dt>Order No</dt><dd>${escapeHtml(record.orderNo || "-")}</dd>
+      <dt>Quotation No</dt><dd>${escapeHtml(record.quotationNo || "-")}</dd>
+      <dt>Customer</dt><dd>${escapeHtml(record.customer || "-")}</dd>
+      <dt>Phone</dt><dd>${escapeHtml(record.phone || "-")}</dd>
+      <dt>Items</dt><dd><pre>${escapeHtml(JSON.stringify(record.items, null, 2))}</pre></dd>
+      <dt>Total</dt><dd>${escapeHtml(record.total === "" ? "-" : record.total)}</dd>
+      <dt>Deposit</dt><dd>${escapeHtml(record.deposit === "" ? "-" : record.deposit)}</dd>
+      <dt>Balance</dt><dd>${escapeHtml(record.balance === "" ? "-" : record.balance)}</dd>
+      <dt>Production Job IDs</dt><dd>${escapeHtml(record.productionJobIds.join(", ") || "-")}</dd>
+      <dt>Installation Job IDs</dt><dd>${escapeHtml(record.installationJobIds.join(", ") || "-")}</dd>
+    </dl>
+  </div>`;
 }
 
 function matchesProgressFilter(categoryId, order) {
@@ -2441,10 +2555,19 @@ async function repairSelectedWorkflowIntegrityIssue(button) {
   const row = selected.closest("[data-workflow-integrity-row]");
   const targetId = row?.querySelector("[data-workflow-integrity-target]")?.value?.trim() || "";
   const nextStatus = row?.querySelector("[data-workflow-integrity-status]")?.value || "";
+  const quotationId = row?.querySelector("[data-order-ownership-quotation-id]")?.value?.trim() || "";
+  const orderId = row?.querySelector("[data-order-ownership-order-id]")?.value?.trim() || "";
+  const conflicts = [...(row?.querySelectorAll("[data-order-ownership-replacement]") || [])].map((input) => {
+    const expectedOrderId = input.dataset.conflictOrderId || "";
+    const idInput = [...(row?.querySelectorAll("[data-order-ownership-conflict-id]") || [])]
+      .find((candidate) => candidate.dataset.orderOwnershipConflictId === expectedOrderId);
+    const enteredOrderId = idInput?.value?.trim() || "";
+    return { orderId: enteredOrderId, replacementOrderNo: input.value.trim() };
+  });
   button.disabled = true;
   const originalLabel = button.textContent;
   button.textContent = "Repairing...";
-  const result = await repairWorkflowIntegrityIssue(selected.dataset.workflowIntegrityIssue, { targetId, nextStatus });
+  const result = await repairWorkflowIntegrityIssue(selected.dataset.workflowIntegrityIssue, { targetId, nextStatus, quotationId, orderId, conflicts });
   if (button.isConnected) {
     button.disabled = false;
     button.textContent = originalLabel;
@@ -2459,6 +2582,17 @@ export async function repairWorkflowIntegrityIssue(issueId, values = {}, options
   const scan = scanWorkflowIntegrity();
   const issue = scan.issues.find((row) => row.id === issueId);
   if (!issue?.repair) return failWorkflowIntegrityRepair("Repairable Workflow Integrity issue not found. Scan again.");
+  if (issue.repair.type === "order-ownership") {
+    if (String(values.quotationId || "").trim() !== String(issue.repair.quotationId || "")
+      || String(values.orderId || "").trim() !== String(issue.repair.orderId || "")) {
+      return failWorkflowIntegrityRepair("The typed stable IDs must exactly match the selected Category M comparison.");
+    }
+    return repairOrderOwnership({
+      quotationId: values.quotationId,
+      orderId: values.orderId,
+      conflicts: values.conflicts
+    }, options);
+  }
   const targetId = String(values.targetId || issue.repair.targetId || "").trim();
   const nextStatus = String(values.nextStatus || "").trim();
   const exactRecords = workflowIntegrityRecordsForIssue(issue, targetId);
@@ -2570,6 +2704,225 @@ export async function repairWorkflowIntegrityIssue(issueId, values = {}, options
     const message = `Workflow repair saved locally but cloud sync failed: ${error.message || "Unknown cloud error"}`;
     showWorkflowMessage(message, "warning");
     return { ok: true, cloudOk: false, message };
+  }
+}
+
+export async function repairOrderOwnership(values = {}, options = {}) {
+  if (!isBossOrAdmin()) return failWorkflowIntegrityRepair("Permission denied: your role cannot perform this action.");
+  const plan = planSafeOrderOwnershipRepair(values);
+  if (!plan.ok) return failWorkflowIntegrityRepair(plan.message);
+
+  if (options.downloadBackup !== false && !downloadOrderOwnershipBackup(plan)) {
+    return failWorkflowIntegrityRepair("Full JSON backup download failed. No workflow records were changed.");
+  }
+  if (options.confirm !== false) {
+    const confirmation = window.prompt([
+      "Safe Order Ownership Repair",
+      `Correct Quotation stable ID: ${plan.quotationId}`,
+      `Correct Order stable ID: ${plan.orderId}`,
+      `Order No retained by the selected Order: ${plan.orderNo}`,
+      "Every exact field that will change:",
+      JSON.stringify(plan.changes, null, 2),
+      "Type REPAIR ORDER OWNERSHIP to confirm. No customer, item or financial data will be copied, merged, archived or deleted."
+    ].join("\n"));
+    if (confirmation !== "REPAIR ORDER OWNERSHIP") return { ok: false, cancelled: true, message: "Safe Order Ownership Repair cancelled." };
+  }
+
+  const previousState = snapshotOrderWorkflowState();
+  let localCommitted = false;
+  try {
+    state.quotations = plan.nextState.quotations;
+    state.orders = plan.nextState.orders;
+    state.productionJobs = plan.nextState.productionJobs;
+    state.installationJobs = plan.nextState.installationJobs;
+    state.warrantyCards = plan.nextState.warrantyCards;
+
+    const localSave = persistOrderConversionLocally();
+    if (!localSave.ok) {
+      restoreConversionState(previousState);
+      return failWorkflowIntegrityRepair(`Failed to save Safe Order Ownership Repair locally: ${localSave.reason}`);
+    }
+    localCommitted = true;
+    workflowIntegrityResult = scanWorkflowIntegrity();
+    renderWorkflowModules();
+    showWorkflowMessage("Order ownership repaired locally. Syncing cloud...", "info");
+    const cloudSync = await syncOrderConversionCollections();
+    if (!cloudSync.ok && !cloudSync.localOnly) {
+      const message = `Order ownership repaired locally but cloud sync failed: ${cloudSync.reason}`;
+      showWorkflowMessage(message, "warning");
+      return { ok: true, cloudOk: false, changes: plan.changes, conflicts: plan.conflicts, message };
+    }
+    showWorkflowMessage("Safe Order Ownership Repair completed.", "success");
+    return {
+      ok: true,
+      cloudOk: !cloudSync.localOnly,
+      localOnly: cloudSync.localOnly,
+      changes: plan.changes,
+      conflicts: plan.conflicts,
+      quotationId: plan.quotationId,
+      orderId: plan.orderId
+    };
+  } catch (error) {
+    if (!localCommitted) {
+      restoreConversionState(previousState);
+      return failWorkflowIntegrityRepair(`Safe Order Ownership Repair failed before local commit: ${error.message || "Unknown error"}`);
+    }
+    const message = `Order ownership repaired locally but cloud sync failed: ${error.message || "Unknown cloud error"}`;
+    showWorkflowMessage(message, "warning");
+    return { ok: true, cloudOk: false, changes: plan.changes, conflicts: plan.conflicts, message };
+  }
+}
+
+function planSafeOrderOwnershipRepair(values) {
+  const quotationId = String(values.quotationId || "").trim();
+  const orderId = String(values.orderId || "").trim();
+  if (!quotationId || !orderId) return { ok: false, message: "Explicitly type both the correct Quotation stable ID and correct Order stable ID." };
+  const comparison = buildSafeOrderOwnershipComparison(quotationId, orderId);
+  if (!comparison) return { ok: false, message: "The exact Quotation stable ID or active Order stable ID was not found." };
+  const quote = state.quotations.find((row) => String(row.id || "") === quotationId);
+  const order = state.orders.find((row) => isActiveOrderRecord(row) && String(row.id || "") === orderId);
+  const orderNo = getOrderDisplayNo(order);
+  if (!orderNo) return { ok: false, message: "The selected Order has no Order No. Ownership cannot be repaired safely." };
+
+  const expectedConflicts = comparison.conflicts.map((row) => row.id).sort();
+  const enteredConflicts = Array.isArray(values.conflicts) ? values.conflicts.map((entry) => ({
+    orderId: String(entry?.orderId || "").trim(),
+    replacementOrderNo: String(entry?.replacementOrderNo || "").trim().toUpperCase()
+  })) : [];
+  if (enteredConflicts.length !== expectedConflicts.length
+    || enteredConflicts.some((entry) => !expectedConflicts.includes(entry.orderId))
+    || new Set(enteredConflicts.map((entry) => entry.orderId)).size !== expectedConflicts.length) {
+    return { ok: false, message: expectedConflicts.length
+      ? "Type every exact conflicting Order stable ID and a new unused SO number for each one."
+      : "Unexpected conflicting Order input. Scan again before repairing." };
+  }
+  if (enteredConflicts.some((entry) => !entry.replacementOrderNo)) {
+    return { ok: false, message: "Enter a new unused SO number for every exact conflicting Order." };
+  }
+
+  const replacementNumbers = enteredConflicts.map((entry) => normalizeRefNo(entry.replacementOrderNo));
+  if (new Set(replacementNumbers).size !== replacementNumbers.length || replacementNumbers.includes(normalizeRefNo(orderNo))) {
+    return { ok: false, message: "Every replacement SO number must be unique and different from the selected Order number." };
+  }
+  for (const entry of enteredConflicts) {
+    const normalized = normalizeRefNo(entry.replacementOrderNo);
+    const alreadyUsed = state.orders.some((candidate) => String(candidate.id || "") !== entry.orderId
+      && [candidate.orderNo, candidate.orderNumber].some((value) => normalizeRefNo(value) === normalized));
+    if (alreadyUsed) return { ok: false, message: `Replacement Order No ${entry.replacementOrderNo} is already in use.` };
+  }
+
+  const now = new Date().toISOString();
+  const nextState = snapshotOrderWorkflowState();
+  const changes = [];
+  const replaceRecord = (collection, recordId, updater) => {
+    nextState[collection] = nextState[collection].map((record) => {
+      if (String(record.id || "") !== String(recordId)) return record;
+      const updated = updater(record);
+      recordFieldChanges(changes, collection, record, updated);
+      return updated;
+    });
+  };
+
+  enteredConflicts.forEach((entry) => {
+    const conflictingOrder = state.orders.find((candidate) => isActiveOrderRecord(candidate) && String(candidate.id || "") === entry.orderId);
+    const oldNormalized = normalizeRefNo(getOrderDisplayNo(conflictingOrder));
+    replaceRecord("orders", entry.orderId, (record) => updateOrderReferenceFields(record, entry.orderId, oldNormalized, entry.replacementOrderNo, now));
+    state.quotations.filter((candidate) => isQuotationLinkedToOrder(candidate, conflictingOrder)).forEach((candidate) => {
+      replaceRecord("quotations", candidate.id, (record) => updateOrderReferenceFields(record, entry.orderId, oldNormalized, entry.replacementOrderNo, now));
+    });
+    ["productionJobs", "installationJobs", "warrantyCards"].forEach((collection) => {
+      state[collection].filter((candidate) => isRecordLinkedToOrder(candidate, entry.orderId)).forEach((candidate) => {
+        replaceRecord(collection, candidate.id, (record) => updateOrderReferenceFields(record, entry.orderId, oldNormalized, entry.replacementOrderNo, now));
+      });
+    });
+  });
+
+  replaceRecord("quotations", quote.id, (record) => ({
+    ...record,
+    orderId: order.id,
+    linkedOrderId: order.id,
+    orderNo,
+    orderNumber: orderNo,
+    converted: true,
+    convertedToOrder: true,
+    convertedAt: record.convertedAt || now,
+    updatedAt: now
+  }));
+  const quoteNo = getQuotationDisplayNo(quote);
+  replaceRecord("orders", order.id, (record) => ({
+    ...record,
+    quoteId: quote.id,
+    quotationId: quote.id,
+    quoteNumber: quoteNo,
+    quotationNo: quoteNo,
+    updatedAt: now
+  }));
+
+  ["productionJobs", "installationJobs"].forEach((collection) => {
+    state[collection].filter((record) => isRecordLinkedToOrder(record, order.id)
+      && normalizeRefNo(getOrderDisplayNo(record)) !== normalizeRefNo(orderNo)).forEach((record) => {
+      replaceRecord(collection, record.id, (candidate) => updateOrderReferenceFields(candidate, order.id, normalizeRefNo(getOrderDisplayNo(candidate)), orderNo, now));
+    });
+  });
+
+  if (!protectedOwnershipValuesUnchanged(state, nextState)) {
+    return { ok: false, message: "Safety check failed: protected customer, item or financial data would change." };
+  }
+  return {
+    ok: true,
+    quotationId,
+    orderId,
+    orderNo,
+    comparison,
+    changes,
+    conflicts: enteredConflicts,
+    nextState
+  };
+}
+
+function recordFieldChanges(changes, collection, before, after) {
+  const keys = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
+  keys.forEach((field) => {
+    const from = before?.[field];
+    const to = after?.[field];
+    if (JSON.stringify(from) === JSON.stringify(to)) return;
+    changes.push({ collection, stableId: String(before?.id || after?.id || ""), field, from: structuredCloneSafe(from), to: structuredCloneSafe(to) });
+  });
+}
+
+function protectedOwnershipValuesUnchanged(before, after) {
+  const protectedFields = ["customer", "customerName", "phone", "items", "total", "amount", "deposit", "balance"];
+  return ["quotations", "orders"].every((collection) => before[collection].every((record) => {
+    const candidate = after[collection].find((row) => String(row.id || "") === String(record.id || ""));
+    if (!candidate) return false;
+    return protectedFields.every((field) => JSON.stringify(record[field]) === JSON.stringify(candidate[field]));
+  }));
+}
+
+function downloadOrderOwnershipBackup(plan) {
+  try {
+    if (typeof document?.createElement !== "function" || typeof URL?.createObjectURL !== "function") return false;
+    const payload = {
+      type: "eco-screen-crm-v2-full-backup-before-order-ownership-repair",
+      timestamp: new Date().toISOString(),
+      selection: { quotationId: plan.quotationId, orderId: plan.orderId, conflicts: plan.conflicts },
+      comparison: plan.comparison,
+      exactFieldChanges: plan.changes,
+      state: structuredCloneSafe(stateSnapshot())
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `eco-screen-crm-v2-full-backup-before-order-ownership-repair-${backupTimestamp()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    return true;
+  } catch (error) {
+    console.error("Safe Order Ownership Repair backup failed", error);
+    return false;
   }
 }
 

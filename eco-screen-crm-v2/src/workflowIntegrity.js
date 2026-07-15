@@ -184,7 +184,24 @@ export function scanWorkflowIntegrity(snapshot = {}) {
     if (!order || !quote.id) return;
     const orderQuoteId = String(order.quoteId || order.quotationId || "");
     if (!orderQuoteId || orderQuoteId === String(quote.id)) return;
-    add("M", "Quotation", quote, `Quotation links to Order ${linkedId}, but that Order links to quotation ${orderQuoteId}.`, "Review both exact records and repair one relationship only.");
+    const orderNo = normalizeReference(orderNumber(order));
+    const ownershipConflicts = activeOrders.filter((candidate) => String(candidate.id || "") !== linkedId
+      && orderNo
+      && normalizeReference(orderNumber(candidate)) === orderNo);
+    const conflictMessage = ownershipConflicts.length
+      ? ` Order Number Ownership Conflict: ${orderNumber(order)} is also used by Order ${ownershipConflicts.map((candidate) => candidate.id).join(", ")}; every conflicting Order requires a new unused number before repair.`
+      : "";
+    add("M", "Quotation", quote,
+      `Quotation links to Order ${linkedId}, but that Order links to quotation ${orderQuoteId}.${conflictMessage}`,
+      "Use Safe Order Ownership Repair with the exact Quotation and Order stable IDs. No customer, item or financial values are copied.", {
+        type: "order-ownership",
+        quotationId: String(quote.id),
+        orderId: linkedId,
+        conflictingOrderIds: ownershipConflicts.map((candidate) => String(candidate.id || ""))
+      }, {
+        orderNo: orderNumber(order),
+        linkedIds: `quotation->order:${linkedId}, order->quotation:${orderQuoteId}${ownershipConflicts.length ? `, number-conflicts:${ownershipConflicts.map((candidate) => candidate.id).join(",")}` : ""}`
+      });
   });
 
   return {
