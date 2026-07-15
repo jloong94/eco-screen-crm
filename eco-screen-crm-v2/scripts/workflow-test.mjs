@@ -51,10 +51,13 @@ const {
   restoreArchivedDuplicate,
   restoreArchivedProductionJob,
   recoverCoveredOrder,
+  recoverMissingConfirmedOrder,
   repairWorkflowIntegrityIssue,
   repairOrderOwnership,
   scanWorkflowIntegrity,
   scanCoveredOrderReferences,
+  scanMissingConfirmedOrderRecovery,
+  searchCoveredOrderQuotations,
   scanDuplicateOrders,
   scanDuplicateProductionJobs,
   sendOrderToProduction,
@@ -1041,6 +1044,207 @@ assert(JSON.stringify(archivedDatinProduction.items) === JSON.stringify(datinBef
 assert(JSON.parse(localStorage.getItem("ecoScreenV2.orders") || "[]").find((row) => row.id === datinConflictOrder.id)?.status === "cancelled_archived", "W4: refresh storage must preserve the Datin recovery");
 
 resetWorkflowState();
+const missingTzeQuote = validQuote("SO-2607-011", "Tze Yee");
+Object.assign(missingTzeQuote, {
+  id: "quote-1783130657886-e7f8c485de65a8",
+  customer: { name: "Tze Yee", phone: "0174590532" },
+  quotationNo: "SO-2607-011",
+  quoteNo: "SO-2607-011",
+  quoteNumber: "SO-2607-011",
+  orderId: "order-ESQ-2026-0003",
+  linkedOrderId: "order-ESQ-2026-0003",
+  orderNo: "ESQ-2026-0003",
+  orderNumber: "ESQ-2026-0003",
+  status: "won",
+  converted: true,
+  convertedToOrder: true,
+  total: 5245.0113,
+  deposit: 1000,
+  balance: 4245.0113,
+  remarks: "Keep Tze quotation payload"
+});
+const janeQuote = validQuote("ESQ-2026-0003", "Jane");
+Object.assign(janeQuote, { id: "quote-jane-covered", customer: { name: "Jane", phone: "0164931118" }, status: "won", orderId: "order-ESQ-2026-0003", linkedOrderId: "order-ESQ-2026-0003", total: 1815 });
+const janeOrder = {
+  id: "order-ESQ-2026-0003",
+  orderNo: "ESQ-2026-00033",
+  orderNumber: "ESQ-2026-00033",
+  quoteId: janeQuote.id,
+  quotationId: janeQuote.id,
+  quoteNumber: "ESQ-2026-0003",
+  quotationNo: "ESQ-2026-0003",
+  customer: structuredClone(janeQuote.customer),
+  items: structuredClone(janeQuote.items),
+  total: 1815,
+  deposit: 100,
+  balance: 1715,
+  status: "Confirmed",
+  remarks: "Jane payload must not be used or changed"
+};
+const missingMsQuote = validQuote("ESQ-2026-0011", "MS Chew");
+Object.assign(missingMsQuote, {
+  id: "quote-1783586082779-020ce4ca5f2a3",
+  customer: { name: "MS Chew", phone: "0164950766" },
+  status: "quoted",
+  orderId: "order-1784103199329-c9c68eddead2e",
+  linkedOrderId: "order-1784103199329-c9c68eddead2e",
+  orderNo: "SO2607011",
+  orderNumber: "SO2607011",
+  total: 2436,
+  deposit: 0,
+  balance: 2436,
+  remarks: "Keep MS quotation payload"
+});
+const missingMsOrder = {
+  id: "order-1784103199329-c9c68eddead2e",
+  orderNo: "SO2607011",
+  orderNumber: "SO2607011",
+  quoteId: missingMsQuote.id,
+  quotationId: missingMsQuote.id,
+  quoteNumber: "ESQ-2026-0011",
+  quotationNo: "ESQ-2026-0011",
+  customer: structuredClone(missingMsQuote.customer),
+  items: structuredClone(missingMsQuote.items),
+  total: 2436,
+  deposit: 0,
+  balance: 2436,
+  status: "Confirmed",
+  remarks: "Keep MS Order audit payload"
+};
+state.quotations = [missingTzeQuote, janeQuote, missingMsQuote];
+state.orders = [janeOrder, missingMsOrder];
+state.productionJobs = [
+  { id: "production-missing-ms", orderId: missingMsOrder.id, orderNo: "SO2607011", status: "in_production", assignedStaff: ["staff-ms"], items: structuredClone(missingMsOrder.items), remarks: "Keep MS production", statusHistory: ["not_produced", "in_production"] },
+  { id: "production-missing-number-only", orderNo: "SO2607011", status: "not_produced", remarks: "Number-only must remain active" }
+];
+state.installationJobs = [
+  { id: "installation-missing-ms", orderId: missingMsOrder.id, orderNo: "SO2607011", status: "scheduled", assignedStaff: ["installer-ms"], items: structuredClone(missingMsOrder.items), remarks: "Keep MS installation", statusHistory: ["not_scheduled", "scheduled"] }
+];
+const missingTzeBefore = structuredClone({ quotations: state.quotations, orders: state.orders, productionJobs: state.productionJobs, installationJobs: state.installationJobs });
+const tzeCustomerSearch = searchCoveredOrderQuotations("TzeYee");
+const tzeEsqSearch = searchCoveredOrderQuotations("ESQ-2026-0003");
+assert(tzeCustomerSearch.quotationCandidates.includes(missingTzeQuote.id)
+  && tzeEsqSearch.quotationCandidates.includes(missingTzeQuote.id), "W5: missing confirmed quotation must be searchable by normalized customer or ESQ alias");
+const missingTzeScan = scanMissingConfirmedOrderRecovery(missingTzeQuote.id, "SO2607011");
+assert(missingTzeScan.ok
+  && missingTzeScan.correctOrderCandidates.length === 0
+  && missingTzeScan.records.some((entry) => entry.collection === "orders" && entry.record.id === janeOrder.id)
+  && missingTzeScan.records.some((entry) => entry.collection === "orders" && entry.record.id === missingMsOrder.id)
+  && missingTzeScan.records.some((entry) => entry.collection === "productionJobs" && entry.record.id === "production-missing-ms")
+  && missingTzeScan.records.some((entry) => entry.collection === "installationJobs" && entry.record.id === "installation-missing-ms"), "W5: missing mode must show alias and exact stable-ID related records across all workflow collections");
+const unselectedOwnerRecovery = await recoverMissingConfirmedOrder({ confirmedQuotationId: missingTzeQuote.id, intendedOrderNo: "SO2607011", incorrectQuotationIds: [], incorrectOrderIds: [] }, { confirm: false, downloadBackup: false });
+assert(!unselectedOwnerRecovery.ok && JSON.stringify(state.orders) === JSON.stringify(missingTzeBefore.orders), "W5: an active SO owner not explicitly selected as incorrect must block without mutation");
+const missingTzeRecovery = await recoverMissingConfirmedOrder({
+  confirmedQuotationId: missingTzeQuote.id,
+  intendedOrderNo: "SO2607011",
+  incorrectQuotationIds: [missingMsQuote.id],
+  incorrectOrderIds: [missingMsOrder.id]
+}, { confirm: false, downloadBackup: false });
+assert(missingTzeRecovery.ok && missingTzeRecovery.confirmedOrderId !== janeOrder.id && state.orders.length === missingTzeBefore.orders.length + 1, "W5: Tze recovery must create one brand-new unique Order instead of reusing Jane or MS payload");
+const recoveredMissingTzeQuote = state.quotations.find((row) => row.id === missingTzeQuote.id);
+const recoveredMissingTzeOrder = state.orders.find((row) => row.id === missingTzeRecovery.confirmedOrderId);
+const followedUpMsQuote = state.quotations.find((row) => row.id === missingMsQuote.id);
+const archivedMissingMsOrder = state.orders.find((row) => row.id === missingMsOrder.id);
+assert(findOrderByNumber("SO2607011")?.id === recoveredMissingTzeOrder.id
+  && recoveredMissingTzeQuote.status === "won"
+  && recoveredMissingTzeQuote.orderId === recoveredMissingTzeOrder.id
+  && recoveredMissingTzeOrder.quoteId === missingTzeQuote.id
+  && recoveredMissingTzeOrder.quoteNumber === "ESQ-2026-0003", "W5: SO2607011 must open the new Tze Order with exact bidirectional ESQ links");
+assert(recoveredMissingTzeOrder.customer.name === "Tze Yee" && recoveredMissingTzeOrder.total === missingTzeQuote.total
+  && recoveredMissingTzeOrder.deposit === missingTzeQuote.deposit && recoveredMissingTzeOrder.balance === missingTzeQuote.balance, "W5: new Tze Order payload and financial values must come only from the selected quotation snapshot");
+assert(followedUpMsQuote.status === "follow_up" && !followedUpMsQuote.orderId && !followedUpMsQuote.orderNo
+  && followedUpMsQuote.converted === false && followedUpMsQuote.convertedToOrder === false, "W5: selected MS quotation must return to Follow Up without an SO number");
+assert(archivedMissingMsOrder.status === "cancelled_archived" && archivedMissingMsOrder.isArchived === true
+  && archivedMissingMsOrder.archiveReason === "Incorrect Order payload covering confirmed quotation"
+  && state.productionJobs.find((row) => row.id === "production-missing-ms").status === "cancelled_archived"
+  && state.installationJobs.find((row) => row.id === "installation-missing-ms").status === "cancelled_archived"
+  && state.productionJobs.find((row) => row.id === "production-missing-number-only").status === "not_produced", "W5: only explicitly selected wrong Order and exact-orderId jobs may be archived");
+assert(JSON.stringify(state.orders.find((row) => row.id === janeOrder.id)) === JSON.stringify(janeOrder), "W5: unselected Jane conflict must remain byte-for-byte unchanged");
+assert(JSON.stringify(protectedView(followedUpMsQuote)) === JSON.stringify(protectedView(missingMsQuote))
+  && JSON.stringify(protectedView(archivedMissingMsOrder)) === JSON.stringify(protectedView(missingMsOrder)), "W5: selected incorrect records must preserve customer, items and finances");
+const persistedMissingTzeOrders = JSON.parse(localStorage.getItem("ecoScreenV2.orders") || "[]");
+assert(persistedMissingTzeOrders.some((row) => row.id === recoveredMissingTzeOrder.id && row.orderNo === "SO2607011"), "W5: local refresh storage must preserve the newly recovered Order");
+applyCloudSnapshot({
+  quotations: missingTzeBefore.quotations.map((row) => ({ ...row, updatedAt: "2020-01-01T00:00:00.000Z" })),
+  orders: missingTzeBefore.orders.map((row) => ({ ...row, updatedAt: "2020-01-01T00:00:00.000Z" })),
+  productionJobs: missingTzeBefore.productionJobs.map((row) => ({ ...row, updatedAt: "2020-01-01T00:00:00.000Z" })),
+  installationJobs: missingTzeBefore.installationJobs.map((row) => ({ ...row, updatedAt: "2020-01-01T00:00:00.000Z" }))
+});
+assert(state.quotations.find((row) => row.id === missingTzeQuote.id)?.orderId === recoveredMissingTzeOrder.id
+  && state.orders.some((row) => row.id === recoveredMissingTzeOrder.id)
+  && state.orders.find((row) => row.id === missingMsOrder.id)?.status === "cancelled_archived", "W5: older cloud data must not reverse the successful missing Order recovery");
+
+resetWorkflowState();
+const missingDatinQuote = validQuote("ESQ-2026-0005", "Datin Connie");
+Object.assign(missingDatinQuote, {
+  id: "quote-1783169774121-d1c12989c04ae",
+  customer: { name: "Datin Connie", phone: "0124818736" },
+  status: "quoted",
+  orderId: "order-ESQ-2026-0005",
+  linkedOrderId: "",
+  orderNo: "",
+  orderNumber: "",
+  converted: true,
+  convertedToOrder: true,
+  total: 14199.996,
+  deposit: 3000,
+  balance: 11199.996,
+  remarks: "Keep Datin payload"
+});
+const shiauQuote = validQuote("ESQ-2026-0005", "Shiau fenn");
+Object.assign(shiauQuote, { id: "quote-1783136724738-479f6aaaea7f4", customer: { name: "Shiau fenn", phone: "0125240355" }, status: "quoted", orderId: "order-ESQ-2026-0005", linkedOrderId: "order-ESQ-2026-0005", total: 5993.22 });
+const shiauOrder = {
+  id: "order-ESQ-2026-0005",
+  orderNo: "ESQ-2026-0005",
+  orderNumber: "ESQ-2026-0005",
+  quoteId: missingDatinQuote.id,
+  quotationId: missingDatinQuote.id,
+  quoteNumber: "ESQ-2026-0005",
+  quotationNo: "ESQ-2026-0005",
+  customer: structuredClone(shiauQuote.customer),
+  items: structuredClone(shiauQuote.items),
+  total: shiauQuote.total,
+  deposit: shiauQuote.deposit,
+  balance: shiauQuote.balance,
+  status: "Confirmed",
+  remarks: "Shiau payload remains untouched"
+};
+state.quotations = [missingDatinQuote, shiauQuote];
+state.orders = [shiauOrder];
+const missingDatinBefore = structuredClone({ quotations: state.quotations, orders: state.orders });
+const datinCustomerCandidates = searchCoveredOrderQuotations("Datin Conni");
+const datinEsqCandidates = searchCoveredOrderQuotations("ESQ-2026-0005");
+assert(datinCustomerCandidates.quotationCandidates.includes(missingDatinQuote.id)
+  && datinEsqCandidates.quotationCandidates.includes(missingDatinQuote.id)
+  && datinEsqCandidates.quotationCandidates.includes(shiauQuote.id), "W6: Datin must be selectable by normalized customer search while duplicate ESQ candidates remain visible by exact stable ID");
+const missingDatinScan = scanMissingConfirmedOrderRecovery(missingDatinQuote.id, "SO2607013");
+assert(missingDatinScan.ok && missingDatinScan.correctOrderCandidates.length === 0
+  && missingDatinScan.records.some((entry) => entry.collection === "orders" && entry.record.id === shiauOrder.id)
+  && missingDatinScan.records.some((entry) => entry.collection === "quotations" && entry.record.id === shiauQuote.id), "W6: Datin comparison must include the covered Shiau payload through exact links and ESQ aliases");
+const missingDatinRecovery = await recoverMissingConfirmedOrder({
+  confirmedQuotationId: missingDatinQuote.id,
+  intendedOrderNo: "SO2607013",
+  incorrectQuotationIds: [],
+  incorrectOrderIds: []
+}, { confirm: false, downloadBackup: false });
+assert(missingDatinRecovery.ok && state.orders.length === missingDatinBefore.orders.length + 1, "W6: unused SO2607013 must allow creation of one new Datin Order without requiring unrelated archives");
+const recoveredMissingDatinQuote = state.quotations.find((row) => row.id === missingDatinQuote.id);
+const recoveredMissingDatinOrder = state.orders.find((row) => row.id === missingDatinRecovery.confirmedOrderId);
+assert(findOrderByNumber("SO2607013")?.id === recoveredMissingDatinOrder.id
+  && recoveredMissingDatinQuote.status === "won"
+  && recoveredMissingDatinQuote.orderId === recoveredMissingDatinOrder.id
+  && recoveredMissingDatinOrder.quoteId === missingDatinQuote.id
+  && recoveredMissingDatinOrder.customer.name === "Datin Connie"
+  && recoveredMissingDatinOrder.total === missingDatinQuote.total, "W6: SO2607013 must open the new Datin Order built only from the selected quotation snapshot");
+assert(JSON.stringify(state.quotations.find((row) => row.id === shiauQuote.id)) === JSON.stringify(shiauQuote)
+  && JSON.stringify(state.orders.find((row) => row.id === shiauOrder.id)) === JSON.stringify(shiauOrder), "W6: unselected Shiau quotation and Order must remain unchanged");
+assert(nextSalesOrderNumber(new Date("2026-07-20T00:00:00Z")) === "SO2607014", "W6: recovered SO2607013 must advance future SO issuance without going backward or duplicating the number");
+const datinOrderCountBeforeRepeat = state.orders.length;
+const repeatedMissingDatinConversion = await convertQuoteToOrder(missingDatinQuote.id);
+assert(repeatedMissingDatinConversion.ok && repeatedMissingDatinConversion.existing === true
+  && state.orders.length === datinOrderCountBeforeRepeat, "W6: converting the recovered quotation again must reuse the exact new Order and never create a duplicate SO");
+
+resetWorkflowState();
 const syncQuote = validQuote("SYNC-QUOTE", "Production Sync Customer");
 syncQuote.status = "won";
 state.quotations = [syncQuote];
@@ -1087,5 +1291,6 @@ console.log([
   ,"Workflow Integrity Check categories A-M, preview safety and selected repairs: passed"
   ,"Safe Order Ownership Repair, exact-ID conflict renumbering and cloud-roundtrip protection: passed"
   ,"Reusable Covered Order recovery for Tze Yee and Datin Conni, exact-ID archive and safety stops: passed"
+  ,"Missing confirmed Order recovery, exact quotation snapshot creation and explicit conflict handling: passed"
   ,"Transactional Send to Production and Production/Order status synchronization: passed"
 ].join("\n"));
