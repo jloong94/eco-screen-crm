@@ -1,6 +1,6 @@
 import { defaultCompanySettings, defaultProducts, defaultUsers } from "./data.js";
 import { loadJson, saveJson, storageKeys } from "./storage.js";
-import { isCloudConfigured, saveData, syncToCloud } from "./cloudSync.js";
+import { isCloudConfigured, safeSyncWithCloud, saveData, syncToCloud } from "./cloudSync.js";
 
 const orderConversionCollections = [
   "orders",
@@ -31,7 +31,7 @@ export const state = {
   warrantyCards: loadJson(storageKeys.warrantyCards, []),
   companySettings: normalizeCompanySettings(loadJson(storageKeys.companySettings, defaultCompanySettings)),
   cloud: {
-    status: isCloudConfigured() ? "Checking cloud..." : "Local Mode Only",
+    status: isCloudConfigured() ? "Syncing..." : "Local Mode",
     connected: false,
     lastSyncAt: "",
     lastError: "",
@@ -129,30 +129,37 @@ export function persistOrderConversionLocally() {
 }
 
 export async function syncOrderConversionCollections() {
-  const results = await Promise.all(orderConversionCollections.map(async (collection) => {
-    try {
-      return { collection, ...await syncCollectionNow(collection) };
-    } catch (error) {
-      return { collection, ok: false, reason: error.message || "Cloud sync failed." };
-    }
-  }));
-  const localOnly = results.every((result) => !result.ok && result.reason === "Local Mode Only");
-  const failures = results.filter((result) => !result.ok && result.reason !== "Local Mode Only");
-  const reason = failures.map((result) => `${result.collection}: ${result.reason}`).join("; ");
-
-  if (failures.length) {
+  if (!isCloudConfigured()) {
     updateCloudStatus({
+      status: "Local Mode",
+      connected: false,
+      lastError: ""
+    });
+    return { ok: false, localOnly: true, reason: "Local Mode Only", results: [] };
+  }
+  updateCloudStatus({ status: "Syncing...", connected: false });
+  const result = await safeSyncWithCloud(stateSnapshot());
+  if (result.ok) applyCloudSnapshot(result.snapshot || {});
+  updateCloudStatus(result.ok
+    ? {
+      status: "Cloud Synced",
+      connected: true,
+      lastSyncAt: new Date().toISOString(),
+      lastError: "",
+      counts: result.summary?.cloudCounts || {}
+    }
+    : {
       status: "Cloud Sync Failed",
       connected: false,
-      lastError: reason
+      lastError: result.reason || "Cloud sync failed.",
+      counts: result.summary?.cloudCounts || {}
     });
-  }
-
   return {
-    ok: failures.length === 0,
-    localOnly,
-    reason,
-    results
+    ok: result.ok,
+    localOnly: false,
+    reason: result.reason || "",
+    results: orderConversionCollections.map((collection) => ({ collection, ok: result.ok, reason: result.reason || "" })),
+    summary: result.summary
   };
 }
 
@@ -370,16 +377,18 @@ export function replaceStateFromBackup(snapshot = {}) {
 export async function syncCollectionNow(collection) {
   if (!isCloudConfigured()) {
     updateCloudStatus({
-      status: "Local Mode Only",
+      status: "Local Mode",
       connected: false,
       lastError: ""
     });
     return { ok: false, reason: "Local Mode Only" };
   }
-  const result = await saveData(collection, stateSnapshot()[collection] || []);
+  updateCloudStatus({ status: "Syncing...", connected: false });
+  const result = await saveData(collection, stateSnapshot()[collection] || [], { localSnapshot: stateSnapshot() });
   if (result.ok) {
+    applyCollection(collection, result.data);
     updateCloudStatus({
-      status: "Cloud Connected",
+      status: "Cloud Synced",
       connected: true,
       lastSyncAt: result.syncedAt || new Date().toISOString(),
       lastError: "",
@@ -404,9 +413,10 @@ export function queueCloudSync() {
   clearTimeout(cloudSyncTimer);
   cloudSyncTimer = setTimeout(() => {
     syncToCloud(stateSnapshot()).then((result) => {
+      if (result.ok) applyCloudSnapshot(result.snapshot || {});
       updateCloudStatus(result.ok
         ? {
-          status: "Cloud Connected",
+          status: "Cloud Synced",
           connected: true,
           lastSyncAt: result.syncedAt || new Date().toISOString(),
           lastError: ""
