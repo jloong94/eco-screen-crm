@@ -33,6 +33,7 @@ const {
   archiveDuplicateGroup,
   archiveProductionDuplicateGroup,
   activeProductionJobForOrder,
+  buildSafeOrderOwnershipComparison,
   convertQuoteToOrder,
   duplicateArchiveActionHtml,
   findExistingOrderForQuote,
@@ -50,6 +51,7 @@ const {
   restoreArchivedDuplicate,
   restoreArchivedProductionJob,
   repairWorkflowIntegrityIssue,
+  repairOrderOwnership,
   scanWorkflowIntegrity,
   scanDuplicateOrders,
   scanDuplicateProductionJobs,
@@ -694,6 +696,148 @@ assert(statusRepair.ok && state.orders.find((order) => order.id === "repair-foll
 assert(state.orders.find((order) => order.id === "repair-follow-up").total === 500, "W: status repair must preserve financial data");
 
 resetWorkflowState();
+const ownershipQuote = validQuote("ESQ-2026-0003", "Tze Yee");
+Object.assign(ownershipQuote, {
+  id: "quote-1783130657886-e7f8c485de65a8",
+  quotationNo: "ESQ-2026-0003",
+  quoteNumber: "ESQ-2026-0003",
+  customer: { name: "Tze Yee", phone: "0174590532" },
+  phone: "0174590532",
+  total: 5245.0113,
+  deposit: 1000,
+  balance: 4245.0113,
+  status: "won",
+  orderId: "order-ESQ-2026-0003",
+  linkedOrderId: "order-ESQ-2026-0003",
+  orderNo: "SO2607011",
+  orderNumber: "SO2607011",
+  updatedAt: "2026-07-01T01:00:00.000Z"
+});
+const wrongOwnerQuote = validQuote("ESQ-2026-0011", "MS Chew");
+Object.assign(wrongOwnerQuote, {
+  id: "quote-ms-chew",
+  quotationNo: "ESQ-2026-0011",
+  quoteNumber: "ESQ-2026-0011",
+  customer: { name: "MS Chew", phone: "0164950766" },
+  total: 2436,
+  deposit: 436,
+  balance: 2000,
+  status: "won",
+  orderId: "order-1784103199329-c9c68eddeaad2e",
+  linkedOrderId: "order-1784103199329-c9c68eddeaad2e",
+  orderNo: "SO2607011",
+  orderNumber: "SO2607011",
+  converted: true,
+  convertedToOrder: true,
+  updatedAt: "2026-07-01T01:00:00.000Z"
+});
+const tzeOrder = {
+  id: "order-ESQ-2026-0003",
+  orderNo: "SO2607011",
+  orderNumber: "SO2607011",
+  quoteId: wrongOwnerQuote.id,
+  quotationId: wrongOwnerQuote.id,
+  quoteNumber: "ESQ-2026-0011",
+  quotationNo: "ESQ-2026-0011",
+  customer: { name: "Tze Yee", phone: "0174590532" },
+  items: [{ id: "tze-item", productId: "p-1", width: 1500, height: 1800, quantity: 2 }],
+  total: 5245.0113,
+  deposit: 1000,
+  balance: 4245.0113,
+  status: "Confirmed",
+  updatedAt: "2026-07-01T01:00:00.000Z"
+};
+const msOrder = {
+  id: "order-1784103199329-c9c68eddeaad2e",
+  orderNo: "SO2607011",
+  orderNumber: "SO2607011",
+  quoteId: wrongOwnerQuote.id,
+  quotationId: wrongOwnerQuote.id,
+  quoteNumber: "ESQ-2026-0011",
+  quotationNo: "ESQ-2026-0011",
+  customer: { name: "MS Chew", phone: "0164950766" },
+  items: [{ id: "ms-item", productId: "p-2", width: 900, height: 1200, quantity: 1 }],
+  total: 2436,
+  deposit: 436,
+  balance: 2000,
+  status: "Confirmed",
+  updatedAt: "2026-07-01T01:00:00.000Z"
+};
+state.quotations = [ownershipQuote, wrongOwnerQuote];
+state.orders = [tzeOrder, msOrder];
+state.productionJobs = [
+  { id: "production-tze", orderId: tzeOrder.id, orderNo: "SO2607011", orderNumber: "SO2607011", status: "in_production", assignedStaff: ["staff-a"], remarks: "Keep Tze progress", updatedAt: "2026-07-01T01:00:00.000Z" },
+  { id: "production-ms", orderId: msOrder.id, orderNo: "SO2607011", orderNumber: "SO2607011", status: "completed", assignedStaff: ["staff-b"], remarks: "Keep MS progress", updatedAt: "2026-07-01T01:00:00.000Z" },
+  { id: "production-number-only", orderNo: "SO2607011", orderNumber: "SO2607011", status: "not_produced", remarks: "Must stay untouched", updatedAt: "2026-07-01T01:00:00.000Z" }
+];
+state.installationJobs = [
+  { id: "installation-tze", orderId: tzeOrder.id, orderNo: "SO2607011", orderNumber: "SO2607011", status: "scheduled", assignedStaff: ["installer-a"], remarks: "Keep Tze install", updatedAt: "2026-07-01T01:00:00.000Z" },
+  { id: "installation-ms", orderId: msOrder.id, orderNo: "SO2607011", orderNumber: "SO2607011", status: "installed", assignedStaff: ["installer-b"], remarks: "Keep MS install", updatedAt: "2026-07-01T01:00:00.000Z" }
+];
+const ownershipBefore = structuredClone({
+  quotations: state.quotations,
+  orders: state.orders,
+  productionJobs: state.productionJobs,
+  installationJobs: state.installationJobs
+});
+const ownershipIssue = scanWorkflowIntegrity().categories.M.find((issue) => issue.repair?.type === "order-ownership"
+  && issue.repair.quotationId === ownershipQuote.id
+  && issue.repair.orderId === tzeOrder.id);
+assert(ownershipIssue && ownershipIssue.problem.includes("Order Number Ownership Conflict"), "W2: Category M must clearly flag the exact Order Number Ownership Conflict");
+const ownershipComparison = buildSafeOrderOwnershipComparison(ownershipQuote.id, tzeOrder.id);
+assert(ownershipComparison.quotation.id === ownershipQuote.id && ownershipComparison.order.id === tzeOrder.id, "W2: comparison must use the exact selected stable IDs");
+assert(ownershipComparison.productionJobIds.includes("production-tze") && ownershipComparison.installationJobIds.includes("installation-tze"), "W2: comparison must list Production and Installation IDs by exact orderId");
+assert(ownershipComparison.conflicts.some((record) => record.id === msOrder.id), "W2: comparison must show the exact conflicting MS Chew Order");
+
+const rejectedOwnershipRepair = await repairOrderOwnership({
+  quotationId: ownershipQuote.id,
+  orderId: tzeOrder.id,
+  conflicts: [{ orderId: msOrder.id, replacementOrderNo: "SO2607011" }]
+}, { confirm: false, downloadBackup: false });
+assert(!rejectedOwnershipRepair.ok && JSON.stringify(state.orders) === JSON.stringify(ownershipBefore.orders), "W2: a used replacement SO number must be rejected without mutation");
+
+const ownershipRepair = await repairWorkflowIntegrityIssue(ownershipIssue.id, {
+  quotationId: ownershipQuote.id,
+  orderId: tzeOrder.id,
+  conflicts: [{ orderId: msOrder.id, replacementOrderNo: "SO2607012" }]
+}, { confirm: false, downloadBackup: false });
+assert(ownershipRepair.ok, "W2: Safe Order Ownership Repair must complete with exact IDs and an unused conflict number");
+const repairedQuote = state.quotations.find((row) => row.id === ownershipQuote.id);
+const repairedTzeOrder = state.orders.find((row) => row.id === tzeOrder.id);
+const repairedMsOrder = state.orders.find((row) => row.id === msOrder.id);
+assert(repairedQuote.orderId === tzeOrder.id && repairedQuote.linkedOrderId === tzeOrder.id, "W2: ESQ-2026-0003 must open the exact Tze Yee Order");
+assert(repairedTzeOrder.quoteId === ownershipQuote.id && repairedTzeOrder.quotationId === ownershipQuote.id, "W2: Tze Yee Order must reverse-link to the exact ESQ-2026-0003 quotation");
+assert(findOrderByNumber("SO2607011")?.id === tzeOrder.id && repairedMsOrder.orderNo === "SO2607012", "W2: SO2607011 must belong only to Tze Yee and not MS Chew");
+const protectedView = (record) => ({ customer: record.customer, items: record.items, total: record.total, deposit: record.deposit, balance: record.balance });
+assert(JSON.stringify(protectedView(repairedTzeOrder)) === JSON.stringify(protectedView(tzeOrder)), "W2: Tze Yee customer, items and financial data must remain unchanged");
+assert(JSON.stringify(protectedView(repairedMsOrder)) === JSON.stringify(protectedView(msOrder)), "W2: MS Chew customer, items and financial data must remain unchanged");
+assert(state.productionJobs.find((row) => row.id === "production-tze").orderId === tzeOrder.id
+  && state.productionJobs.find((row) => row.id === "production-ms").orderId === msOrder.id
+  && state.installationJobs.find((row) => row.id === "installation-tze").orderId === tzeOrder.id
+  && state.installationJobs.find((row) => row.id === "installation-ms").orderId === msOrder.id, "W2: Production and Installation orderId values must never be relinked by SO number");
+assert(state.productionJobs.find((row) => row.id === "production-ms").orderNo === "SO2607012"
+  && state.installationJobs.find((row) => row.id === "installation-ms").orderNo === "SO2607012", "W2: only exact MS Chew stable-ID-linked references must receive the replacement SO number");
+assert(state.productionJobs.find((row) => row.id === "production-number-only").orderNo === "SO2607011", "W2: a number-only Production record must remain untouched");
+assert(state.productionJobs.find((row) => row.id === "production-ms").status === "completed"
+  && state.productionJobs.find((row) => row.id === "production-ms").assignedStaff[0] === "staff-b"
+  && state.productionJobs.find((row) => row.id === "production-ms").remarks === "Keep MS progress", "W2: Production progress, staff and remarks must remain unchanged");
+assert(state.orders.length === ownershipBefore.orders.length
+  && state.quotations.length === ownershipBefore.quotations.length
+  && state.productionJobs.length === ownershipBefore.productionJobs.length
+  && state.installationJobs.length === ownershipBefore.installationJobs.length, "W2: repair must not create, delete, merge or archive records");
+const persistedOwnershipOrders = JSON.parse(localStorage.getItem("ecoScreenV2.orders") || "[]");
+assert(persistedOwnershipOrders.find((row) => row.id === tzeOrder.id)?.quoteId === ownershipQuote.id
+  && persistedOwnershipOrders.find((row) => row.id === msOrder.id)?.orderNo === "SO2607012", "W2: refresh storage must preserve repaired ownership and the conflict number change");
+applyCloudSnapshot({
+  quotations: ownershipBefore.quotations.map((row) => ({ ...row, updatedAt: "2020-01-01T00:00:00.000Z" })),
+  orders: ownershipBefore.orders.map((row) => ({ ...row, updatedAt: "2020-01-01T00:00:00.000Z" })),
+  productionJobs: ownershipBefore.productionJobs.map((row) => ({ ...row, updatedAt: "2020-01-01T00:00:00.000Z" })),
+  installationJobs: ownershipBefore.installationJobs.map((row) => ({ ...row, updatedAt: "2020-01-01T00:00:00.000Z" }))
+});
+assert(state.orders.find((row) => row.id === tzeOrder.id)?.quoteId === ownershipQuote.id
+  && state.orders.find((row) => row.id === msOrder.id)?.orderNo === "SO2607012", "W2: stale cloud roundtrip must not reverse the repaired ownership");
+
+resetWorkflowState();
 const syncQuote = validQuote("SYNC-QUOTE", "Production Sync Customer");
 syncQuote.status = "won";
 state.quotations = [syncQuote];
@@ -738,5 +882,6 @@ console.log([
   ,"Production cloud-failure persistence and repeat-conversion prevention: passed"
   ,"Strict quotation tabs, exact stable-ID relationships and Order conflict isolation: passed"
   ,"Workflow Integrity Check categories A-M, preview safety and selected repairs: passed"
+  ,"Safe Order Ownership Repair, exact-ID conflict renumbering and cloud-roundtrip protection: passed"
   ,"Transactional Send to Production and Production/Order status synchronization: passed"
 ].join("\n"));
