@@ -50,6 +50,7 @@ const {
   productionOrderNumber,
   restoreArchivedDuplicate,
   restoreArchivedProductionJob,
+  repairConfirmedTzeYeeOwnership,
   repairWorkflowIntegrityIssue,
   repairOrderOwnership,
   scanWorkflowIntegrity,
@@ -61,6 +62,7 @@ const {
   updateQuotationStatus
 } = await import("../src/workflow.js");
 const { quotationsForTab } = await import("../src/quotations.js");
+const { isActiveOrderRecord, isActiveWorkflowRecord } = await import("../src/workflowIntegrity.js");
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -838,6 +840,82 @@ assert(state.orders.find((row) => row.id === tzeOrder.id)?.quoteId === ownership
   && state.orders.find((row) => row.id === msOrder.id)?.orderNo === "SO2607012", "W2: stale cloud roundtrip must not reverse the repaired ownership");
 
 resetWorkflowState();
+state.quotations = structuredClone(ownershipBefore.quotations);
+state.orders = structuredClone(ownershipBefore.orders);
+state.productionJobs = structuredClone(ownershipBefore.productionJobs);
+state.installationJobs = structuredClone(ownershipBefore.installationJobs);
+const confirmedBefore = structuredClone({
+  quotations: state.quotations,
+  orders: state.orders,
+  productionJobs: state.productionJobs,
+  installationJobs: state.installationJobs
+});
+const confirmedIssue = scanWorkflowIntegrity().categories.M.find((issue) => issue.repair?.confirmedCase === "tze-yee-so2607011");
+assert(confirmedIssue && confirmedIssue.repair.quotationId === ownershipQuote.id && confirmedIssue.repair.orderId === tzeOrder.id, "W3: confirmed Tze Yee Category M issue must expose only the exact dedicated repair");
+const confirmedRepair = await repairConfirmedTzeYeeOwnership({ confirm: false, downloadBackup: false });
+assert(confirmedRepair.ok, "W3: confirmed one-click Tze Yee repair must complete with exact stable IDs");
+const confirmedTzeQuote = state.quotations.find((row) => row.id === ownershipQuote.id);
+const confirmedMsQuote = state.quotations.find((row) => row.id === wrongOwnerQuote.id);
+const confirmedTzeOrder = state.orders.find((row) => row.id === tzeOrder.id);
+const confirmedMsOrder = state.orders.find((row) => row.id === msOrder.id);
+assert(findOrderByNumber("SO2607011")?.id === tzeOrder.id, "W3: SO2607011 must open the exact Tze Yee Order");
+assert(findExistingOrderForQuote(confirmedTzeQuote)?.id === tzeOrder.id
+  && confirmedTzeQuote.status === "won"
+  && confirmedTzeQuote.orderId === tzeOrder.id
+  && confirmedTzeOrder.quoteId === ownershipQuote.id
+  && confirmedTzeOrder.quoteNumber === "ESQ-2026-0003", "W3: ESQ-2026-0003 and the Tze Yee Order must have exact symmetric links");
+assert(quotationsForTab("follow_up").some((quote) => quote.id === wrongOwnerQuote.id), "W3: MS Chew must appear only as an unlinked Follow Up quotation");
+assert(confirmedMsQuote.orderId === "" && confirmedMsQuote.linkedOrderId === ""
+  && confirmedMsQuote.orderNo === "" && confirmedMsQuote.orderNumber === ""
+  && confirmedMsQuote.converted === false && confirmedMsQuote.convertedToOrder === false, "W3: MS Chew must have no Order link or SO number");
+assert(confirmedMsOrder.status === "cancelled_archived" && confirmedMsOrder.isArchived === true
+  && confirmedMsOrder.archiveReason === "Quotation was not confirmed; erroneous Order record"
+  && !isActiveOrderRecord(confirmedMsOrder), "W3: erroneous MS Chew Order must remain stored but be hidden from normal Orders");
+const confirmedMsProduction = state.productionJobs.find((row) => row.id === "production-ms");
+const confirmedMsInstallation = state.installationJobs.find((row) => row.id === "installation-ms");
+assert(confirmedMsProduction.status === "cancelled_archived" && confirmedMsProduction.isArchived === true
+  && confirmedMsProduction.orderId === msOrder.id && !isActiveWorkflowRecord(confirmedMsProduction)
+  && !productionJobsForDisplay(state.productionJobs, false).some((row) => row.id === confirmedMsProduction.id), "W3: exact MS Chew Production must be archived without relinking and hidden from active Production");
+assert(confirmedMsInstallation.status === "cancelled_archived" && confirmedMsInstallation.isArchived === true
+  && confirmedMsInstallation.orderId === msOrder.id && !isActiveWorkflowRecord(confirmedMsInstallation), "W3: exact MS Chew Installation must be archived without relinking");
+assert(confirmedMsProduction.statusBeforeArchive === "completed"
+  && confirmedMsProduction.assignedStaff[0] === "staff-b"
+  && confirmedMsProduction.remarks === "Keep MS progress"
+  && confirmedMsInstallation.statusBeforeArchive === "installed"
+  && confirmedMsInstallation.assignedStaff[0] === "installer-b"
+  && confirmedMsInstallation.remarks === "Keep MS install", "W3: archived workflow records must preserve prior status, staff and remarks");
+assert(state.productionJobs.find((row) => row.id === "production-tze").status === "in_production"
+  && state.installationJobs.find((row) => row.id === "installation-tze").status === "scheduled"
+  && state.productionJobs.find((row) => row.id === "production-number-only").status === "not_produced", "W3: Tze Yee and number-only workflow records must remain untouched");
+assert(JSON.stringify(protectedView(confirmedTzeOrder)) === JSON.stringify(protectedView(tzeOrder))
+  && JSON.stringify(protectedView(confirmedMsOrder)) === JSON.stringify(protectedView(msOrder))
+  && JSON.stringify(protectedView(confirmedTzeQuote)) === JSON.stringify(protectedView(ownershipQuote))
+  && JSON.stringify(protectedView(confirmedMsQuote)) === JSON.stringify(protectedView(wrongOwnerQuote)), "W3: all original customer, item and financial information must remain unchanged");
+assert(state.orders.length === confirmedBefore.orders.length
+  && state.quotations.length === confirmedBefore.quotations.length
+  && state.productionJobs.length === confirmedBefore.productionJobs.length
+  && state.installationJobs.length === confirmedBefore.installationJobs.length, "W3: confirmed repair must not hard-delete, merge or create records");
+const persistedConfirmed = {
+  quotations: JSON.parse(localStorage.getItem("ecoScreenV2.quotations") || "[]"),
+  orders: JSON.parse(localStorage.getItem("ecoScreenV2.orders") || "[]"),
+  productionJobs: JSON.parse(localStorage.getItem("ecoScreenV2.productionJobs") || "[]"),
+  installationJobs: JSON.parse(localStorage.getItem("ecoScreenV2.installationJobs") || "[]")
+};
+assert(persistedConfirmed.quotations.find((row) => row.id === wrongOwnerQuote.id)?.status === "follow_up"
+  && persistedConfirmed.orders.find((row) => row.id === msOrder.id)?.status === "cancelled_archived"
+  && persistedConfirmed.productionJobs.find((row) => row.id === "production-ms")?.status === "cancelled_archived"
+  && persistedConfirmed.installationJobs.find((row) => row.id === "installation-ms")?.status === "cancelled_archived", "W3: refresh storage must preserve the confirmed repair");
+applyCloudSnapshot({
+  quotations: confirmedBefore.quotations.map((row) => ({ ...row, updatedAt: "2020-01-01T00:00:00.000Z" })),
+  orders: confirmedBefore.orders.map((row) => ({ ...row, updatedAt: "2020-01-01T00:00:00.000Z" })),
+  productionJobs: confirmedBefore.productionJobs.map((row) => ({ ...row, updatedAt: "2020-01-01T00:00:00.000Z" })),
+  installationJobs: confirmedBefore.installationJobs.map((row) => ({ ...row, updatedAt: "2020-01-01T00:00:00.000Z" }))
+});
+assert(state.quotations.find((row) => row.id === wrongOwnerQuote.id)?.status === "follow_up"
+  && state.orders.find((row) => row.id === msOrder.id)?.status === "cancelled_archived"
+  && state.productionJobs.find((row) => row.id === "production-ms")?.status === "cancelled_archived", "W3: stale cloud roundtrip must not reverse the confirmed repair");
+
+resetWorkflowState();
 const syncQuote = validQuote("SYNC-QUOTE", "Production Sync Customer");
 syncQuote.status = "won";
 state.quotations = [syncQuote];
@@ -883,5 +961,6 @@ console.log([
   ,"Strict quotation tabs, exact stable-ID relationships and Order conflict isolation: passed"
   ,"Workflow Integrity Check categories A-M, preview safety and selected repairs: passed"
   ,"Safe Order Ownership Repair, exact-ID conflict renumbering and cloud-roundtrip protection: passed"
+  ,"Confirmed one-click Tze Yee repair, Follow Up restoration and safe erroneous-workflow archive: passed"
   ,"Transactional Send to Production and Production/Order status synchronization: passed"
 ].join("\n"));
