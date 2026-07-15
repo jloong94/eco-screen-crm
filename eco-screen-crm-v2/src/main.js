@@ -21,7 +21,7 @@ import { itemWithCalculatedTotals, money, quoteTotals, toNumber } from "./calcul
 import { attachWorkflowEvents, getQuotationDisplayNo, nextSalesOrderNumber, renderWorkflowModules } from "./workflow.js";
 import { t } from "./i18n.js";
 import { canAccessPage, defaultPageForRole, isBossOrAdmin, pageDefinitions, role } from "./permissions.js";
-import { isCloudConfigured, safeSyncWithCloud, syncFromCloud, syncToCloud } from "./cloudSync.js";
+import { cloudCollections, cloudConfigurationIssue, isCloudConfigured, safeSyncWithCloud, syncFromCloud, syncToCloud } from "./cloudSync.js";
 
 let cloudHydrated = false;
 let monthlySummaryMonth = currentMonthValue();
@@ -246,6 +246,7 @@ function productionPageHtml() {
         </div>
         <span class="pill" id="workflowStatus">${t("Ready")}</span>
       </div>
+      <div id="productionTools"></div>
       <div id="productionList" class="workflow-list"></div>
     </section>
   `;
@@ -332,13 +333,13 @@ function renderShell() {
 function syncCloudOnFirstLogin() {
   if (cloudHydrated || !isCloudConfigured()) return;
   cloudHydrated = true;
-  updateCloudStatus({ status: "Checking cloud...", connected: false });
-  safeSyncWithCloud(stateSnapshot()).then((result) => {
+  updateCloudStatus({ status: "Syncing...", connected: false });
+  safeSyncWithCloud(stateSnapshot(), { allowWrites: false }).then((result) => {
     applyCloudSnapshot(result.snapshot || {});
     updateCloudStatus({
-      status: result.ok ? "Cloud Connected" : "Cloud Sync Failed",
+      status: result.ok ? "Cloud Checked (read-only)" : "Cloud Sync Failed",
       connected: result.ok,
-      lastSyncAt: result.ok ? new Date().toISOString() : state.cloud.lastSyncAt,
+      lastSyncAt: state.cloud.lastSyncAt,
       lastError: result.ok ? "" : result.reason || "Cloud sync failed.",
       counts: result.summary?.cloudCounts || {}
     });
@@ -354,9 +355,19 @@ function syncCloudOnFirstLogin() {
 }
 
 function cloudStatusHtml() {
-  const status = isCloudConfigured() ? state.cloud.status : "Local Mode Only";
+  const configurationIssue = cloudConfigurationIssue();
+  const baseStatus = isCloudConfigured() ? state.cloud.status : "Local Mode";
+  const status = configurationIssue
+    ? `Local Mode: ${configurationIssue}`
+    : state.cloud.connected
+      ? baseStatus
+      : baseStatus === "Cloud Sync Failed"
+        ? `Cloud Sync Failed: ${state.cloud.lastError || "Unknown error"}`
+        : baseStatus === "Checking cloud..."
+          ? "Syncing..."
+          : baseStatus;
   const lastSync = state.cloud.lastSyncAt ? new Date(state.cloud.lastSyncAt).toLocaleString("en-MY") : "-";
-  const statusClass = status === "Cloud Connected" ? "success" : status === "Cloud Sync Failed" ? "danger" : "";
+  const statusClass = state.cloud.connected ? "success" : status.startsWith("Cloud Sync Failed") ? "danger" : "";
   return `<span class="pill ${statusClass}" title="${escapeHtml(state.cloud.lastError || "")}">${escapeHtml(status)} | Last Sync: ${escapeHtml(lastSync)}</span>`;
 }
 
@@ -371,6 +382,10 @@ function cloudActionButtonsHtml() {
 
 function cloudDebugPanelHtml() {
   if (!isBossOrAdmin()) return "";
+  const local = stateSnapshot();
+  const collectionRows = cloudCollections.map((collection) => `
+    <tr><td>${escapeHtml(collection)}</td><td>${Array.isArray(local[collection]) ? local[collection].length : 0}</td><td>${state.cloud.counts[collection] ?? "-"}</td></tr>
+  `).join("");
   return `
     <section class="panel cloud-debug-panel">
       <div class="panel-head">
@@ -379,31 +394,28 @@ function cloudDebugPanelHtml() {
           <h2>Sync Safety Check</h2>
         </div>
       </div>
-      <div class="dashboard-grid">
-        <div class="metric-card"><span>Local quotations count</span><strong>${state.quotations.length}</strong></div>
-        <div class="metric-card"><span>Cloud quotations count</span><strong>${state.cloud.counts.quotations ?? "-"}</strong></div>
-        <div class="metric-card"><span>Local orders count</span><strong>${state.orders.length}</strong></div>
-        <div class="metric-card"><span>Cloud orders count</span><strong>${state.cloud.counts.orders ?? "-"}</strong></div>
-      </div>
+      <p class="muted-text">Last successful sync: ${escapeHtml(state.cloud.lastSyncAt ? new Date(state.cloud.lastSyncAt).toLocaleString("en-MY") : "-")}</p>
       <p class="muted-text">Last cloud sync error: ${escapeHtml(state.cloud.lastError || "-")}</p>
+      <p class="muted-text">Collections synced: ${escapeHtml(cloudCollections.join(", "))}</p>
+      <div class="table-wrap"><table><thead><tr><th>Collection</th><th>Local</th><th>Cloud</th></tr></thead><tbody>${collectionRows}</tbody></table></div>
     </section>
   `;
 }
 
 function manualSyncNow() {
   if (!isBossOrAdmin()) return;
-  updateCloudStatus({ status: "Checking cloud..." });
+  updateCloudStatus({ status: "Syncing...", connected: false });
   renderShell();
   safeSyncWithCloud(stateSnapshot()).then((result) => {
     applyCloudSnapshot(result.snapshot || {});
     updateCloudStatus({
-      status: result.ok ? "Cloud Connected" : "Cloud Sync Failed",
+      status: result.ok ? "Cloud Synced" : "Cloud Sync Failed",
       connected: result.ok,
       lastSyncAt: result.ok ? new Date().toISOString() : state.cloud.lastSyncAt,
       lastError: result.ok ? "" : result.reason || "Cloud sync failed.",
       counts: result.summary?.cloudCounts || {}
     });
-    window.alert(syncSummaryText(result.summary));
+    window.alert(syncSummaryText(result));
     renderShell();
   }).catch((error) => {
     updateCloudStatus({
@@ -416,14 +428,16 @@ function manualSyncNow() {
   });
 }
 
-function syncSummaryText(summary = {}) {
+function syncSummaryText(result = {}) {
+  const summary = result.summary || {};
   const errors = summary.errors?.length ? `\nErrors: ${summary.errors.join("; ")}` : "";
   return [
-    "Sync completed.",
+    result.ok ? "Cloud sync completed." : `Cloud Sync Failed: ${result.reason || "Unknown error"}`,
     `Quotations uploaded: ${summary.uploaded?.quotations || 0}`,
     `Quotations downloaded: ${summary.downloaded?.quotations || 0}`,
     `Orders uploaded: ${summary.uploaded?.orders || 0}`,
-    `Orders downloaded: ${summary.downloaded?.orders || 0}`
+    `Orders downloaded: ${summary.downloaded?.orders || 0}`,
+    summary.backupCreated ? "Full JSON backup downloaded before the first cloud write." : "No cloud write backup was needed for this sync."
   ].join("\n") + errors;
 }
 
@@ -1241,12 +1255,12 @@ function monthlySummaryHtml() {
 }
 
 function attachNavigationEvents() {
-  document.querySelector("#moduleNavigation").addEventListener("click", (event) => {
-    const page = event.target.dataset.page;
+  document.querySelectorAll("#moduleNavigation [data-page]").forEach((button) => button.addEventListener("click", (event) => {
+    const page = event.currentTarget.dataset.page;
     if (!page || !canAccessPage(role(), page)) return;
     setPage(page);
     renderShell();
-  });
+  }));
 }
 
 function renderCustomers() {

@@ -27,15 +27,22 @@ const {
   state
 } = await import("../src/state.js");
 const { runtimeEnv } = await import("../src/env.js");
+const { mergeRows, safeSyncWithCloud } = await import("../src/cloudSync.js");
 const { lineTotal } = await import("../src/calculations.js");
 const {
   archiveDuplicateGroup,
   convertQuoteToOrder,
+  duplicateArchiveActionHtml,
   findExistingOrderForQuote,
   findOrderByNumber,
   monthlyOrderSequence,
   nextSalesOrderNumber,
   quotationOrderAction,
+  linkedOrderForProduction,
+  markInstallationStatus,
+  markProductionStatus,
+  productionJobMatchesSearch,
+  productionOrderNumber,
   restoreArchivedDuplicate,
   scanDuplicateOrders,
   updateOrderNumber,
@@ -372,6 +379,10 @@ const confirmedDuplicateGroup = duplicateScan.confirmedGroups.find((group) => gr
   && group.members.some((member) => member.order.id === duplicateOrder.id));
 assert(confirmedDuplicateGroup, "M: same quotation ID should be a confirmed duplicate group");
 const mainMemberKey = confirmedDuplicateGroup.members.find((member) => member.order.id === duplicateMainOrder.id).key;
+assert(!duplicateArchiveActionHtml(confirmedDuplicateGroup, "").includes("Archive Other Duplicates"), "M: archive action must stay hidden until a Main Order is selected");
+const selectedArchiveAction = duplicateArchiveActionHtml(confirmedDuplicateGroup, mainMemberKey);
+assert(selectedArchiveAction.includes("Archive Other Duplicates"), "M: selecting a Main Order must reveal Archive Other Duplicates");
+assert(selectedArchiveAction.includes("Linked records") && selectedArchiveAction.includes("Warranty"), "M: duplicate archive preview must summarize linked record counts");
 const archiveResult = await archiveDuplicateGroup(confirmedDuplicateGroup.id, mainMemberKey, { confirm: false, downloadBackup: false });
 assert(archiveResult.ok, "M: confirmed duplicate should archive with a selected Main Order");
 const archivedDuplicate = state.orders.find((order) => order.id === duplicateOrder.id);
@@ -429,6 +440,86 @@ const possibleScan = scanDuplicateOrders();
 assert(possibleScan.possibleGroups.length === 1, "O: matching customer/total/items within 30 minutes should be previewed as possible duplicate");
 assert(possibleScan.confirmedGroups.length === 0, "O: possible duplicate must not be auto-archivable");
 
+const localNewest = { id: "merge-order", customer: { name: "Newest Local" }, updatedAt: "2026-07-15T08:00:00.000Z" };
+const cloudOlder = { id: "merge-order", customer: { name: "Older Cloud" }, updatedAt: "2026-07-14T08:00:00.000Z" };
+const cloudOnly = { id: "cloud-only-order", updatedAt: "2026-07-14T09:00:00.000Z" };
+const mergedRows = mergeRows([localNewest], [cloudOlder, cloudOnly]);
+assert(mergedRows.length === 2, "P: stable-ID merge must not create duplicates");
+assert(mergedRows.find((row) => row.id === "merge-order").customer.name === "Newest Local", "P: newer local record must beat older cloud record");
+assert(mergedRows.some((row) => row.id === "cloud-only-order"), "P: cloud-only records must download during merge");
+
+runtimeEnv.VITE_SUPABASE_URL = "";
+runtimeEnv.VITE_SUPABASE_ANON_KEY = "";
+const missingConfigSync = await safeSyncWithCloud({ orders: [localNewest] });
+assert(!missingConfigSync.ok, "P: missing cloud configuration must report failure without changing local data");
+assert(missingConfigSync.reason.includes("VITE_SUPABASE_URL") && missingConfigSync.reason.includes("VITE_SUPABASE_ANON_KEY"), "P: missing configuration must name both Vercel variables");
+assert(missingConfigSync.snapshot.orders[0].customer.name === "Newest Local", "P: failed cloud read must preserve the local snapshot");
+
+runtimeEnv.VITE_SUPABASE_URL = "https://offline.example.invalid";
+runtimeEnv.VITE_SUPABASE_ANON_KEY = "test-key";
+const failedReadMethods = [];
+globalThis.fetch = async (_url, options = {}) => {
+  failedReadMethods.push(options.method || "GET");
+  throw new Error("Simulated DNS failure");
+};
+const failedReadSync = await safeSyncWithCloud({ orders: [localNewest] });
+assert(!failedReadSync.ok, "P: an unreadable cloud must fail safely");
+assert(!failedReadMethods.includes("POST"), "P: failed cloud reads must never be treated as empty cloud data or trigger writes");
+assert(failedReadSync.snapshot.orders[0].customer.name === "Newest Local", "P: unreadable cloud must not overwrite local rows");
+
+localStorage.removeItem("ecoScreenV2.preCloudWriteBackup.v1");
+const simulatedCloud = Object.fromEntries(["users", "customers", "products", "quotations", "orders", "adsEntries", "productionJobs", "installationJobs", "warrantyCards", "companySettings"].map((collection) => [collection, []]));
+simulatedCloud.orders = [cloudOlder, cloudOnly];
+let backupWrites = 0;
+let cloudPostWrites = 0;
+globalThis.fetch = async (url, options = {}) => {
+  if ((options.method || "GET") === "POST") {
+    const body = JSON.parse(options.body);
+    simulatedCloud[body.collection] = body.data;
+    cloudPostWrites += 1;
+    return { ok: true, status: 201, json: async () => ({}), text: async () => "" };
+  }
+  const match = String(url).match(/collection=eq\.([^&]+)/);
+  const collection = decodeURIComponent(match?.[1] || "");
+  const rows = simulatedCloud[collection]?.length ? [{ collection, data: simulatedCloud[collection], updated_at: "2026-07-14T09:00:00.000Z" }] : [];
+  return { ok: true, status: 200, json: async () => rows, text: async () => JSON.stringify(rows) };
+};
+const readOnlySafeSync = await safeSyncWithCloud({ orders: [localNewest] }, { allowWrites: false, backupWriter: async () => { backupWrites += 1; return true; } });
+assert(readOnlySafeSync.ok && readOnlySafeSync.readOnly, "P: first-login cloud hydration must be read-only");
+assert(cloudPostWrites === 0, "P: first-login cloud hydration must not write before Boss/Admin reviews counts and presses Sync Now");
+assert(backupWrites === 0, "P: a read-only cloud check must not create a pre-write backup");
+assert(readOnlySafeSync.summary.pendingWrites.orders === 1, "P: read-only cloud check must report pending order writes");
+const successfulSafeSync = await safeSyncWithCloud({ orders: [localNewest] }, { backupWriter: async () => { backupWrites += 1; return true; } });
+assert(successfulSafeSync.ok, "P: readable cloud should merge and sync successfully");
+assert(backupWrites === 1, "P: the first repaired cloud write must create one full JSON backup");
+assert(cloudPostWrites === 1, "P: only the changed collection should be written after a full read check");
+assert(simulatedCloud.orders.length === 2 && simulatedCloud.orders.find((row) => row.id === "merge-order").customer.name === "Newest Local", "P: uploaded cloud snapshot must retain cloud-only rows and the newest stable-ID record");
+
+runtimeEnv.VITE_SUPABASE_URL = "";
+runtimeEnv.VITE_SUPABASE_ANON_KEY = "";
+resetWorkflowState();
+state.currentUser = { userId: "boss-test", username: "boss-test", role: "Boss", active: true };
+state.role = "Boss";
+const productionQuote = validQuote("PRODUCTION-QUOTE", "Production Search Customer");
+productionQuote.status = "won";
+state.quotations = [productionQuote];
+const productionConversion = await convertQuoteToOrder(productionQuote.id);
+assert(productionConversion.ok, "Q: production lookup test order should convert");
+const productionOrder = state.orders[0];
+const productionJob = state.productionJobs[0];
+assert(linkedOrderForProduction(productionJob)?.id === productionOrder.id, "Q: Production job should resolve its actual linked Order record");
+assert(productionOrderNumber(productionJob) === productionOrder.orderNo, "Q: Production heading must use the linked SO Order No");
+assert(productionJobMatchesSearch(productionJob, productionOrder.orderNo), "Q: Production search should find SO Order No");
+assert(productionJobMatchesSearch(productionJob, "Production Search Customer"), "Q: Production search should find customer");
+assert(productionJobMatchesSearch(productionJob, "0123456789"), "Q: Production search should find phone");
+assert(productionJobMatchesSearch(productionJob, "PRODUCTION-QUOTE"), "Q: Production search should find quotation number");
+assert(productionOrderNumber({ id: "orphan-production", productionNumber: "ESP-2026-9999" }) === "Order Number Missing", "Q: orphan Production job must not display or guess from ESP");
+markProductionStatus(productionJob.id, "in_production");
+assert(state.productionJobs.find((job) => job.id === productionJob.id).status === "in_production", "Q: Production status updates must still work");
+const productionInstallationJob = state.installationJobs[0];
+markInstallationStatus(productionInstallationJob.id, "scheduled");
+assert(state.installationJobs.find((job) => job.id === productionInstallationJob.id).status === "scheduled", "Q: Installation status updates must still work");
+
 console.log([
   "Editable unit price and manual final price: passed",
   "Monthly SO numbering including legacy formats and >999: passed",
@@ -445,4 +536,6 @@ console.log([
   "Confirmed duplicate scan, Main Order archive and linked reference repair: passed",
   "Archived duplicate restore and cloud-failure local persistence: passed",
   "Order number conflict and possible duplicate preview: passed"
+  ,"Safe cloud stable-ID merge and missing configuration diagnostics: passed"
+  ,"Production SO Order No resolution and search: passed"
 ].join("\n"));

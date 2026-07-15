@@ -387,6 +387,36 @@ input:focus, select:focus, textarea:focus {
   color: var(--ink);
   font-size: 12px;
 }
+.duplicate-archive-action {
+  position: sticky;
+  bottom: 8px;
+  z-index: 2;
+  display: grid;
+  gap: 8px;
+  border: 2px solid #dc2626;
+  border-radius: 10px;
+  background: #fff7f7;
+  padding: 12px;
+  box-shadow: 0 8px 24px rgba(127, 29, 29, 0.14);
+}
+.duplicate-archive-action p { margin: 0; }
+.production-tools { margin-bottom: 14px; }
+.internal-details {
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.internal-details summary { cursor: pointer; font-weight: 700; }
+.detail-dialog {
+  width: min(760px, calc(100vw - 24px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  border: 0;
+  border-radius: 14px;
+  padding: 18px;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
+}
+.detail-dialog::backdrop { background: rgba(15, 23, 42, 0.55); }
 .warning-text { color: #9a3412 !important; }
 .filter-tabs {
   display: flex;

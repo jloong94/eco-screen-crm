@@ -101,6 +101,8 @@ let editingOrderNumberId = "";
 let duplicateScanVisible = false;
 let duplicateScanResult = null;
 let duplicateArchiveBusy = false;
+const duplicateMainSelections = new Map();
+let productionSearch = "";
 let orderSearch = {
   orderNumber: "",
   customerName: "",
@@ -193,9 +195,7 @@ export async function convertQuoteToOrder(quoteId) {
         ? `${baseMessage} Saved locally.`
         : baseMessage;
     showWorkflowMessage(message, cloudFailed ? "warning" : "success");
-    orderSearch = { ...orderSearch, orderNumber: getOrderDisplayNo(order), filter: "all", highlightId: order.id };
-    renderWorkflowModules();
-    scrollToOrders();
+    openOrderInOrders(order, message, cloudFailed ? "warning" : "success");
     return {
       ok: true,
       message,
@@ -605,10 +605,8 @@ export async function openOrderForQuotation(quoteId) {
     }
   }
 
-  orderSearch = { ...orderSearch, orderNumber: getOrderDisplayNo(order), filter: "all", page: 1, highlightId: order.id };
-  document.querySelector?.('[data-page="orders"]')?.click();
-  setTimeout(() => document.querySelector?.(`[data-order-card="${order.id}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
-  showWorkflowMessage(`Existing Order found: ${getOrderDisplayNo(order)}`, "success");
+  const message = `Existing Order found: ${getOrderDisplayNo(order)}`;
+  openOrderInOrders(order, message, "success");
   return { ok: true, order, repaired: needsRepair };
 }
 
@@ -655,6 +653,31 @@ function scrollToOrders() {
   document.querySelector("#ordersPanel")?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+function resetOrderSearchForOrder(order) {
+  orderSearch = {
+    orderNumber: "",
+    customerName: "",
+    phone: "",
+    filter: "all",
+    status: "",
+    installationDate: "",
+    sort: "updated",
+    page: 1,
+    highlightId: order.id
+  };
+}
+
+function openOrderInOrders(order, message, type = "success") {
+  resetOrderSearchForOrder(order);
+  const ordersNavigation = document.querySelector?.('[data-page="orders"]');
+  if (ordersNavigation && state.currentPage !== "orders") ordersNavigation.click();
+  else renderOrders();
+  setTimeout(() => {
+    document.querySelector?.(`[data-order-card="${order.id}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    showWorkflowMessage(message, type);
+  }, 50);
+}
+
 export function renderWorkflowModules() {
   renderOrders();
   renderProductionJobs();
@@ -664,12 +687,15 @@ export function renderWorkflowModules() {
 export function attachWorkflowEvents() {
   document.querySelector("#orderTools")?.addEventListener("input", handleOrderSearchInput);
   document.querySelector("#orderTools")?.addEventListener("click", handleOrderToolsClick);
+  document.querySelector("#orderTools")?.addEventListener("change", handleOrderToolsChange);
   document.querySelector("#orderProgressBoard")?.addEventListener("click", handleOrderToolsClick);
   document.querySelector("#orderList")?.addEventListener("click", handleOrderClick);
   document.querySelector("#orderList")?.addEventListener("input", handleOrderItemInput);
   document.querySelector("#orderList")?.addEventListener("change", handleOrderChange);
   document.querySelector("#productionList")?.addEventListener("click", handleProductionClick);
   document.querySelector("#productionList")?.addEventListener("change", handleProductionChange);
+  document.querySelector("#productionTools")?.addEventListener("input", handleProductionSearch);
+  document.querySelector("#productionTools")?.addEventListener("click", handleProductionSearchClick);
   document.querySelector("#installationList")?.addEventListener("click", handleInstallationClick);
   document.querySelector("#installationList")?.addEventListener("change", handleInstallationChange);
 }
@@ -706,7 +732,7 @@ function renderOrderProgressBoard() {
     board.innerHTML = "";
     return;
   }
-  const filtered = state.orders.filter((order) => matchesOrderSearch(order) && matchesBoardDateFilter(order));
+  const filtered = state.orders.filter((order) => order.status !== "duplicate_archived" && matchesOrderSearch(order) && matchesBoardDateFilter(order));
   board.innerHTML = `
     <section class="progress-board">
       <div class="section-head">
@@ -732,7 +758,7 @@ function renderOrderTools() {
   tools.innerHTML = `
     <section class="order-tools">
       <div class="form-grid compact">
-        <label>${t("Search Order Number")}<input data-order-search="orderNumber" value="${orderSearch.orderNumber}" placeholder="ESO-2026-0001 or 0001" /></label>
+        <label>Search SO Order No / Quotation No<input data-order-search="orderNumber" value="${orderSearch.orderNumber}" placeholder="SO2607001 or quotation number" /></label>
         <label>${t("Search Customer Name")}<input data-order-search="customerName" value="${orderSearch.customerName}" placeholder="Customer name" /></label>
         <label>${t("Search Phone Number")}<input data-order-search="phone" value="${orderSearch.phone}" placeholder="0123456789" /></label>
         <label>${t("Status")}<select data-order-search="status"><option value="">All status</option>${visibleFilters.map((filter) => `<option value="${filter.id}" ${orderSearch.status === filter.id ? "selected" : ""}>${t(filter.label)}</option>`).join("")}</select></label>
@@ -871,33 +897,30 @@ function duplicateOrderPanelHtml() {
 }
 
 function duplicateGroupsHtml(title, groups, type) {
-  if (!groups.length) return "";
   return `
     <div class="duplicate-section">
       <h4>${title}</h4>
+      ${groups.length ? "" : `<p class="muted-text">${t("None found in this section.")}</p>`}
       ${groups.map((group) => `
         <article class="duplicate-group-card" data-duplicate-group-card="${group.id}">
           <p><strong>${escapeHtml(group.reasons.join(" | "))}</strong></p>
           <div class="duplicate-member-list">
-            ${group.members.map((member, index) => duplicateMemberHtml(member, group, type === "confirmed", index === 0)).join("")}
+            ${group.members.map((member) => duplicateMemberHtml(member, group, type === "confirmed")).join("")}
           </div>
-          ${type === "confirmed" ? `
-            <div class="actions">
-              <button class="btn danger" type="button" data-archive-duplicate-group="${group.id}" ${duplicateArchiveBusy ? "disabled" : ""}>${t("Archive Duplicate")}</button>
-            </div>
-          ` : type === "conflict" ? `<p class="warning-text">${t("Do not archive automatically. Open an order and edit one Order No manually.")}</p>` : `<p class="muted-text">${t("Possible duplicates are preview only and cannot be archived here.")}</p>`}
+          ${type === "confirmed" ? duplicateArchiveActionHtml(group) : `<p class="warning-text"><strong>${t("Manual review required")}</strong></p>`}
         </article>
       `).join("")}
     </div>
   `;
 }
 
-function duplicateMemberHtml(member, group, selectable, checked) {
+function duplicateMemberHtml(member, group, selectable) {
   const order = member.order;
   const details = duplicateOrderDetails(member);
+  const selected = duplicateMainSelections.get(group.id) === member.key;
   return `
     <div class="duplicate-member">
-      ${selectable ? `<label class="duplicate-main-choice"><input type="radio" name="duplicate-main-${group.id}" data-duplicate-main="${escapeHtml(member.key)}" ${checked ? "checked" : ""} /> ${t("Keep as Main Order")}</label>` : ""}
+      ${selectable ? `<label class="duplicate-main-choice"><input type="radio" name="duplicate-main-${group.id}" data-duplicate-main="${escapeHtml(member.key)}" data-duplicate-group="${group.id}" ${selected ? "checked" : ""} /> ${t("Select as Main Order")}</label>` : ""}
       <div class="duplicate-member-grid">
         <span>${t("Order ID")}<strong>${escapeHtml(order.id || "-")}</strong></span>
         <span>${t("Order No")}<strong>${escapeHtml(getOrderDisplayNo(order) || "-")}</strong></span>
@@ -909,8 +932,31 @@ function duplicateMemberHtml(member, group, selectable, checked) {
         <span>${t("Status")}<strong>${statusLabel(order.status || "-")}</strong></span>
         <span>${t("Production job count")}<strong>${details.productionCount}</strong></span>
         <span>${t("Installation job count")}<strong>${details.installationCount}</strong></span>
+        <span>Warranty count<strong>${details.warrantyCount}</strong></span>
       </div>
       ${selectable ? "" : `<button class="btn" type="button" data-duplicate-open-order="${escapeHtml(order.id || "")}">${t("Open Order")}</button>`}
+    </div>
+  `;
+}
+
+export function duplicateArchiveActionHtml(group, selectedKey = duplicateMainSelections.get(group.id)) {
+  if (!selectedKey) return `<p class="muted-text">${t("Select one Main Order to reveal the archive action.")}</p>`;
+  const mainMember = group.members.find((member) => member.key === selectedKey);
+  if (!mainMember) return "";
+  const duplicateMembers = group.members.filter((member) => member.key !== selectedKey);
+  const linkedCounts = duplicateMembers.reduce((counts, member) => {
+    const details = duplicateOrderDetails(member);
+    counts.production += details.productionCount;
+    counts.installation += details.installationCount;
+    counts.warranty += details.warrantyCount;
+    return counts;
+  }, { production: 0, installation: 0, warranty: 0 });
+  return `
+    <div class="duplicate-archive-action">
+      <p><strong>Main Order:</strong> ${escapeHtml(getOrderDisplayNo(mainMember.order) || mainMember.order.id || "-")}</p>
+      <p><strong>Orders to archive:</strong> ${duplicateMembers.map((member) => escapeHtml(getOrderDisplayNo(member.order) || member.order.id || "-")).join(", ")}</p>
+      <p><strong>Linked records:</strong> Production ${linkedCounts.production} | Installation ${linkedCounts.installation} | Warranty ${linkedCounts.warranty}</p>
+      <button class="btn danger" type="button" data-archive-duplicate-group="${group.id}" ${duplicateArchiveBusy ? "disabled" : ""}>${t("Archive Other Duplicates")}</button>
     </div>
   `;
 }
@@ -986,7 +1032,8 @@ function duplicateOrderDetails(member) {
   return {
     quotationNo: order.quoteNumber || order.quotationNo || order.quoteNo || getQuotationDisplayNo(quotation || {}),
     productionCount: state.productionJobs.filter(belongs).length,
-    installationCount: state.installationJobs.filter(belongs).length
+    installationCount: state.installationJobs.filter(belongs).length,
+    warrantyCount: state.warrantyCards.filter(belongs).length
   };
 }
 
@@ -1166,11 +1213,12 @@ function filteredOrders() {
 
 function matchesOrderSearch(order) {
   const orderNumber = normalizeText(getOrderDisplayNo(order));
+  const quotationNumber = normalizeText(order.quoteNumber || order.quotationNo || order.quoteNo);
   const customerName = normalizeText(order.customer?.name);
   const phone = normalizeText(order.customer?.phone);
   const installationJob = getOrderInstallationJob(order);
   const installDate = installationJob?.installationDate || order.installationDate || "";
-  return (!orderSearch.orderNumber || orderNumber.includes(normalizeText(orderSearch.orderNumber)))
+  return (!orderSearch.orderNumber || orderNumber.includes(normalizeText(orderSearch.orderNumber)) || quotationNumber.includes(normalizeText(orderSearch.orderNumber)))
     && (!orderSearch.customerName || customerName.includes(normalizeText(orderSearch.customerName)))
     && (!orderSearch.phone || phone.includes(normalizeText(orderSearch.phone)))
     && (!orderSearch.status || getOrderProgressCategory(order) === orderSearch.status)
@@ -1178,7 +1226,7 @@ function matchesOrderSearch(order) {
 }
 
 function matchesOrderFilter(order) {
-  if (orderSearch.filter === "all") return true;
+  if (orderSearch.filter === "all") return order.status !== "duplicate_archived";
   if (orderSearch.filter === "duplicate-archived") return order.status === "duplicate_archived";
   if (["today-installation", "week-installation", "overdue-installation"].includes(orderSearch.filter)) return matchesBoardDateFilter(order);
   if (orderSearch.filter === "active") return !["archived", "duplicate-archived", "completed"].includes(getOrderProgressCategory(order));
@@ -1327,29 +1375,79 @@ function formatShortDate(value) {
 }
 
 function renderProductionJobs() {
+  renderProductionTools();
   const list = document.querySelector("#productionList");
   if (!list) return;
-  list.innerHTML = state.productionJobs.length ? state.productionJobs.map((job) => `
+  const jobs = state.productionJobs.filter((job) => productionJobMatchesSearch(job));
+  list.innerHTML = jobs.length ? jobs.map((job) => {
+    const order = linkedOrderForProduction(job);
+    const orderNumber = productionOrderNumber(job);
+    const customerName = order?.customer?.name || order?.customerName || job.customerName || "-";
+    return `
     <article class="card">
       <div class="card-head">
         <div>
-          <strong>${job.productionNumber}</strong>
-          <p class="muted-text">${t("Order")}: ${job.orderNo || job.orderNumber} | ${job.customerName || "-"}</p>
+          <strong>${escapeHtml(orderNumber)}</strong>
+          <p>${escapeHtml(customerName)}</p>
           <p class="muted-text">${t("Quote")}: ${job.quoteNumber || job.quotationNo || "-"}</p>
           <p class="muted-text">${t("Installation Date")}: ${job.installationDate || "-"}</p>
         </div>
         <span class="pill">${statusLabel(job.status)}</span>
       </div>
+      ${!order && isBossOrAdmin() ? `<p class="warning-text"><strong>Linked Order record is missing.</strong> Production job ID: ${escapeHtml(job.id || "-")}. Repair the order relationship before production.</p>` : ""}
       <label>${t("Production Status")}<select data-production-id="${job.id}" data-production-field="status" ${canEditProduction() ? "" : "disabled"}>${productionStatuses.map((status) => `<option value="${status}" ${normalizeProductionStatus(job.status, true) === status ? "selected" : ""}>${statusLabel(status)}</option>`).join("")}</select></label>
       <label>${t("Production Remark")}<textarea rows="2" data-production-id="${job.id}" data-production-field="remark" ${canEditProduction() ? "" : "readonly"}>${job.remark || ""}</textarea></label>
       ${itemsSummary(job.items)}
+      ${isBossOrAdmin() ? `<details class="internal-details"><summary>Internal Details</summary><p>Production Job ID: ${escapeHtml(job.id || "-")}</p><p>ESP reference: ${escapeHtml(job.productionNumber || "-")}</p></details>` : ""}
       <div class="actions">
         <button class="btn" type="button" data-view-production="${job.id}">${t("View Production Job")}</button>
         <button class="btn primary" type="button" data-print-production="${job.id}">${t("Print Production Sheet")}</button>
         ${canEditProduction() ? `<button class="btn" type="button" data-mark-production-status="${job.id}" data-status="in_production">${t("Mark In Production")}</button><button class="btn" type="button" data-mark-production-status="${job.id}" data-status="completed">${t("Mark Production Completed")}</button>` : ""}
       </div>
     </article>
-  `).join("") : `<p class="muted-text">${t("No production jobs yet.")}</p>`;
+  `;
+  }).join("") : `<p class="muted-text">${state.productionJobs.length ? "No production job matches this search." : t("No production jobs yet.")}</p>`;
+}
+
+function renderProductionTools() {
+  const tools = document.querySelector("#productionTools");
+  if (!tools) return;
+  tools.innerHTML = `
+    <section class="order-tools production-tools">
+      <label>Search SO Order No, Customer, Phone or Quotation No
+        <input data-production-search value="${escapeHtml(productionSearch)}" placeholder="SO2607006, customer, phone or quotation" />
+      </label>
+      <div class="actions"><button class="btn" type="button" data-production-search-clear>Clear Search</button></div>
+    </section>
+  `;
+}
+
+export function linkedOrderForProduction(job = {}) {
+  const byId = job.orderId ? state.orders.find((order) => String(order.id || "") === String(job.orderId)) : null;
+  if (byId) return byId;
+  const reference = normalizeRefNo(job.orderNo || job.orderNumber);
+  return reference ? state.orders.find((order) => normalizeRefNo(getOrderDisplayNo(order)) === reference) || null : null;
+}
+
+export function productionOrderNumber(job = {}) {
+  const order = linkedOrderForProduction(job);
+  return order ? getOrderDisplayNo(order) || "Order Number Missing" : "Order Number Missing";
+}
+
+export function productionJobMatchesSearch(job = {}, search = productionSearch) {
+  const term = normalizeText(search);
+  if (!term) return true;
+  const order = linkedOrderForProduction(job);
+  return [
+    productionOrderNumber(job),
+    order?.customer?.name,
+    order?.customerName,
+    order?.customer?.phone,
+    order?.phone,
+    job.customerName,
+    job.quoteNumber,
+    job.quotationNo
+  ].some((value) => normalizeText(value).includes(term));
 }
 
 function renderInstallationJobs() {
@@ -1511,7 +1609,7 @@ function mediaPreviewHtml(item, jobId, field, index) {
   `;
 }
 
-function itemsSummary(items) {
+function itemsSummary(items = []) {
   return `<div class="mini-table">${items.map((item) => `
     <div>
       <strong>${item.productName}</strong>
@@ -1777,6 +1875,16 @@ function handleOrderSearchInput(event) {
   renderOrderList();
 }
 
+function handleOrderToolsChange(event) {
+  const mainMemberKey = event.target.dataset.duplicateMain;
+  const groupId = event.target.dataset.duplicateGroup;
+  if (!mainMemberKey || !groupId) return;
+  duplicateMainSelections.set(groupId, mainMemberKey);
+  renderOrderTools();
+  showWorkflowMessage("Main Order selected. Review the summary, then archive the other duplicates.", "info");
+  setTimeout(() => document.querySelector?.(`[data-duplicate-group-card="${groupId}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 25);
+}
+
 function handleOrderToolsClick(event) {
   const filter = event.target.dataset.orderFilter;
   const tool = event.target.dataset.orderTool;
@@ -1795,14 +1903,19 @@ function handleOrderToolsClick(event) {
   if (tool === "move-selected-follow-up") moveSelectedOrdersBackToFollowUp();
   if (tool === "duplicates" || tool === "duplicates-refresh") {
     if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+    if (tool === "duplicates-refresh" || !duplicateScanVisible) duplicateMainSelections.clear();
     duplicateScanVisible = true;
     duplicateScanResult = scanDuplicateOrders();
     renderOrderTools();
+    showWorkflowMessage("Duplicate Order Check updated.", "success");
+    setTimeout(() => document.querySelector?.(".duplicate-order-panel")?.scrollIntoView({ behavior: "smooth", block: "start" }), 25);
   }
   if (tool === "duplicates-close") {
     duplicateScanVisible = false;
     duplicateScanResult = null;
+    duplicateMainSelections.clear();
     renderOrderTools();
+    showWorkflowMessage("Duplicate Order Check closed.", "info");
   }
   if (archiveGroupId) archiveDuplicateGroupFromPanel(archiveGroupId, event.target);
   if (duplicateOrderId) highlightOrder(duplicateOrderId);
@@ -1810,7 +1923,8 @@ function handleOrderToolsClick(event) {
 
 async function archiveDuplicateGroupFromPanel(groupId, button) {
   const groupCard = button.closest("[data-duplicate-group-card]");
-  const selectedMain = groupCard?.querySelector("[data-duplicate-main]:checked")?.dataset.duplicateMain;
+  const selectedMain = duplicateMainSelections.get(groupId)
+    || groupCard?.querySelector("[data-duplicate-main]:checked")?.dataset.duplicateMain;
   if (!selectedMain) return showWorkflowMessage("Select the Main Order first.", "error");
   button.disabled = true;
   const originalLabel = button.textContent;
@@ -1839,7 +1953,15 @@ export async function archiveDuplicateGroup(groupId, mainMemberKey, options = {}
   if (!duplicateMembers.length) return failDuplicateAction("No duplicate order selected for archiving.");
 
   if (options.confirm !== false) {
-    const confirmation = window.prompt("Type ARCHIVE DUPLICATE to confirm. No order will be permanently deleted.");
+    const mainDetails = duplicateOrderDetails(mainMember);
+    const archiveDetails = duplicateMembers.map((member) => duplicateOrderDetails(member));
+    const confirmation = window.prompt([
+      `Main Order: ${getOrderDisplayNo(mainMember.order) || mainMember.order.id}`,
+      `Orders to archive: ${duplicateMembers.map((member) => getOrderDisplayNo(member.order) || member.order.id).join(", ")}`,
+      `Linked records to relink: Production ${archiveDetails.reduce((total, details) => total + details.productionCount, 0)}, Installation ${archiveDetails.reduce((total, details) => total + details.installationCount, 0)}, Warranty ${archiveDetails.reduce((total, details) => total + details.warrantyCount, 0)}.`,
+      `Main linked records remain unchanged: Production ${mainDetails.productionCount}, Installation ${mainDetails.installationCount}, Warranty ${mainDetails.warrantyCount}.`,
+      "Type ARCHIVE DUPLICATE to confirm. No order will be permanently deleted."
+    ].join("\n"));
     if (confirmation !== "ARCHIVE DUPLICATE") return { ok: false, cancelled: true, message: "Archive cancelled." };
   }
   if (options.downloadBackup !== false && !downloadDuplicateArchiveBackup(group, mainMember)) {
@@ -2484,12 +2606,27 @@ function syncJobInstallationDate(orderId, installationDate) {
   renderInstallationJobs();
 }
 
+function handleProductionSearch(event) {
+  if (!event.target.matches("[data-production-search]")) return;
+  productionSearch = event.target.value;
+  renderProductionJobs();
+  const input = document.querySelector?.("[data-production-search]");
+  input?.focus();
+  input?.setSelectionRange(productionSearch.length, productionSearch.length);
+}
+
+function handleProductionSearchClick(event) {
+  if (!event.target.matches("[data-production-search-clear]")) return;
+  productionSearch = "";
+  renderProductionJobs();
+}
+
 function handleProductionClick(event) {
   const printId = event.target.dataset.printProduction;
   const viewId = event.target.dataset.viewProduction;
   const markId = event.target.dataset.markProductionStatus;
   if (printId) printProduction(printId);
-  if (viewId) printProduction(viewId);
+  if (viewId) viewProductionJob(viewId);
   if (markId) markProductionStatus(markId, event.target.dataset.status);
 }
 
@@ -2507,7 +2644,7 @@ function handleProductionChange(event) {
   renderProductionJobs();
 }
 
-function markProductionStatus(jobId, status) {
+export function markProductionStatus(jobId, status) {
   if (!canEditProduction()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
   const job = state.productionJobs.find((row) => row.id === jobId);
   if (!job || !status) return;
@@ -2574,7 +2711,7 @@ function handleInstallationChange(event) {
   persistInstallationJobs();
 }
 
-function markInstallationStatus(jobId, status) {
+export function markInstallationStatus(jobId, status) {
   if (!canScheduleInstallation()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
   const job = state.installationJobs.find((row) => row.id === jobId);
   if (!job || !status) return;
@@ -2973,14 +3110,44 @@ function printOrder(id) {
   `);
 }
 
+function viewProductionJob(id) {
+  const job = state.productionJobs.find((row) => row.id === id);
+  if (!job) return showWorkflowMessage("Production job not found.", "error");
+  const order = linkedOrderForProduction(job);
+  const orderNumber = productionOrderNumber(job);
+  let dialog = document.querySelector("#productionDetailDialog");
+  if (!dialog) {
+    dialog = document.createElement("dialog");
+    dialog.id = "productionDetailDialog";
+    dialog.className = "detail-dialog";
+    document.body.appendChild(dialog);
+  }
+  dialog.innerHTML = `
+    <div class="section-head"><div><p class="eyebrow">${t("View Production Job")}</p><h2>${escapeHtml(orderNumber)}</h2></div><button class="btn" type="button" data-close-production-dialog>${t("Close")}</button></div>
+    ${!order && isBossOrAdmin() ? `<p class="warning-text"><strong>Linked Order record is missing.</strong> Production job ID: ${escapeHtml(job.id || "-")}</p>` : ""}
+    <p><strong>${t("Customer Name")}:</strong> ${escapeHtml(order?.customer?.name || order?.customerName || job.customerName || "-")}</p>
+    <p><strong>${t("Quote")}:</strong> ${escapeHtml(job.quoteNumber || job.quotationNo || "-")}</p>
+    <p><strong>${t("Installation Date")}:</strong> ${escapeHtml(job.installationDate || "-")}</p>
+    <p><strong>${t("Production Status")}:</strong> ${statusLabel(job.status)}</p>
+    <p><strong>${t("Production Remark")}:</strong> ${escapeHtml(job.remark || "-")}</p>
+    ${itemsSummary(job.items || [])}
+    ${isBossOrAdmin() ? `<details class="internal-details"><summary>Internal Details</summary><p>Production Job ID: ${escapeHtml(job.id || "-")}</p><p>ESP reference: ${escapeHtml(job.productionNumber || "-")}</p></details>` : ""}
+  `;
+  dialog.querySelector("[data-close-production-dialog]")?.addEventListener("click", () => dialog.close());
+  if (typeof dialog.showModal === "function") dialog.showModal();
+  else dialog.setAttribute("open", "");
+}
+
 function printProduction(id) {
   const job = state.productionJobs.find((row) => row.id === id);
   if (!job) return;
-  openPrint(t("Print Production Sheet"), job.productionNumber, `
-    <p><strong>${t("Order")}:</strong> ${job.orderNo || job.orderNumber}</p>
+  const order = linkedOrderForProduction(job);
+  const orderNumber = productionOrderNumber(job);
+  openPrint(t("Print Production Sheet"), `Order No: ${orderNumber}`, `
+    <p><strong>${t("Customer Name")}:</strong> ${order?.customer?.name || order?.customerName || job.customerName || "-"}</p>
     <p><strong>${t("Quote")}:</strong> ${job.quoteNumber || job.quotationNo || "-"}</p>
-    <p><strong>${t("Customer Name")}:</strong> ${job.customerName || "-"}</p>
-    <p><strong>${t("Status")}:</strong> ${statusLabel(job.status)}</p>
+    <p><strong>${t("Installation Date")}:</strong> ${job.installationDate || "-"}</p>
+    <p><strong>${t("Production Status")}:</strong> ${statusLabel(job.status)}</p>
     ${printItemsTable(job.items, false)}
     <p><strong>${t("Production Remark")}:</strong> ${job.remark || "-"}</p>
     <div class="print-sign"><span>Prepared by</span><span>Checked by</span></div>

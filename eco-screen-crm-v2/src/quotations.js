@@ -344,7 +344,9 @@ export function saveQuote() {
   cloudSave.then((result) => {
     saveStatus.textContent = result.ok
       ? `${t("Save Quote")} ${getQuotationDisplayNo(snapshot)} - cloud synced.`
-      : `${t("Save Quote")} ${getQuotationDisplayNo(snapshot)} - saved locally. Cloud sync failed: ${result.reason}`;
+      : result.reason === "Local Mode Only"
+        ? `${t("Save Quote")} ${getQuotationDisplayNo(snapshot)} - saved locally.`
+        : `${t("Save Quote")} ${getQuotationDisplayNo(snapshot)} - saved locally. Cloud sync failed: ${result.reason}`;
   });
   renderQuotationList();
 }
@@ -357,6 +359,7 @@ export function newQuote() {
 
 export function renderQuotationList() {
   const list = document.querySelector("#quotationList");
+  if (!list) return;
   const cloudIsLoading = state.cloud.status === "Checking cloud...";
   list.innerHTML = state.quotations.length
     ? state.quotations.map((quote) => quotationListRowHtml(quote, cloudIsLoading)).join("")
