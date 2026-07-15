@@ -1425,6 +1425,12 @@ function missingConfirmedOrderPanelHtml() {
         </table>
       </div>
       ${missingScan?.message ? `<p class="${missingScan.ok ? "muted-text" : "danger-text"}">${escapeHtml(missingScan.message)}</p>` : ""}
+      ${missingScan ? `<div class="covered-order-safety">
+        <strong>Recovery roles</strong>
+        <p>Confirmed quotation to recover: ${escapeHtml(recovery.selectedQuotationId || "-")}</p>
+        <p>Incorrect quotations returning to Follow Up and incorrect Orders being archived must be explicitly selected below.</p>
+        <p>Remaining active SO conflicts: ${escapeHtml(missingScan.activeSoOwnerIds?.join(", ") || "none")}</p>
+      </div>` : ""}
       ${missingScan
         ? `<button class="btn primary" type="button" data-order-tool="recover-missing-order-apply" ${missingScan.ok ? "" : "disabled"}>Preview &amp; Recover Missing Confirmed Order</button><p class="muted-text">Confirmation phrase: RECOVER MISSING ORDER</p>`
         : `<button class="btn" type="button" data-order-tool="recover-missing-order-preview" ${records.length ? "" : "disabled"}>Show Related &amp; Conflicting Records</button>`}
@@ -1440,11 +1446,11 @@ function missingConfirmedOrderRowHtml(entry, recovery) {
   if (!recovery.missingScan && entry.collection === "quotations") {
     roleControl = `<label><input type="radio" name="missing-confirmed-quotation" value="${escapeHtml(ownId)}" ${selectedQuotationId === ownId ? "checked" : ""} /> Confirmed Quotation to Recover</label>`;
   } else if (entry.collection === "quotations" && ownId === selectedQuotationId) {
-    roleControl = "<strong>Confirmed Quotation to Recover</strong>";
+    roleControl = "<strong>Confirmed quotation to recover</strong>";
   } else if (entry.collection === "quotations") {
-    roleControl = `<label><input type="checkbox" name="missing-incorrect-quotation" value="${escapeHtml(ownId)}" /> Return to Quotation / Follow Up</label>`;
+    roleControl = `<label><input type="checkbox" name="missing-incorrect-quotation" value="${escapeHtml(ownId)}" /> Incorrect quotation returning to Follow Up</label>`;
   } else if (entry.collection === "orders") {
-    roleControl = `<label><input type="checkbox" name="missing-incorrect-order" value="${escapeHtml(ownId)}" /> Archive incorrect Order</label>`;
+    roleControl = `<label><input type="checkbox" name="missing-incorrect-order" value="${escapeHtml(ownId)}" /> Incorrect Order being archived</label>`;
   }
   return `<tr>
     <td>${roleControl}</td>
@@ -3126,12 +3132,17 @@ export function scanMissingConfirmedOrderRecovery(quotationId, intendedOrderNo, 
     && ([quote.orderId, quote.linkedOrderId].filter(Boolean).map(String).includes(String(order.id || ""))
       || [order.quoteId, order.quotationId].filter(Boolean).map(String).includes(confirmedQuotationId))
     && orderPayloadMatchesQuotation(order, quote)).map((order) => String(order.id));
+  const activeSoOwnerIds = rows.orders.filter((order) => isActiveOrderRecord(order)
+    && [order.orderNo, order.orderNumber].some((value) => normalizeCoveredOrderNo(value) === orderNo))
+    .map((order) => String(order.id || ""))
+    .filter(Boolean);
   return {
     ok: correctOrderCandidates.length === 0,
     orderNo,
     confirmedQuotationId,
     records,
     correctOrderCandidates,
+    activeSoOwnerIds,
     quotationCandidates: records.filter((entry) => entry.collection === "quotations" && String(entry.record.id || "") !== confirmedQuotationId).map((entry) => String(entry.record.id || "")),
     orderCandidates: records.filter((entry) => entry.collection === "orders").map((entry) => String(entry.record.id || "")),
     message: correctOrderCandidates.length
@@ -3394,6 +3405,7 @@ export async function recoverMissingConfirmedOrder(values = {}, options = {}) {
       `Archive selected incorrect Orders: ${plan.incorrectOrderIds.join(", ") || "none"}`,
       `Archive exact linked Production: ${plan.productionJobIds.join(", ") || "none"}`,
       `Archive exact linked Installation: ${plan.installationJobIds.join(", ") || "none"}`,
+      `Remaining active SO conflicts: ${plan.remainingActiveSoOwnerIds.join(", ") || "none"}`,
       "Unselected related records remain unchanged.",
       "Exact before/after field changes:",
       JSON.stringify(plan.changes, null, 2),
@@ -3464,14 +3476,8 @@ function planMissingConfirmedOrderRecovery(values = {}) {
   if (!quote?.id) return { ok: false, message: "The selected confirmed quotation stable ID no longer exists." };
   const validation = validateQuoteForOrder(quote);
   if (!validation.ok) return { ok: false, message: validation.message };
-  const comparison = scanMissingConfirmedOrderRecovery(confirmedQuotationId, orderNo);
-  if (!comparison.ok) return { ok: false, message: comparison.message };
   if (incorrectQuotationIds.values.includes(confirmedQuotationId)) {
     return { ok: false, message: "The confirmed quotation cannot also be selected as an incorrect quotation." };
-  }
-  if (incorrectQuotationIds.values.some((id) => !comparison.quotationCandidates.includes(id))
-    || incorrectOrderIds.values.some((id) => !comparison.orderCandidates.includes(id))) {
-    return { ok: false, message: "A selected incorrect stable ID is not part of the current comparison. Refresh before recovering." };
   }
 
   const selectedWrongQuotes = incorrectQuotationIds.values.map((id) => state.quotations.find((record) => String(record.id || "") === id));
@@ -3479,24 +3485,39 @@ function planMissingConfirmedOrderRecovery(values = {}) {
   if (selectedWrongQuotes.some((record) => !record?.id) || selectedWrongOrders.some((record) => !record?.id)) {
     return { ok: false, message: "A selected stable ID is missing. No records were changed." };
   }
-  const confirmedWrongQuote = selectedWrongQuotes.find((candidate) => normalizeStatus(candidate.status) === "won"
-    && state.orders.some((order) => isActiveOrderRecord(order)
-      && ([candidate.orderId, candidate.linkedOrderId].filter(Boolean).map(String).includes(String(order.id || ""))
-        || [order.quoteId, order.quotationId].filter(Boolean).map(String).includes(String(candidate.id)))
-      && orderPayloadMatchesQuotation(order, candidate)));
-  if (confirmedWrongQuote) {
-    return { ok: false, message: `Selected quotation ${confirmedWrongQuote.id} already resolves to a real confirmed active Order. Recovery is blocked.` };
+  const selectedWrongOrderIds = new Set(incorrectOrderIds.values);
+  const comparison = scanMissingConfirmedOrderRecovery(confirmedQuotationId, orderNo);
+  if (!comparison.ok) return { ok: false, message: comparison.message };
+  if (incorrectQuotationIds.values.some((id) => !comparison.quotationCandidates.includes(id))
+    || incorrectOrderIds.values.some((id) => !comparison.orderCandidates.includes(id))) {
+    return { ok: false, message: "A selected incorrect stable ID is not part of the current comparison. Refresh before recovering." };
   }
   if (selectedWrongOrders.some((record) => !isActiveOrderRecord(record))) {
     return { ok: false, message: "An already archived or cancelled Order does not need to be selected as an incorrect active Order." };
   }
 
-  const selectedWrongOrderIds = new Set(incorrectOrderIds.values);
+  const orderHasExactQuotationLink = (order, candidateQuote) => (
+    [candidateQuote.orderId, candidateQuote.linkedOrderId].filter(Boolean).map(String).includes(String(order.id || ""))
+    || [order.quoteId, order.quotationId].filter(Boolean).map(String).includes(String(candidateQuote.id || ""))
+  );
+  for (const wrongQuote of selectedWrongQuotes) {
+    const unplannedLinkedOrder = state.orders.find((order) => isActiveOrderRecord(order)
+      && orderHasExactQuotationLink(order, wrongQuote)
+      && !selectedWrongOrderIds.has(String(order.id || "")));
+    if (unplannedLinkedOrder) {
+      return { ok: false, message: `Incorrect quotation ${wrongQuote.id} has active linked Order ${unplannedLinkedOrder.id}. Select that exact Order for archival in the same transaction.` };
+    }
+  }
+
   const activeOwners = state.orders.filter((record) => isActiveOrderRecord(record)
     && [record.orderNo, record.orderNumber].some((value) => normalizeCoveredOrderNo(value) === orderNo));
   const unselectedActiveOwner = activeOwners.find((record) => !selectedWrongOrderIds.has(String(record.id || "")));
   if (unselectedActiveOwner) {
     return { ok: false, message: `${orderNo} is owned by active Order ${unselectedActiveOwner.id}. Select that exact incorrect Order or use the existing active Order mode.` };
+  }
+  const ownerWithoutSelectedIncorrectQuote = activeOwners.find((record) => !selectedWrongQuotes.some((wrongQuote) => orderHasExactQuotationLink(record, wrongQuote)));
+  if (ownerWithoutSelectedIncorrectQuote) {
+    return { ok: false, message: `${orderNo} active Order ${ownerWithoutSelectedIncorrectQuote.id} is not exact-ID linked to a selected incorrect quotation. Recovery is blocked.` };
   }
 
   const now = new Date().toISOString();
@@ -3594,6 +3615,7 @@ function planMissingConfirmedOrderRecovery(values = {}) {
     incorrectOrderIds: incorrectOrderIds.values,
     productionJobIds: productionJobs.map((record) => String(record.id || "")),
     installationJobIds: installationJobs.map((record) => String(record.id || "")),
+    remainingActiveSoOwnerIds: [],
     changes,
     comparison,
     nextState
