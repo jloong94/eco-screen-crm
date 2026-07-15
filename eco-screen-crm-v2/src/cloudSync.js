@@ -59,8 +59,8 @@ export async function saveData(collection, data, options = {}) {
   let cloudRows = cloudRow.data;
   let cloudSnapshot = options.cloudSnapshot;
   let cloudMeta = options.cloudMeta;
-  const initialMerge = mergeRows(localRows, cloudRows);
-  const initialNeedsWrite = !sameRows(initialMerge, cloudRows);
+  const initialMerge = mergeRows(localRows, cloudRows, collection);
+  const initialNeedsWrite = !sameRows(initialMerge, cloudRows, collection);
 
   if (initialNeedsWrite && !firstWriteBackupCreated()) {
     const fullCloud = await syncFromCloud();
@@ -77,8 +77,8 @@ export async function saveData(collection, data, options = {}) {
     cloudRows = Array.isArray(fullCloud.data[collection]) ? fullCloud.data[collection] : [];
   }
 
-  const merged = mergeRows(localRows, cloudRows);
-  if (sameRows(merged, cloudRows)) {
+  const merged = mergeRows(localRows, cloudRows, collection);
+  if (sameRows(merged, cloudRows, collection)) {
     return {
       ok: true,
       data: merged,
@@ -154,21 +154,21 @@ export async function safeSyncWithCloud(localSnapshot, options = {}) {
   for (const collection of cloudCollections) {
     const localRows = Array.isArray(localSnapshot[collection]) ? localSnapshot[collection] : [];
     const cloudRows = Array.isArray(cloud.data[collection]) ? cloud.data[collection] : [];
-    const merged = mergeRows(localRows, cloudRows);
+    const merged = mergeRows(localRows, cloudRows, collection);
     summary.localCounts[collection] = localRows.length;
     summary.cloudCounts[collection] = cloudRows.length;
     summary.cloudUpdatedAt[collection] = cloud.meta[collection]?.updatedAt || "";
     nextSnapshot[collection] = merged;
 
-    const cloudOnlyCount = merged.filter((row) => !localRows.some((local) => rowKey(local) === rowKey(row))).length;
-    const localOnlyCount = merged.filter((row) => !cloudRows.some((cloudRow) => rowKey(cloudRow) === rowKey(row))).length;
+    const cloudOnlyCount = merged.filter((row) => !localRows.some((local) => rowKey(local, collection) === rowKey(row, collection))).length;
+    const localOnlyCount = merged.filter((row) => !cloudRows.some((cloudRow) => rowKey(cloudRow, collection) === rowKey(row, collection))).length;
     const writeCount = merged.filter((row) => {
-      const cloudRow = cloudRows.find((candidate) => rowKey(candidate) === rowKey(row));
+      const cloudRow = cloudRows.find((candidate) => rowKey(candidate, collection) === rowKey(row, collection));
       return !cloudRow || JSON.stringify(cloudRow) !== JSON.stringify(row);
     }).length;
     if (cloudOnlyCount) summary.downloaded[collection] = cloudOnlyCount;
     if (localRows.length && cloudRows.length) summary.merged[collection] = merged.length;
-    if (!sameRows(merged, cloudRows)) pendingWrites.push({ collection, rows: merged, localOnlyCount, writeCount });
+    if (!sameRows(merged, cloudRows, collection)) pendingWrites.push({ collection, rows: merged, localOnlyCount, writeCount });
   }
 
   if (options.allowWrites === false) {
@@ -217,18 +217,21 @@ export async function getCloudCounts() {
   return result.meta || {};
 }
 
-export function mergeRows(localRows, cloudRows) {
+export function mergeRows(localRows, cloudRows, collection = "") {
   const map = new Map();
   [...cloudRows, ...localRows].forEach((row) => {
-    const key = rowKey(row);
+    const key = rowKey(row, collection);
     const existing = map.get(key);
     if (!existing || isNewer(row, existing)) map.set(key, row);
   });
   return [...map.values()];
 }
 
-function rowKey(row) {
-  return row?.id || row?.userId || row?.quoteNumber || row?.quotationNo || row?.orderNumber || row?.orderNo || row?.productionNumber || row?.installationNumber || row?.warrantyNo || JSON.stringify(row);
+function rowKey(row, collection = "") {
+  const stableId = collection === "users" ? (row?.userId || row?.id) : row?.id;
+  if (stableId) return `${collection || "records"}:id:${stableId}`;
+  if (collection === "companySettings") return "companySettings:id:company";
+  return `${collection || "records"}:missing-stable-id:${JSON.stringify(row)}`;
 }
 
 function isNewer(next, current) {
@@ -245,10 +248,10 @@ function rowTime(row = {}) {
   return Number.isFinite(value) ? value : NaN;
 }
 
-function sameRows(left, right) {
+function sameRows(left, right, collection = "") {
   if (left.length !== right.length) return false;
   const signature = (rows) => rows
-    .map((row) => `${rowKey(row)}:${JSON.stringify(row)}`)
+    .map((row) => `${rowKey(row, collection)}:${JSON.stringify(row)}`)
     .sort()
     .join("|");
   return signature(left) === signature(right);

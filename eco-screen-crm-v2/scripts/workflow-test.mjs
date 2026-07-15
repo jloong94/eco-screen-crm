@@ -49,12 +49,16 @@ const {
   productionOrderNumber,
   restoreArchivedDuplicate,
   restoreArchivedProductionJob,
+  repairWorkflowIntegrityIssue,
+  scanWorkflowIntegrity,
   scanDuplicateOrders,
   scanDuplicateProductionJobs,
+  sendOrderToProduction,
   updateOrderNumber,
   updateOrderStatus,
   updateQuotationStatus
 } = await import("../src/workflow.js");
+const { quotationsForTab } = await import("../src/quotations.js");
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -520,7 +524,7 @@ assert(productionJobMatchesSearch(productionJob, "Production Search Customer"), 
 assert(productionJobMatchesSearch(productionJob, "0123456789"), "Q: Production search should find phone");
 assert(productionJobMatchesSearch(productionJob, "PRODUCTION-QUOTE"), "Q: Production search should find quotation number");
 assert(productionOrderNumber({ id: "orphan-production", productionNumber: "ESP-2026-9999" }) === "Order Number Missing", "Q: orphan Production job must not display or guess from ESP");
-markProductionStatus(productionJob.id, "in_production");
+await markProductionStatus(productionJob.id, "in_production");
 assert(state.productionJobs.find((job) => job.id === productionJob.id).status === "in_production", "Q: Production status updates must still work");
 const productionInstallationJob = state.installationJobs[0];
 markInstallationStatus(productionInstallationJob.id, "scheduled");
@@ -593,6 +597,125 @@ state.productionJobs = [
 const possibleProductionScan = scanDuplicateProductionJobs();
 assert(possibleProductionScan.confirmedGroups.length === 0 && possibleProductionScan.possibleGroups.length === 1, "S: matching SO/customer/items without an exact linked Order should remain Possible only");
 
+resetWorkflowState();
+const followUpOnly = validQuote("FOLLOW-UP-ONLY", "Follow Up Only");
+followUpOnly.status = "follow_up";
+const linkedFollowUp = validQuote("FOLLOW-UP-LINKED", "Linked Follow Up");
+linkedFollowUp.status = "follow_up";
+linkedFollowUp.linkedOrderId = "existing-order";
+state.quotations = [followUpOnly, linkedFollowUp];
+state.orders = [{ id: "legacy-follow-up-order", orderNo: "SO2607900", orderNumber: "SO2607900", status: "follow_up" }];
+assert(quotationsForTab("follow_up").length === 1 && quotationsForTab("follow_up")[0].id === followUpOnly.id, "T: Follow Up tab must contain only unlinked follow_up quotations");
+assert(!quotationsForTab("quoted").includes(followUpOnly), "T: Follow Up quotation must not appear in Quoted");
+assert(scanWorkflowIntegrity().categories.D.some((issue) => issue.stableId === "legacy-follow-up-order"), "T: legacy Order status follow_up must be flagged as a Workflow Conflict");
+
+const strictQuote = validQuote("SAME-REFERENCE", "Strict Quote");
+strictQuote.status = "won";
+state.quotations = [strictQuote];
+state.orders = [{ id: "unrelated-order", orderNo: "SAME-REFERENCE", orderNumber: "SAME-REFERENCE", status: "Confirmed" }];
+assert(findExistingOrderForQuote(strictQuote) === null, "U: quotation number or Order No alone must never identify an existing Order");
+assert(linkedOrderForProduction({ id: "legacy-production", orderNo: "SAME-REFERENCE" }) === null, "U: Production must not resolve an Order from Order No without exact orderId");
+
+const sameNumberSeparateIds = mergeRows(
+  [{ id: "order-number-a", orderNo: "SO2607991", updatedAt: "2026-07-15T10:00:00.000Z" }],
+  [{ id: "order-number-b", orderNo: "SO2607991", updatedAt: "2026-07-15T11:00:00.000Z" }],
+  "orders"
+);
+assert(sameNumberSeparateIds.length === 2, "U: same Order No with different stable IDs must remain separate in cloud merge");
+
+const integritySnapshot = {
+  quotations: [
+    { id: "quote-a", status: "won", quotationNo: "Q-A" },
+    { id: "quote-b", status: "won", quotationNo: "Q-B", linkedOrderId: "missing-order" },
+    { id: "quote-e", status: "won", quotationNo: "Q-E" },
+    { id: "quote-k1", status: "won", quotationNo: "Q-K1" },
+    { id: "quote-k2", status: "won", quotationNo: "Q-K2" },
+    { id: "cross-id", status: "quoted", quotationNo: "Q-CROSS" }
+  ],
+  orders: [
+    { id: "order-c", orderNo: "SO-C", status: "Confirmed" },
+    { id: "order-d", orderNo: "SO-D", status: "follow_up" },
+    { id: "order-e1", orderNo: "SO-E1", quoteId: "quote-e", status: "Confirmed" },
+    { id: "order-e2", orderNo: "SO-E2", quoteId: "quote-e", status: "Confirmed" },
+    { id: "order-k1", orderNo: "SO-SAME", quoteId: "quote-k1", status: "Confirmed" },
+    { id: "order-k2", orderNo: "SO-SAME", quoteId: "quote-k2", status: "Confirmed" },
+    { id: "order-l", orderNo: "SO-L1", orderNumber: "SO-L2", quoteId: "quote-k1", status: "Confirmed" },
+    { id: "cross-id", orderNo: "SO-CROSS", status: "Confirmed" }
+  ],
+  productionJobs: [
+    { id: "production-f1", orderId: "order-e1", orderNo: "SO-E1", status: "not_produced" },
+    { id: "production-f2", orderId: "order-e1", orderNo: "SO-E1", status: "in_production" },
+    { id: "production-g", orderId: "missing-production-order", orderNo: "SO-G", status: "not_produced" },
+    { id: "production-h", orderId: "order-e2", orderNo: "WRONG-SO", status: "not_produced" }
+  ],
+  installationJobs: [
+    { id: "installation-i", orderId: "missing-installation-order", orderNo: "SO-I", status: "not_scheduled" }
+  ],
+  products: [{ id: "duplicate-product" }, { id: "duplicate-product" }]
+};
+const integrityBefore = JSON.stringify(integritySnapshot);
+const completeIntegrityScan = scanWorkflowIntegrity(integritySnapshot);
+"ABCDEFGHIJKLM".split("").forEach((category) => assert(completeIntegrityScan.categories[category].length > 0, `V: Integrity Check must detect category ${category}`));
+assert(JSON.stringify(integritySnapshot) === integrityBefore, "V: Integrity Check preview must not modify scanned data");
+
+resetWorkflowState();
+state.currentUser = { userId: "boss-test", username: "boss-test", role: "Boss", active: true };
+state.role = "Boss";
+const repairQuote = validQuote("REPAIR-QUOTE", "Repair Customer");
+repairQuote.status = "won";
+repairQuote.linkedOrderId = "missing-order";
+repairQuote.orderId = "missing-order";
+const repairOrder = {
+  id: "repair-order",
+  orderNo: "SO2607992",
+  orderNumber: "SO2607992",
+  quoteId: repairQuote.id,
+  quotationId: repairQuote.id,
+  customer: { name: "Repair Customer", phone: "0123456789" },
+  items: [{ id: "repair-item", quantity: 2, width: 1000, height: 1200 }],
+  total: 1234,
+  deposit: 234,
+  balance: 1000,
+  status: "Confirmed"
+};
+state.quotations = [repairQuote];
+state.orders = [repairOrder];
+const repairFinancialSnapshot = JSON.stringify({ customer: repairOrder.customer, items: repairOrder.items, total: repairOrder.total, deposit: repairOrder.deposit, balance: repairOrder.balance });
+const quoteLinkIssue = scanWorkflowIntegrity().categories.B[0];
+const linkRepair = await repairWorkflowIntegrityIssue(quoteLinkIssue.id, { targetId: repairOrder.id }, { confirm: false, downloadBackup: false });
+assert(linkRepair.ok && state.quotations[0].linkedOrderId === repairOrder.id, "W: selected Quotation → Order link must repair by exact stable ID");
+assert(JSON.stringify({ customer: state.orders[0].customer, items: state.orders[0].items, total: state.orders[0].total, deposit: state.orders[0].deposit, balance: state.orders[0].balance }) === repairFinancialSnapshot, "W: relationship repair must not alter customer, items or financial data");
+assert(state.orders.length === 1 && state.quotations.length === 1, "W: relationship repair must not create or delete records");
+
+state.orders.push({ id: "repair-follow-up", orderNo: "SO2607993", status: "follow_up", total: 500, deposit: 100, balance: 400 });
+const statusConflict = scanWorkflowIntegrity().categories.D.find((issue) => issue.stableId === "repair-follow-up");
+const statusRepair = await repairWorkflowIntegrityIssue(statusConflict.id, { nextStatus: "Confirmed" }, { confirm: false, downloadBackup: false });
+assert(statusRepair.ok && state.orders.find((order) => order.id === "repair-follow-up").status === "Confirmed", "W: invalid Order follow_up status must change only after an explicit valid selection");
+assert(state.orders.find((order) => order.id === "repair-follow-up").total === 500, "W: status repair must preserve financial data");
+
+resetWorkflowState();
+const syncQuote = validQuote("SYNC-QUOTE", "Production Sync Customer");
+syncQuote.status = "won";
+state.quotations = [syncQuote];
+const syncConversion = await convertQuoteToOrder(syncQuote.id);
+const syncOrder = syncConversion.order;
+const productionCountBeforeSend = state.productionJobs.length;
+const sendResult = await sendOrderToProduction(syncOrder.id);
+assert(sendResult.ok && state.orders.find((order) => order.id === syncOrder.id).productionJobId === state.productionJobs[0].id, "X: Send to Production must save the exact Production Job ID on the Order");
+assert(state.orders.find((order) => order.id === syncOrder.id).productionStatus === "not_produced", "X: Send to Production must preserve the normalized initial Production status");
+await sendOrderToProduction(syncOrder.id);
+assert(state.productionJobs.length === productionCountBeforeSend, "X: repeated Send to Production must not create another Production Job");
+await markProductionStatus(state.productionJobs[0].id, "in_production");
+assert(state.orders.find((order) => order.id === syncOrder.id).productionStatus === "in_production", "X: In Production must synchronize to the exact linked Order");
+await markProductionStatus(state.productionJobs[0].id, "completed");
+assert(state.orders.find((order) => order.id === syncOrder.id).productionStatus === "completed", "X: Production Completed must synchronize to the exact linked Order");
+const persistedWorkflow = {
+  orders: JSON.parse(localStorage.getItem("ecoScreenV2.orders") || "[]"),
+  productionJobs: JSON.parse(localStorage.getItem("ecoScreenV2.productionJobs") || "[]")
+};
+assert(persistedWorkflow.orders.find((order) => order.id === syncOrder.id).productionStatus === "completed", "X: synchronized Order Production status must survive refresh storage");
+assert(persistedWorkflow.productionJobs.find((job) => job.orderId === syncOrder.id).status === "completed", "X: synchronized Production Job status must survive refresh storage");
+
 console.log([
   "Editable unit price and manual final price: passed",
   "Monthly SO numbering including legacy formats and >999: passed",
@@ -613,4 +736,7 @@ console.log([
   ,"Production SO Order No resolution and search: passed"
   ,"Production duplicate scan, selectable Main, safe archive, reference repair and restore: passed"
   ,"Production cloud-failure persistence and repeat-conversion prevention: passed"
+  ,"Strict quotation tabs, exact stable-ID relationships and Order conflict isolation: passed"
+  ,"Workflow Integrity Check categories A-M, preview safety and selected repairs: passed"
+  ,"Transactional Send to Production and Production/Order status synchronization: passed"
 ].join("\n"));
