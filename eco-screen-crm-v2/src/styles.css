@@ -519,6 +519,16 @@ input:focus, select:focus, textarea:focus {
   border-color: #f59e0b;
   background: #fffbeb;
 }
+.confirmed-tze-repair {
+  width: min(620px, 76vw);
+  border: 2px solid #15803d;
+  border-radius: 10px;
+  padding: 12px;
+  background: #f0fdf4;
+}
+.confirmed-tze-repair h4 { margin: 4px 0 8px; font-size: 16px; }
+.confirmed-tze-repair ul { margin: 8px 0 12px; padding-left: 20px; }
+.confirmed-tze-repair li + li { margin-top: 5px; }
 @media (max-width: 760px) {
   .safe-ownership-grid,
   .safe-ownership-links { grid-template-columns: 1fr; }

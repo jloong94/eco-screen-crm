@@ -1,4 +1,9 @@
 const integrityCollections = ["quotations", "orders", "productionJobs", "installationJobs", "products"];
+const confirmedTzeYeeIds = {
+  quotationId: "quote-1783130657886-e7f8c485de65a8",
+  orderId: "order-ESQ-2026-0003",
+  wrongOrderId: "order-1784103199329-c9c68eddeaad2e"
+};
 
 export function isActiveOrderRecord(order = {}) {
   const status = String(order.status || "").trim().toLowerCase();
@@ -191,13 +196,19 @@ export function scanWorkflowIntegrity(snapshot = {}) {
     const conflictMessage = ownershipConflicts.length
       ? ` Order Number Ownership Conflict: ${orderNumber(order)} is also used by Order ${ownershipConflicts.map((candidate) => candidate.id).join(", ")}; every conflicting Order requires a new unused number before repair.`
       : "";
+    const confirmedTzeYeeCase = String(quote.id) === confirmedTzeYeeIds.quotationId
+      && linkedId === confirmedTzeYeeIds.orderId
+      && ownershipConflicts.some((candidate) => String(candidate.id || "") === confirmedTzeYeeIds.wrongOrderId);
     add("M", "Quotation", quote,
       `Quotation links to Order ${linkedId}, but that Order links to quotation ${orderQuoteId}.${conflictMessage}`,
-      "Use Safe Order Ownership Repair with the exact Quotation and Order stable IDs. No customer, item or financial values are copied.", {
+      confirmedTzeYeeCase
+        ? "Use Fix Tze Yee SO2607011. It archives the erroneous unconfirmed MS Chew workflow without assigning another SO number."
+        : "Use Safe Order Ownership Repair with the exact Quotation and Order stable IDs. No customer, item or financial values are copied.", {
         type: "order-ownership",
         quotationId: String(quote.id),
         orderId: linkedId,
-        conflictingOrderIds: ownershipConflicts.map((candidate) => String(candidate.id || ""))
+        conflictingOrderIds: ownershipConflicts.map((candidate) => String(candidate.id || "")),
+        confirmedCase: confirmedTzeYeeCase ? "tze-yee-so2607011" : ""
       }, {
         orderNo: orderNumber(order),
         linkedIds: `quotation->order:${linkedId}, order->quotation:${orderQuoteId}${ownershipConflicts.length ? `, number-conflicts:${ownershipConflicts.map((candidate) => candidate.id).join(",")}` : ""}`

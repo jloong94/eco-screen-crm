@@ -77,6 +77,18 @@ const orderFilters = [
   { id: "completed", label: "Completed" },
   { id: "duplicate-archived", label: "Archived duplicates" }
 ];
+const confirmedTzeYeeRepair = Object.freeze({
+  quotationId: "quote-1783130657886-e7f8c485de65a8",
+  orderId: "order-ESQ-2026-0003",
+  orderNo: "SO2607011",
+  quotationNo: "ESQ-2026-0003",
+  customer: "Tze Yee",
+  total: 5245.0113,
+  wrongOrderId: "order-1784103199329-c9c68eddeaad2e",
+  wrongQuotationNo: "ESQ-2026-0011",
+  wrongCustomer: "MS Chew",
+  wrongTotal: 2436
+});
 
 const progressCategories = [
   { id: "new", title: "New Orders / Haven't Produced", shortTitle: "New Orders" },
@@ -1265,7 +1277,9 @@ function workflowIntegrityPanelHtml() {
 
 function workflowIntegrityIssueRow(issue) {
   const repair = issue.repair;
-  const selector = repair
+  const selector = repair?.confirmedCase === "tze-yee-so2607011"
+    ? workflowIntegrityRepairInput(issue)
+    : repair
     ? `<label class="workflow-integrity-selector"><input type="radio" name="workflow-integrity-issue" data-workflow-integrity-issue="${escapeHtml(issue.id)}" /> Select</label>${workflowIntegrityRepairInput(issue)}`
     : "Preview only";
   return `
@@ -1349,6 +1363,7 @@ function ownershipRecordView(record, type, snapshot) {
 function safeOrderOwnershipRepairHtml(issue) {
   const comparison = buildSafeOrderOwnershipComparison(issue.repair.quotationId, issue.repair.orderId);
   if (!comparison) return `<span class="danger-text">Exact Quotation or active Order is no longer available. Scan again.</span>`;
+  if (issue.repair.confirmedCase === "tze-yee-so2607011") return confirmedTzeYeeRepairHtml(comparison);
   return `
     <details class="safe-ownership-repair" open>
       <summary>Safe Order Ownership Repair</summary>
@@ -1376,6 +1391,25 @@ function safeOrderOwnershipRepairHtml(issue) {
       ` : `<p class="muted-text">No active Order Number Ownership Conflict was found for ${escapeHtml(comparison.order.orderNo)}.</p>`}
       <p class="muted-text">A full JSON backup and a complete field-by-field change preview are required before the confirmation phrase REPAIR ORDER OWNERSHIP is accepted.</p>
     </details>
+  `;
+}
+
+function confirmedTzeYeeRepairHtml(comparison) {
+  const wrongOrder = comparison.conflicts.find((record) => record.id === confirmedTzeYeeRepair.wrongOrderId);
+  return `
+    <div class="confirmed-tze-repair">
+      <strong>Confirmed business repair</strong>
+      <h4>Fix Tze Yee SO2607011</h4>
+      <ul>
+        <li>Keep ${escapeHtml(confirmedTzeYeeRepair.orderNo)} with Tze Yee quotation ${escapeHtml(confirmedTzeYeeRepair.quotationNo)} and Order ${escapeHtml(confirmedTzeYeeRepair.orderId)}.</li>
+        <li>Return MS Chew quotation ${escapeHtml(confirmedTzeYeeRepair.wrongQuotationNo)} to Follow Up with no SO number.</li>
+        <li>Safely archive erroneous Order ${escapeHtml(confirmedTzeYeeRepair.wrongOrderId)} and only its exact orderId-linked Production/Installation records.</li>
+        <li>No customer, item, total, deposit or balance values will change.</li>
+      </ul>
+      ${wrongOrder ? `<p class="muted-text">Verified conflict: ${escapeHtml(wrongOrder.customer)} · RM${escapeHtml(wrongOrder.total)} · ${escapeHtml(wrongOrder.id)}</p>` : ""}
+      <button class="btn primary" type="button" data-order-tool="fix-tze-yee-so2607011">Fix Tze Yee SO2607011</button>
+      <p class="muted-text">The next step downloads a full JSON backup and shows the exact before/after fields. Confirmation phrase: REPAIR TZE YEE.</p>
+    </div>
   `;
 }
 
@@ -2072,7 +2106,8 @@ function failProductionDuplicateAction(message) {
 function renderInstallationJobs() {
   const list = document.querySelector("#installationList");
   if (!list) return;
-  list.innerHTML = state.installationJobs.length ? state.installationJobs.map((job) => `
+  const activeJobs = state.installationJobs.filter(isActiveWorkflowRecord);
+  list.innerHTML = activeJobs.length ? activeJobs.map((job) => `
     <article class="card">
       <div class="card-head">
         <div>
@@ -2528,6 +2563,7 @@ function handleOrderToolsClick(event) {
     renderOrderTools();
   }
   if (tool === "workflow-integrity-repair") repairSelectedWorkflowIntegrityIssue(event.target);
+  if (tool === "fix-tze-yee-so2607011") repairConfirmedTzeYeeFromPanel(event.target);
   if (tool === "duplicates" || tool === "duplicates-refresh") {
     if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
     if (tool === "duplicates-refresh" || !duplicateScanVisible) duplicateMainSelections.clear();
@@ -2546,6 +2582,21 @@ function handleOrderToolsClick(event) {
   }
   if (archiveGroupId) archiveDuplicateGroupFromPanel(archiveGroupId, event.target);
   if (duplicateOrderId) highlightOrder(duplicateOrderId);
+}
+
+async function repairConfirmedTzeYeeFromPanel(button) {
+  if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+  button.disabled = true;
+  const originalLabel = button.textContent;
+  button.textContent = "Repairing...";
+  const result = await repairConfirmedTzeYeeOwnership();
+  if (button.isConnected) {
+    button.disabled = false;
+    button.textContent = originalLabel;
+  }
+  if (!result?.ok) return;
+  workflowIntegrityResult = scanWorkflowIntegrity();
+  renderWorkflowModules();
 }
 
 async function repairSelectedWorkflowIntegrityIssue(button) {
@@ -2770,6 +2821,219 @@ export async function repairOrderOwnership(values = {}, options = {}) {
     const message = `Order ownership repaired locally but cloud sync failed: ${error.message || "Unknown cloud error"}`;
     showWorkflowMessage(message, "warning");
     return { ok: true, cloudOk: false, changes: plan.changes, conflicts: plan.conflicts, message };
+  }
+}
+
+export async function repairConfirmedTzeYeeOwnership(options = {}) {
+  if (!isBossOrAdmin()) return failWorkflowIntegrityRepair("Permission denied: your role cannot perform this action.");
+  const plan = planConfirmedTzeYeeRepair();
+  if (!plan.ok) return failWorkflowIntegrityRepair(plan.message);
+  if (options.downloadBackup !== false && !downloadConfirmedTzeYeeBackup(plan)) {
+    return failWorkflowIntegrityRepair("Full JSON backup download failed. No workflow records were changed.");
+  }
+  if (options.confirm !== false) {
+    const confirmation = window.prompt([
+      "Fix Tze Yee SO2607011",
+      "Tze Yee: ESQ-2026-0003 remains Won and owns SO2607011.",
+      `MS Chew: ${plan.wrongQuotationId} returns to Follow Up with no SO number.`,
+      `Erroneous Order: ${confirmedTzeYeeRepair.wrongOrderId} is archived without deletion or a replacement SO number.`,
+      `Exact linked Production archived: ${plan.productionJobIds.join(", ") || "none"}`,
+      `Exact linked Installation archived: ${plan.installationJobIds.join(", ") || "none"}`,
+      "Exact before/after field changes:",
+      JSON.stringify(plan.changes, null, 2),
+      "Type REPAIR TZE YEE to confirm."
+    ].join("\n"));
+    if (confirmation !== "REPAIR TZE YEE") return { ok: false, cancelled: true, message: "Tze Yee repair cancelled." };
+  }
+
+  const previousState = snapshotOrderWorkflowState();
+  let localCommitted = false;
+  try {
+    state.quotations = plan.nextState.quotations;
+    state.orders = plan.nextState.orders;
+    state.productionJobs = plan.nextState.productionJobs;
+    state.installationJobs = plan.nextState.installationJobs;
+    state.warrantyCards = plan.nextState.warrantyCards;
+    const localSave = persistOrderConversionLocally();
+    if (!localSave.ok) {
+      restoreConversionState(previousState);
+      return failWorkflowIntegrityRepair(`Failed to save the Tze Yee repair locally: ${localSave.reason}`);
+    }
+    localCommitted = true;
+    workflowIntegrityResult = scanWorkflowIntegrity();
+    renderWorkflowModules();
+    showWorkflowMessage("Tze Yee repair saved locally. Syncing cloud...", "info");
+    const cloudSync = await syncOrderConversionCollections();
+    if (!cloudSync.ok && !cloudSync.localOnly) {
+      const message = `Tze Yee repair saved locally but cloud sync failed: ${cloudSync.reason}`;
+      showWorkflowMessage(message, "warning");
+      return { ok: true, cloudOk: false, changes: plan.changes, message };
+    }
+    showWorkflowMessage("Tze Yee now owns SO2607011. MS Chew was returned to Follow Up.", "success");
+    return {
+      ok: true,
+      cloudOk: !cloudSync.localOnly,
+      localOnly: cloudSync.localOnly,
+      changes: plan.changes,
+      wrongQuotationId: plan.wrongQuotationId,
+      productionJobIds: plan.productionJobIds,
+      installationJobIds: plan.installationJobIds
+    };
+  } catch (error) {
+    if (!localCommitted) {
+      restoreConversionState(previousState);
+      return failWorkflowIntegrityRepair(`Tze Yee repair failed before local commit: ${error.message || "Unknown error"}`);
+    }
+    const message = `Tze Yee repair saved locally but cloud sync failed: ${error.message || "Unknown cloud error"}`;
+    showWorkflowMessage(message, "warning");
+    return { ok: true, cloudOk: false, changes: plan.changes, message };
+  }
+}
+
+function planConfirmedTzeYeeRepair() {
+  const quote = state.quotations.find((row) => String(row.id || "") === confirmedTzeYeeRepair.quotationId);
+  const order = state.orders.find((row) => isActiveOrderRecord(row) && String(row.id || "") === confirmedTzeYeeRepair.orderId);
+  const wrongOrder = state.orders.find((row) => isActiveOrderRecord(row) && String(row.id || "") === confirmedTzeYeeRepair.wrongOrderId);
+  if (!quote || !order || !wrongOrder) return { ok: false, message: "One or more exact confirmed Tze Yee/MS Chew stable IDs are missing or already archived." };
+  if (!matchesConfirmedRecord(quote, confirmedTzeYeeRepair.quotationNo, confirmedTzeYeeRepair.customer, confirmedTzeYeeRepair.total)
+    || !matchesConfirmedRecord(order, "", confirmedTzeYeeRepair.customer, confirmedTzeYeeRepair.total)
+    || !matchesConfirmedRecord(wrongOrder, "", confirmedTzeYeeRepair.wrongCustomer, confirmedTzeYeeRepair.wrongTotal)) {
+    return { ok: false, message: "The exact stable IDs no longer match the confirmed customer and financial facts. No records were changed." };
+  }
+
+  const reverseQuoteIds = new Set([wrongOrder.quoteId, wrongOrder.quotationId].filter(Boolean).map(String));
+  const wrongQuoteCandidates = state.quotations.filter((candidate) => (
+    reverseQuoteIds.has(String(candidate.id || ""))
+      || String(candidate.orderId || "") === confirmedTzeYeeRepair.wrongOrderId
+      || String(candidate.linkedOrderId || "") === confirmedTzeYeeRepair.wrongOrderId
+  ) && matchesConfirmedRecord(candidate, confirmedTzeYeeRepair.wrongQuotationNo, confirmedTzeYeeRepair.wrongCustomer, confirmedTzeYeeRepair.wrongTotal));
+  if (wrongQuoteCandidates.length !== 1) {
+    return { ok: false, message: "The exact MS Chew quotation cannot be resolved uniquely through stable-ID links. No records were changed." };
+  }
+  const wrongQuote = wrongQuoteCandidates[0];
+  const unexpectedOwners = state.orders.filter((candidate) => isActiveOrderRecord(candidate)
+    && ![confirmedTzeYeeRepair.orderId, confirmedTzeYeeRepair.wrongOrderId].includes(String(candidate.id || ""))
+    && [candidate.orderNo, candidate.orderNumber].some((value) => normalizeRefNo(value) === confirmedTzeYeeRepair.orderNo));
+  if (unexpectedOwners.length) return { ok: false, message: "Another active Order also uses SO2607011. Review it before using the confirmed repair." };
+
+  const now = new Date().toISOString();
+  const archivedBy = state.currentUser?.username || state.currentUser?.userId || state.role || "Boss/Admin";
+  const nextState = snapshotOrderWorkflowState();
+  const changes = [];
+  const replaceRecord = (collection, recordId, updater) => {
+    nextState[collection] = nextState[collection].map((record) => {
+      if (String(record.id || "") !== String(recordId)) return record;
+      const updated = updater(record);
+      recordFieldChanges(changes, collection, record, updated);
+      return updated;
+    });
+  };
+  replaceRecord("quotations", quote.id, (record) => ({
+    ...record,
+    status: "won",
+    orderId: confirmedTzeYeeRepair.orderId,
+    linkedOrderId: confirmedTzeYeeRepair.orderId,
+    orderNo: confirmedTzeYeeRepair.orderNo,
+    orderNumber: confirmedTzeYeeRepair.orderNo,
+    converted: true,
+    convertedToOrder: true,
+    convertedAt: record.convertedAt || now,
+    updatedAt: now
+  }));
+  replaceRecord("orders", order.id, (record) => ({
+    ...record,
+    quoteId: confirmedTzeYeeRepair.quotationId,
+    quotationId: confirmedTzeYeeRepair.quotationId,
+    quoteNumber: confirmedTzeYeeRepair.quotationNo,
+    quotationNo: confirmedTzeYeeRepair.quotationNo,
+    orderNo: confirmedTzeYeeRepair.orderNo,
+    orderNumber: confirmedTzeYeeRepair.orderNo,
+    updatedAt: now
+  }));
+  replaceRecord("quotations", wrongQuote.id, (record) => ({
+    ...record,
+    status: "follow_up",
+    orderId: "",
+    linkedOrderId: "",
+    orderNo: "",
+    orderNumber: "",
+    converted: false,
+    convertedToOrder: false,
+    updatedAt: now
+  }));
+  replaceRecord("orders", wrongOrder.id, (record) => ({
+    ...record,
+    statusBeforeArchive: record.status,
+    status: "cancelled_archived",
+    isArchived: true,
+    archiveReason: "Quotation was not confirmed; erroneous Order record",
+    archivedAt: now,
+    archivedBy,
+    updatedAt: now
+  }));
+
+  const archiveExactJob = (collection, record) => replaceRecord(collection, record.id, (candidate) => ({
+    ...candidate,
+    statusBeforeArchive: candidate.status,
+    status: "cancelled_archived",
+    isArchived: true,
+    archiveReason: "Generated from erroneous unconfirmed Order",
+    archivedAt: now,
+    archivedBy,
+    updatedAt: now
+  }));
+  const productionJobs = state.productionJobs.filter((record) => isActiveWorkflowRecord(record)
+    && String(record.orderId || "") === confirmedTzeYeeRepair.wrongOrderId);
+  const installationJobs = state.installationJobs.filter((record) => isActiveWorkflowRecord(record)
+    && String(record.orderId || "") === confirmedTzeYeeRepair.wrongOrderId);
+  productionJobs.forEach((record) => archiveExactJob("productionJobs", record));
+  installationJobs.forEach((record) => archiveExactJob("installationJobs", record));
+
+  if (!protectedOwnershipValuesUnchanged(state, nextState)) {
+    return { ok: false, message: "Safety check failed: customer, item or financial data would change." };
+  }
+  return {
+    ok: true,
+    wrongQuotationId: String(wrongQuote.id || ""),
+    productionJobIds: productionJobs.map((record) => String(record.id || "")),
+    installationJobIds: installationJobs.map((record) => String(record.id || "")),
+    changes,
+    nextState
+  };
+}
+
+function matchesConfirmedRecord(record, quotationNo, customerName, total) {
+  const customer = record?.customer && typeof record.customer === "object" ? record.customer : {};
+  const actualName = String(customer.name ?? record?.customerName ?? "").trim().toLowerCase();
+  const correctQuotation = !quotationNo || normalizeRefNo(getQuotationDisplayNo(record)) === normalizeRefNo(quotationNo);
+  return correctQuotation
+    && actualName === String(customerName).trim().toLowerCase()
+    && Math.abs(Number(record?.total ?? record?.amount) - Number(total)) < 0.000001;
+}
+
+function downloadConfirmedTzeYeeBackup(plan) {
+  try {
+    if (typeof document?.createElement !== "function" || typeof URL?.createObjectURL !== "function") return false;
+    const payload = {
+      type: "eco-screen-crm-v2-full-backup-before-tze-yee-repair",
+      timestamp: new Date().toISOString(),
+      confirmedStableIds: confirmedTzeYeeRepair,
+      exactFieldChanges: plan.changes,
+      state: structuredCloneSafe(stateSnapshot())
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `eco-screen-crm-v2-full-backup-before-tze-yee-repair-${backupTimestamp()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    return true;
+  } catch (error) {
+    console.error("Tze Yee repair backup failed", error);
+    return false;
   }
 }
 
