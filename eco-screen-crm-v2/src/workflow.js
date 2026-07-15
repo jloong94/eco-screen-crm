@@ -281,16 +281,17 @@ export function monthlyOrderSequence(value, year, month) {
   return Number.isSafeInteger(sequence) && sequence > 0 ? sequence : 0;
 }
 
-export function createOrderFromQuote(quote) {
+export function createOrderFromQuote(quote, options = {}) {
   const totals = quoteTotals(quote.items, quote.discount, quote.deposit);
-  const quoteDisplayNo = ensureQuotationDisplayNo(quote);
-  const orderNo = nextSalesOrderNumber();
+  const quoteDisplayNo = String(options.quoteNumber || "").trim() || ensureQuotationDisplayNo(quote);
+  const orderNo = String(options.orderNo || "").trim() || nextSalesOrderNumber();
   const customer = customerFromQuotation(quote);
   const appointmentDate = quote.appointmentDate || quote.appointment_date || "";
   const appointmentTime = quote.appointmentTime || quote.appointment_time || "";
   const remark = quote.remark ?? quote.remarks ?? "";
+  const now = options.now || new Date().toISOString();
   return {
-    id: uid("order"),
+    id: options.id || uid("order"),
     orderNo,
     orderNumber: orderNo,
     quoteId: quote.id,
@@ -318,8 +319,8 @@ export function createOrderFromQuote(quote) {
     remark,
     remarks: quote.remarks ?? remark,
     customerRemark: customer.remark,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
+    createdAt: now,
+    updatedAt: now
   };
 }
 
@@ -1383,6 +1384,83 @@ function safeOrderOwnershipRepairHtml(issue) {
 
 function coveredOrderRecoveryPanelHtml() {
   if (!coveredOrderRecovery) return "";
+  if (coveredOrderRecovery.mode === "so") return coveredOrderSoPanelHtml();
+  if (coveredOrderRecovery.mode === "quote") return missingConfirmedOrderPanelHtml();
+  return `
+    <section class="covered-order-panel" data-covered-order-panel>
+      <div class="section-head">
+        <div><h3>Recover Covered Order</h3><p class="muted-text">Choose a search method. Stable IDs are selected from the results and never need to be typed.</p></div>
+        <button class="btn" type="button" data-order-tool="recover-covered-order-close">Close</button>
+      </div>
+      ${coveredOrderSearchControlsHtml()}
+      <div class="covered-order-safety"><strong>Choose a recovery mode</strong><p>Use SO search when the correct active Order still exists. Use customer or ESQ search when the confirmed quotation exists but its correct Order payload is missing or covered.</p></div>
+    </section>`;
+}
+
+function coveredOrderSearchControlsHtml(values = {}) {
+  return `<div class="covered-order-search-grid">
+    <label>Search by SO number<span class="covered-order-search-action"><input data-covered-order-so-search value="${escapeHtml(values.orderNo || "")}" placeholder="SO2607011" /><button class="btn" type="button" data-order-tool="recover-covered-order-search-so">Search SO</button></span></label>
+    <label>Search by customer or ESQ<span class="covered-order-search-action"><input data-covered-order-quote-search value="${escapeHtml(values.query || "")}" placeholder="Datin Conni or ESQ-2026-0005" /><button class="btn" type="button" data-order-tool="recover-covered-order-search-quote">Search Quotation</button></span></label>
+  </div>`;
+}
+
+function missingConfirmedOrderPanelHtml() {
+  const recovery = coveredOrderRecovery;
+  const scan = recovery.scan || { records: [] };
+  const missingScan = recovery.missingScan;
+  const records = missingScan?.records || scan.records || [];
+  return `
+    <section class="covered-order-panel" data-covered-order-panel>
+      <div class="section-head">
+        <div><h3>Recover Missing Confirmed Order</h3><p class="muted-text">Select the exact confirmed quotation, enter its intended SO number, then review every stable-ID and alias-linked conflict.</p></div>
+        <div class="actions"><button class="btn" type="button" data-order-tool="recover-covered-order-refresh">Refresh</button><button class="btn" type="button" data-order-tool="recover-covered-order-home">Search modes</button><button class="btn" type="button" data-order-tool="recover-covered-order-close">Close</button></div>
+      </div>
+      ${coveredOrderSearchControlsHtml({ query: recovery.query })}
+      ${scan.message ? `<p class="${records.length ? "muted-text" : "danger-text"}">${escapeHtml(scan.message)}</p>` : ""}
+      <div class="form-grid compact covered-order-intended-so"><label>Intended SO number<input data-covered-order-intended-so value="${escapeHtml(recovery.intendedOrderNo || "")}" placeholder="SO2607013" /></label></div>
+      <div class="table-wrap covered-order-table-wrap">
+        <table class="data-table covered-order-table">
+          <thead><tr><th>Role</th><th>Record</th><th>Customer / Phone</th><th>Quotation / Order</th><th>Status</th><th>Total</th><th>Stable IDs</th><th>Production / Installation IDs</th><th>Forward / Reverse links</th></tr></thead>
+          <tbody>${records.map((entry) => missingConfirmedOrderRowHtml(entry, recovery)).join("") || `<tr><td colspan="9">No quotation candidate found.</td></tr>`}</tbody>
+        </table>
+      </div>
+      ${missingScan?.message ? `<p class="${missingScan.ok ? "muted-text" : "danger-text"}">${escapeHtml(missingScan.message)}</p>` : ""}
+      ${missingScan
+        ? `<button class="btn primary" type="button" data-order-tool="recover-missing-order-apply" ${missingScan.ok ? "" : "disabled"}>Preview &amp; Recover Missing Confirmed Order</button><p class="muted-text">Confirmation phrase: RECOVER MISSING ORDER</p>`
+        : `<button class="btn" type="button" data-order-tool="recover-missing-order-preview" ${records.length ? "" : "disabled"}>Show Related &amp; Conflicting Records</button>`}
+      <div class="covered-order-safety"><strong>Before repair</strong><p>A full JSON backup and exact before/after preview are required. Existing customer, phone, items, totals, deposit, balance, remarks, progress, staff and history are preserved. No record is hard-deleted.</p></div>
+    </section>`;
+}
+
+function missingConfirmedOrderRowHtml(entry, recovery) {
+  const view = entry.view;
+  const selectedQuotationId = String(recovery.selectedQuotationId || "");
+  const ownId = String(entry.record.id || "");
+  let roleControl = "Reference only";
+  if (!recovery.missingScan && entry.collection === "quotations") {
+    roleControl = `<label><input type="radio" name="missing-confirmed-quotation" value="${escapeHtml(ownId)}" ${selectedQuotationId === ownId ? "checked" : ""} /> Confirmed Quotation to Recover</label>`;
+  } else if (entry.collection === "quotations" && ownId === selectedQuotationId) {
+    roleControl = "<strong>Confirmed Quotation to Recover</strong>";
+  } else if (entry.collection === "quotations") {
+    roleControl = `<label><input type="checkbox" name="missing-incorrect-quotation" value="${escapeHtml(ownId)}" /> Return to Quotation / Follow Up</label>`;
+  } else if (entry.collection === "orders") {
+    roleControl = `<label><input type="checkbox" name="missing-incorrect-order" value="${escapeHtml(ownId)}" /> Archive incorrect Order</label>`;
+  }
+  return `<tr>
+    <td>${roleControl}</td>
+    <td>${escapeHtml(entry.collectionLabel)}<br><span class="muted-text">${escapeHtml(entry.matchReason)}</span></td>
+    <td>${escapeHtml(view.customer || "-")}<br>${escapeHtml(view.phone || "-")}</td>
+    <td>${escapeHtml(view.quotationNo || "-")}<br>${escapeHtml(view.orderNo || "-")}</td>
+    <td>${escapeHtml(view.quotationStatus || "-")}<br>${escapeHtml(view.orderStatus || "-")}</td>
+    <td>${escapeHtml(view.total === "" ? "-" : view.total)}</td>
+    <td><strong>Q:</strong> ${escapeHtml(view.quotationStableId || "-")}<br><strong>O:</strong> ${escapeHtml(view.orderStableId || "-")}</td>
+    <td><strong>P:</strong> ${escapeHtml(view.productionJobIds.join(", ") || "-")}<br><strong>I:</strong> ${escapeHtml(view.installationJobIds.join(", ") || "-")}</td>
+    <td><pre>${escapeHtml(JSON.stringify({ forward: view.forwardLinks, reverse: view.reverseLinks }, null, 2))}</pre></td>
+  </tr>`;
+}
+
+function coveredOrderSoPanelHtml() {
+  if (!coveredOrderRecovery) return "";
   const { orderNo, scan } = coveredOrderRecovery;
   const records = scan.records || [];
   return `
@@ -1394,6 +1472,7 @@ function coveredOrderRecoveryPanelHtml() {
         </div>
         <div class="actions">
           <button class="btn" type="button" data-order-tool="recover-covered-order-refresh">Refresh</button>
+          <button class="btn" type="button" data-order-tool="recover-covered-order-home">Search modes</button>
           <button class="btn" type="button" data-order-tool="recover-covered-order-close">Close</button>
         </div>
       </div>
@@ -2587,12 +2666,20 @@ function handleOrderToolsClick(event) {
   }
   if (tool === "workflow-integrity-repair") repairSelectedWorkflowIntegrityIssue(event.target);
   if (tool === "recover-covered-order") openCoveredOrderRecovery();
+  if (tool === "recover-covered-order-home") {
+    coveredOrderRecovery = { mode: "search" };
+    renderOrderTools();
+  }
+  if (tool === "recover-covered-order-search-so") searchCoveredOrderBySo(event.target);
+  if (tool === "recover-covered-order-search-quote") searchCoveredOrderByQuotation(event.target);
   if (tool === "recover-covered-order-refresh") refreshCoveredOrderRecovery();
   if (tool === "recover-covered-order-close") {
     coveredOrderRecovery = null;
     renderOrderTools();
   }
   if (tool === "recover-covered-order-apply") recoverCoveredOrderFromPanel(event.target);
+  if (tool === "recover-missing-order-preview") previewMissingConfirmedOrder(event.target);
+  if (tool === "recover-missing-order-apply") recoverMissingConfirmedOrderFromPanel(event.target);
   if (tool === "duplicates" || tool === "duplicates-refresh") {
     if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
     if (tool === "duplicates-refresh" || !duplicateScanVisible) duplicateMainSelections.clear();
@@ -2615,20 +2702,87 @@ function handleOrderToolsClick(event) {
 
 function openCoveredOrderRecovery() {
   if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
-  const entered = window.prompt("Enter the exact SO number to recover, for example SO2607011 or SO2607013.");
-  if (entered === null) return;
-  const orderNo = normalizeRefNo(entered);
-  if (!orderNo) return showWorkflowMessage("Enter an SO number.", "error");
-  coveredOrderRecovery = { orderNo, scan: scanCoveredOrderReferences(orderNo) };
+  coveredOrderRecovery = { mode: "search" };
   renderOrderTools();
   setTimeout(() => document.querySelector?.(".covered-order-panel")?.scrollIntoView({ behavior: "smooth", block: "start" }), 25);
 }
 
+function searchCoveredOrderBySo(button) {
+  if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+  const panel = button.closest("[data-covered-order-panel]");
+  const orderNo = normalizeCoveredOrderNo(panel?.querySelector("[data-covered-order-so-search]")?.value);
+  if (!orderNo) return showWorkflowMessage("Enter an SO number.", "error");
+  coveredOrderRecovery = { mode: "so", orderNo, scan: scanCoveredOrderReferences(orderNo) };
+  renderOrderTools();
+}
+
+function searchCoveredOrderByQuotation(button) {
+  if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+  const panel = button.closest("[data-covered-order-panel]");
+  const query = String(panel?.querySelector("[data-covered-order-quote-search]")?.value || "").trim();
+  if (!query) return showWorkflowMessage("Enter a customer name or ESQ number.", "error");
+  coveredOrderRecovery = { mode: "quote", query, scan: searchCoveredOrderQuotations(query), intendedOrderNo: "", selectedQuotationId: "", missingScan: null };
+  renderOrderTools();
+}
+
 function refreshCoveredOrderRecovery() {
   if (!coveredOrderRecovery) return;
-  coveredOrderRecovery = { orderNo: coveredOrderRecovery.orderNo, scan: scanCoveredOrderReferences(coveredOrderRecovery.orderNo) };
+  if (coveredOrderRecovery.mode === "so") {
+    coveredOrderRecovery = { mode: "so", orderNo: coveredOrderRecovery.orderNo, scan: scanCoveredOrderReferences(coveredOrderRecovery.orderNo) };
+  } else if (coveredOrderRecovery.mode === "quote") {
+    const refreshed = searchCoveredOrderQuotations(coveredOrderRecovery.query);
+    const selectedQuotationId = coveredOrderRecovery.selectedQuotationId;
+    const intendedOrderNo = coveredOrderRecovery.intendedOrderNo;
+    coveredOrderRecovery = {
+      mode: "quote",
+      query: coveredOrderRecovery.query,
+      scan: refreshed,
+      selectedQuotationId,
+      intendedOrderNo,
+      missingScan: selectedQuotationId && intendedOrderNo ? scanMissingConfirmedOrderRecovery(selectedQuotationId, intendedOrderNo) : null
+    };
+  }
   renderOrderTools();
   showWorkflowMessage("Covered Order references refreshed. Preview only; no records changed.", "success");
+}
+
+function previewMissingConfirmedOrder(button) {
+  if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+  const panel = button.closest("[data-covered-order-panel]");
+  const quotationId = panel?.querySelector('input[name="missing-confirmed-quotation"]:checked')?.value || "";
+  const intendedOrderNo = normalizeCoveredOrderNo(panel?.querySelector("[data-covered-order-intended-so]")?.value);
+  if (!quotationId || !intendedOrderNo) return showWorkflowMessage("Select one confirmed quotation and enter its intended SO number.", "error");
+  coveredOrderRecovery = {
+    ...coveredOrderRecovery,
+    selectedQuotationId: quotationId,
+    intendedOrderNo,
+    missingScan: scanMissingConfirmedOrderRecovery(quotationId, intendedOrderNo)
+  };
+  renderOrderTools();
+  showWorkflowMessage("Missing Order comparison updated. Preview only; no records changed.", "success");
+}
+
+async function recoverMissingConfirmedOrderFromPanel(button) {
+  if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+  const panel = button.closest("[data-covered-order-panel]");
+  const incorrectQuotationIds = [...(panel?.querySelectorAll('input[name="missing-incorrect-quotation"]:checked') || [])].map((input) => input.value);
+  const incorrectOrderIds = [...(panel?.querySelectorAll('input[name="missing-incorrect-order"]:checked') || [])].map((input) => input.value);
+  button.disabled = true;
+  const originalLabel = button.textContent;
+  button.textContent = "Preparing recovery...";
+  const result = await recoverMissingConfirmedOrder({
+    confirmedQuotationId: coveredOrderRecovery?.selectedQuotationId || "",
+    intendedOrderNo: coveredOrderRecovery?.intendedOrderNo || "",
+    incorrectQuotationIds,
+    incorrectOrderIds
+  });
+  if (button.isConnected) {
+    button.disabled = false;
+    button.textContent = originalLabel;
+  }
+  if (!result?.ok) return;
+  coveredOrderRecovery = null;
+  renderWorkflowModules();
 }
 
 async function recoverCoveredOrderFromPanel(button) {
@@ -2881,12 +3035,158 @@ export async function repairOrderOwnership(values = {}, options = {}) {
   }
 }
 
+export function searchCoveredOrderQuotations(query, source = state) {
+  const searchKey = normalizeCoveredSearch(query);
+  const quotations = Array.isArray(source.quotations) ? source.quotations : [];
+  const rows = coveredOrderCollections(source);
+  if (!searchKey) return { ok: false, query: "", records: [], quotationCandidates: [], message: "Enter a customer name or ESQ number." };
+  const matches = quotations.filter((quote) => {
+    const customer = customerFromQuotation(quote);
+    const customerKey = normalizeCoveredSearch(customer.name);
+    const aliases = quotationAliasFields(quote).map(normalizeCoveredSearch).filter(Boolean);
+    return aliases.includes(searchKey) || customerKey.includes(searchKey);
+  });
+  const records = matches.map((record) => ({
+    collection: "quotations",
+    collectionLabel: "Quotation",
+    record,
+    matchReason: quotationAliasFields(record).map(normalizeCoveredSearch).includes(searchKey) ? "Exact quotation alias" : "Normalized customer search",
+    view: coveredOrderRecordView("quotations", record, rows)
+  }));
+  return {
+    ok: records.length > 0,
+    query: String(query || "").trim(),
+    records,
+    quotationCandidates: records.map((entry) => String(entry.record.id || "")).filter(Boolean),
+    message: records.length ? `${records.length} quotation candidate(s) found. Select by the displayed exact stable ID.` : "No quotation matches that customer or ESQ search."
+  };
+}
+
+export function scanMissingConfirmedOrderRecovery(quotationId, intendedOrderNo, source = state) {
+  const confirmedQuotationId = String(quotationId || "").trim();
+  const orderNo = normalizeCoveredOrderNo(intendedOrderNo);
+  const rows = coveredOrderCollections(source);
+  const quote = rows.quotations.find((record) => String(record.id || "") === confirmedQuotationId);
+  if (!confirmedQuotationId || !orderNo || !quote?.id) {
+    return { ok: false, orderNo, confirmedQuotationId, records: [], message: "The selected exact quotation or intended SO number is missing." };
+  }
+
+  const quoteAlias = normalizeCoveredSearch(quotationNumberForRecovery(quote));
+  const included = new Set([coveredOrderRecordKey("quotations", quote)]);
+  const orderIds = new Set([quote.orderId, quote.linkedOrderId].filter(Boolean).map(String));
+  const quotationIds = new Set([confirmedQuotationId]);
+  const intendedAliasMatch = (record) => coveredOrderNumberFields(record).some((value) => normalizeCoveredOrderNo(value) === orderNo);
+  const quotationAliasMatch = (record) => quoteAlias && quotationAliasFields(record).some((value) => normalizeCoveredSearch(value) === quoteAlias);
+
+  ["quotations", "orders", "productionJobs", "installationJobs"].forEach((collection) => {
+    rows[collection].filter((record) => intendedAliasMatch(record) || quotationAliasMatch(record)).forEach((record) => {
+      included.add(coveredOrderRecordKey(collection, record));
+      if (collection === "orders" && record.id) orderIds.add(String(record.id));
+      if (collection === "quotations" && record.id) quotationIds.add(String(record.id));
+      [record.orderId, record.linkedOrderId].filter(Boolean).forEach((id) => orderIds.add(String(id)));
+      [record.quoteId, record.quotationId].filter(Boolean).forEach((id) => quotationIds.add(String(id)));
+    });
+  });
+
+  for (let pass = 0; pass < 5; pass += 1) {
+    rows.orders.filter((record) => orderIds.has(String(record.id || ""))
+      || [record.quoteId, record.quotationId].filter(Boolean).some((id) => quotationIds.has(String(id)))).forEach((record) => {
+      included.add(coveredOrderRecordKey("orders", record));
+      if (record.id) orderIds.add(String(record.id));
+      [record.quoteId, record.quotationId].filter(Boolean).forEach((id) => quotationIds.add(String(id)));
+    });
+    rows.quotations.filter((record) => quotationIds.has(String(record.id || ""))
+      || [record.orderId, record.linkedOrderId].filter(Boolean).some((id) => orderIds.has(String(id)))).forEach((record) => {
+      included.add(coveredOrderRecordKey("quotations", record));
+      if (record.id) quotationIds.add(String(record.id));
+      [record.orderId, record.linkedOrderId].filter(Boolean).forEach((id) => orderIds.add(String(id)));
+    });
+  }
+  ["productionJobs", "installationJobs"].forEach((collection) => rows[collection]
+    .filter((record) => orderIds.has(String(record.orderId || "")))
+    .forEach((record) => included.add(coveredOrderRecordKey(collection, record))));
+
+  const collections = ["quotations", "orders", "productionJobs", "installationJobs"];
+  const records = collections.flatMap((collection) => rows[collection]
+    .filter((record) => included.has(coveredOrderRecordKey(collection, record)))
+    .map((record) => ({
+      collection,
+      collectionLabel: ({ quotations: "Quotation", orders: "Order", productionJobs: "Production Job", installationJobs: "Installation Job" })[collection],
+      record,
+      matchReason: collection === "quotations" && String(record.id || "") === confirmedQuotationId
+        ? "Selected exact quotation"
+        : intendedAliasMatch(record)
+          ? `Exact ${orderNo} alias`
+          : quotationAliasMatch(record)
+            ? "Exact quotation alias"
+            : "Exact stable-ID relationship",
+      view: coveredOrderRecordView(collection, record, rows)
+    })));
+  const correctOrderCandidates = rows.orders.filter((order) => isActiveOrderRecord(order)
+    && ([quote.orderId, quote.linkedOrderId].filter(Boolean).map(String).includes(String(order.id || ""))
+      || [order.quoteId, order.quotationId].filter(Boolean).map(String).includes(confirmedQuotationId))
+    && orderPayloadMatchesQuotation(order, quote)).map((order) => String(order.id));
+  return {
+    ok: correctOrderCandidates.length === 0,
+    orderNo,
+    confirmedQuotationId,
+    records,
+    correctOrderCandidates,
+    quotationCandidates: records.filter((entry) => entry.collection === "quotations" && String(entry.record.id || "") !== confirmedQuotationId).map((entry) => String(entry.record.id || "")),
+    orderCandidates: records.filter((entry) => entry.collection === "orders").map((entry) => String(entry.record.id || "")),
+    message: correctOrderCandidates.length
+      ? `A matching active Order already exists (${correctOrderCandidates.join(", ")}). Use the existing active Order mode instead.`
+      : `${records.length} related or conflicting record(s) found. A new Order will be created only from the selected quotation snapshot.`
+  };
+}
+
+function coveredOrderCollections(source = state) {
+  return Object.fromEntries(["quotations", "orders", "productionJobs", "installationJobs"].map((collection) => [
+    collection,
+    Array.isArray(source[collection]) ? source[collection] : []
+  ]));
+}
+
+function normalizeCoveredSearch(value) {
+  return String(value ?? "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function quotationAliasFields(record = {}) {
+  return [record.quotationNo, record.quoteNo, record.quoteNumber, record.number, record.refNo, record.orderNo, record.orderNumber].filter(Boolean);
+}
+
+function quotationNumberForRecovery(quote = {}) {
+  const esq = quotationAliasFields(quote).find((value) => /^ESQ(?:-|\d)/i.test(String(value).trim()));
+  return String(esq || getQuotationDisplayNo(quote)).trim();
+}
+
+function orderPayloadMatchesQuotation(order = {}, quote = {}) {
+  const orderCustomer = order.customer && typeof order.customer === "object" ? order.customer : {};
+  const quoteCustomer = customerFromQuotation(quote);
+  const namesMatch = normalizeCoveredSearch(orderCustomer.name ?? order.customerName) === normalizeCoveredSearch(quoteCustomer.name);
+  const orderPhone = String(orderCustomer.phone ?? order.phone ?? "").replace(/\D/g, "");
+  const quotePhone = String(quoteCustomer.phone ?? "").replace(/\D/g, "");
+  const phonesMatch = !orderPhone || !quotePhone || orderPhone === quotePhone;
+  const totalFromQuote = quote.total ?? quote.amount ?? quoteTotals(quote.items || [], quote.discount, quote.deposit).total;
+  const totalsMatch = Math.abs(toNumber(order.total ?? order.amount) - toNumber(totalFromQuote)) < 0.02;
+  return Boolean(namesMatch && phonesMatch && totalsMatch && orderItemRecoverySignature(order.items) === orderItemRecoverySignature(quote.items));
+}
+
+function orderItemRecoverySignature(items) {
+  return JSON.stringify((Array.isArray(items) ? items : []).map((item) => ({
+    product: normalizeCoveredSearch(item.productId || item.product || item.productName || item.name),
+    width: toNumber(item.width),
+    height: toNumber(item.height),
+    quantity: toNumber(item.quantity || 1)
+  })));
+}
+
 export function scanCoveredOrderReferences(orderNo, source = state) {
-  const normalizedOrderNo = normalizeRefNo(orderNo);
+  const normalizedOrderNo = normalizeCoveredOrderNo(orderNo);
   if (!normalizedOrderNo) return { ok: false, orderNo: "", records: [], message: "Enter an exact SO number." };
   const collections = ["quotations", "orders", "productionJobs", "installationJobs"];
   const rows = Object.fromEntries(collections.map((collection) => [collection, Array.isArray(source[collection]) ? source[collection] : []]));
-  const directlyMatches = (record) => coveredOrderNumberFields(record).some((value) => normalizeRefNo(value) === normalizedOrderNo);
+  const directlyMatches = (record) => coveredOrderNumberFields(record).some((value) => normalizeCoveredOrderNo(value) === normalizedOrderNo);
   const directRecords = collections.flatMap((collection) => rows[collection]
     .filter(directlyMatches)
     .map((record) => ({ collection, record })));
@@ -2944,7 +3244,21 @@ export function scanCoveredOrderReferences(orderNo, source = state) {
 }
 
 function coveredOrderNumberFields(record = {}) {
-  return [record.orderNo, record.orderNumber, record.orderReference, record.orderRef, record.order_no, record.order_number];
+  return [
+    record.orderNo,
+    record.orderNumber,
+    record.orderReference,
+    record.orderRef,
+    record.order_no,
+    record.order_number,
+    record.quotationNo,
+    record.quoteNo,
+    record.quoteNumber
+  ];
+}
+
+function normalizeCoveredOrderNo(value) {
+  return normalizeRefNo(value).replace(/[\s-]+/g, "");
 }
 
 function coveredOrderRecordKey(collection, record) {
@@ -2965,7 +3279,7 @@ function coveredOrderRecordView(collection, record, rows) {
   return {
     customer: String(customer.name ?? customerSource.customerName ?? ""),
     phone: String(customer.phone ?? customerSource.phone ?? ""),
-    quotationNo: getQuotationDisplayNo(collection === "quotations" ? record : (quotation || record)),
+    quotationNo: quotationNumberForRecovery(collection === "quotations" ? record : (quotation || record)),
     orderNo: collection === "orders" ? getOrderDisplayNo(record) : String(record.orderNo || record.orderNumber || order?.orderNo || order?.orderNumber || ""),
     quotationStatus: String(quotation?.status || (collection === "quotations" ? record.status : "") || ""),
     orderStatus: String(order?.status || (collection === "orders" ? record.status : "") || ""),
@@ -3063,6 +3377,233 @@ export async function recoverCoveredOrder(values = {}, options = {}) {
     showWorkflowMessage(message, "warning");
     return { ok: true, cloudOk: false, changes: plan.changes, message };
   }
+}
+
+export async function recoverMissingConfirmedOrder(values = {}, options = {}) {
+  if (!isBossOrAdmin()) return failWorkflowIntegrityRepair("Permission denied: your role cannot perform this action.");
+  const plan = planMissingConfirmedOrderRecovery(values);
+  if (!plan.ok) return failWorkflowIntegrityRepair(plan.message);
+  if (options.downloadBackup !== false && !downloadCoveredOrderBackup(plan)) {
+    return failWorkflowIntegrityRepair("Full JSON backup download failed. No workflow records were changed.");
+  }
+  if (options.confirm !== false) {
+    const confirmation = window.prompt([
+      `Recover Missing Confirmed Order ${plan.orderNo}`,
+      `Create new exact Order ${plan.confirmedOrderId} from quotation ${plan.confirmedQuotationId}.`,
+      `Return selected quotations to Follow Up: ${plan.incorrectQuotationIds.join(", ") || "none"}`,
+      `Archive selected incorrect Orders: ${plan.incorrectOrderIds.join(", ") || "none"}`,
+      `Archive exact linked Production: ${plan.productionJobIds.join(", ") || "none"}`,
+      `Archive exact linked Installation: ${plan.installationJobIds.join(", ") || "none"}`,
+      "Unselected related records remain unchanged.",
+      "Exact before/after field changes:",
+      JSON.stringify(plan.changes, null, 2),
+      "Type RECOVER MISSING ORDER to confirm."
+    ].join("\n"));
+    if (confirmation !== "RECOVER MISSING ORDER") return { ok: false, cancelled: true, message: "Missing confirmed Order recovery cancelled." };
+  }
+
+  const previousState = snapshotOrderWorkflowState();
+  let localCommitted = false;
+  try {
+    state.quotations = plan.nextState.quotations;
+    state.orders = plan.nextState.orders;
+    state.productionJobs = plan.nextState.productionJobs;
+    state.installationJobs = plan.nextState.installationJobs;
+    state.warrantyCards = plan.nextState.warrantyCards;
+    const localSave = persistOrderConversionLocally();
+    if (!localSave.ok) {
+      restoreConversionState(previousState);
+      return failWorkflowIntegrityRepair(`Failed to save missing Order recovery locally: ${localSave.reason}`);
+    }
+    localCommitted = true;
+    workflowIntegrityResult = scanWorkflowIntegrity();
+    renderWorkflowModules();
+    showWorkflowMessage("Missing confirmed Order recovered locally. Syncing cloud...", "info");
+    const cloudSync = await syncOrderConversionCollections();
+    if (!cloudSync.ok && !cloudSync.localOnly) {
+      const message = `Missing confirmed Order recovered locally but cloud sync failed: ${cloudSync.reason}`;
+      showWorkflowMessage(message, "warning");
+      return { ok: true, cloudOk: false, changes: plan.changes, confirmedOrderId: plan.confirmedOrderId, message };
+    }
+    showWorkflowMessage(`${plan.orderNo} recovered from the selected confirmed quotation.`, "success");
+    return {
+      ok: true,
+      cloudOk: !cloudSync.localOnly,
+      localOnly: cloudSync.localOnly,
+      changes: plan.changes,
+      confirmedQuotationId: plan.confirmedQuotationId,
+      confirmedOrderId: plan.confirmedOrderId,
+      incorrectQuotationIds: plan.incorrectQuotationIds,
+      incorrectOrderIds: plan.incorrectOrderIds,
+      productionJobIds: plan.productionJobIds,
+      installationJobIds: plan.installationJobIds
+    };
+  } catch (error) {
+    if (!localCommitted) {
+      restoreConversionState(previousState);
+      return failWorkflowIntegrityRepair(`Missing confirmed Order recovery failed before local commit: ${error.message || "Unknown error"}`);
+    }
+    const message = `Missing confirmed Order recovered locally but cloud sync failed: ${error.message || "Unknown cloud error"}`;
+    showWorkflowMessage(message, "warning");
+    return { ok: true, cloudOk: false, changes: plan.changes, confirmedOrderId: plan.confirmedOrderId, message };
+  }
+}
+
+function planMissingConfirmedOrderRecovery(values = {}) {
+  const confirmedQuotationId = String(values.confirmedQuotationId || "").trim();
+  const orderNo = normalizeCoveredOrderNo(values.intendedOrderNo);
+  const incorrectQuotationIds = uniqueStableIdSelection(values.incorrectQuotationIds);
+  const incorrectOrderIds = uniqueStableIdSelection(values.incorrectOrderIds);
+  if (!confirmedQuotationId || !orderNo || !/^SO\d+$/.test(orderNo)) {
+    return { ok: false, message: "Select one exact confirmed quotation and enter a valid intended SO number." };
+  }
+  if (!incorrectQuotationIds.ok || !incorrectOrderIds.ok) {
+    return { ok: false, message: "Each incorrect record must be selected once by its exact stable ID." };
+  }
+  const quote = state.quotations.find((record) => String(record.id || "") === confirmedQuotationId);
+  if (!quote?.id) return { ok: false, message: "The selected confirmed quotation stable ID no longer exists." };
+  const validation = validateQuoteForOrder(quote);
+  if (!validation.ok) return { ok: false, message: validation.message };
+  const comparison = scanMissingConfirmedOrderRecovery(confirmedQuotationId, orderNo);
+  if (!comparison.ok) return { ok: false, message: comparison.message };
+  if (incorrectQuotationIds.values.includes(confirmedQuotationId)) {
+    return { ok: false, message: "The confirmed quotation cannot also be selected as an incorrect quotation." };
+  }
+  if (incorrectQuotationIds.values.some((id) => !comparison.quotationCandidates.includes(id))
+    || incorrectOrderIds.values.some((id) => !comparison.orderCandidates.includes(id))) {
+    return { ok: false, message: "A selected incorrect stable ID is not part of the current comparison. Refresh before recovering." };
+  }
+
+  const selectedWrongQuotes = incorrectQuotationIds.values.map((id) => state.quotations.find((record) => String(record.id || "") === id));
+  const selectedWrongOrders = incorrectOrderIds.values.map((id) => state.orders.find((record) => String(record.id || "") === id));
+  if (selectedWrongQuotes.some((record) => !record?.id) || selectedWrongOrders.some((record) => !record?.id)) {
+    return { ok: false, message: "A selected stable ID is missing. No records were changed." };
+  }
+  const confirmedWrongQuote = selectedWrongQuotes.find((candidate) => normalizeStatus(candidate.status) === "won"
+    && state.orders.some((order) => isActiveOrderRecord(order)
+      && ([candidate.orderId, candidate.linkedOrderId].filter(Boolean).map(String).includes(String(order.id || ""))
+        || [order.quoteId, order.quotationId].filter(Boolean).map(String).includes(String(candidate.id)))
+      && orderPayloadMatchesQuotation(order, candidate)));
+  if (confirmedWrongQuote) {
+    return { ok: false, message: `Selected quotation ${confirmedWrongQuote.id} already resolves to a real confirmed active Order. Recovery is blocked.` };
+  }
+  if (selectedWrongOrders.some((record) => !isActiveOrderRecord(record))) {
+    return { ok: false, message: "An already archived or cancelled Order does not need to be selected as an incorrect active Order." };
+  }
+
+  const selectedWrongOrderIds = new Set(incorrectOrderIds.values);
+  const activeOwners = state.orders.filter((record) => isActiveOrderRecord(record)
+    && [record.orderNo, record.orderNumber].some((value) => normalizeCoveredOrderNo(value) === orderNo));
+  const unselectedActiveOwner = activeOwners.find((record) => !selectedWrongOrderIds.has(String(record.id || "")));
+  if (unselectedActiveOwner) {
+    return { ok: false, message: `${orderNo} is owned by active Order ${unselectedActiveOwner.id}. Select that exact incorrect Order or use the existing active Order mode.` };
+  }
+
+  const now = new Date().toISOString();
+  const archivedBy = state.currentUser?.username || state.currentUser?.userId || state.role || "Boss/Admin";
+  const nextState = snapshotOrderWorkflowState();
+  const changes = [];
+  const replaceRecord = (collection, recordId, updater) => {
+    nextState[collection] = nextState[collection].map((record) => {
+      if (String(record.id || "") !== String(recordId)) return record;
+      const updated = updater(record);
+      recordFieldChanges(changes, collection, record, updated);
+      return updated;
+    });
+  };
+  let confirmedOrderId = uid("order");
+  while (state.orders.some((record) => String(record.id || "") === confirmedOrderId)) confirmedOrderId = uid("order");
+  const conversionQuote = quotationForConversion(quote);
+  const quoteNumber = quotationNumberForRecovery(quote);
+  const mappedOrder = createOrderFromQuote(conversionQuote, { id: confirmedOrderId, orderNo, quoteNumber, now });
+  const confirmedOrder = {
+    ...mappedOrder,
+    subtotal: quote.subtotal ?? mappedOrder.subtotal,
+    total: quote.total ?? quote.amount ?? mappedOrder.total,
+    deposit: quote.deposit ?? mappedOrder.deposit,
+    balance: quote.balance ?? mappedOrder.balance,
+    status: "Confirmed",
+    isArchived: false,
+    updatedAt: now
+  };
+  nextState.orders = [confirmedOrder, ...nextState.orders];
+  recordFieldChanges(changes, "orders", {}, confirmedOrder);
+  replaceRecord("quotations", confirmedQuotationId, (record) => ({
+    ...record,
+    status: "won",
+    workflowStatus: "converted",
+    orderId: confirmedOrderId,
+    linkedOrderId: confirmedOrderId,
+    orderNo,
+    orderNumber: orderNo,
+    converted: true,
+    convertedToOrder: true,
+    convertedAt: record.convertedAt || now,
+    updatedAt: now
+  }));
+  selectedWrongQuotes.forEach((wrongQuote) => replaceRecord("quotations", wrongQuote.id, (record) => ({
+    ...record,
+    status: "follow_up",
+    workflowStatus: "follow_up",
+    orderId: "",
+    linkedOrderId: "",
+    orderNo: "",
+    orderNumber: "",
+    converted: false,
+    convertedToOrder: false,
+    updatedAt: now
+  })));
+  selectedWrongOrders.forEach((wrongOrder) => replaceRecord("orders", wrongOrder.id, (record) => ({
+    ...record,
+    statusBeforeArchive: record.status,
+    status: "cancelled_archived",
+    isArchived: true,
+    archiveReason: "Incorrect Order payload covering confirmed quotation",
+    archivedAt: now,
+    archivedBy,
+    updatedAt: now
+  })));
+
+  const productionJobs = state.productionJobs.filter((record) => isActiveWorkflowRecord(record) && selectedWrongOrderIds.has(String(record.orderId || "")));
+  const installationJobs = state.installationJobs.filter((record) => isActiveWorkflowRecord(record) && selectedWrongOrderIds.has(String(record.orderId || "")));
+  const archiveExactJob = (collection, record) => replaceRecord(collection, record.id, (candidate) => ({
+    ...candidate,
+    statusBeforeArchive: candidate.status,
+    status: "cancelled_archived",
+    isArchived: true,
+    archiveReason: "Generated from incorrect Order payload covering confirmed quotation",
+    archivedAt: now,
+    archivedBy,
+    updatedAt: now
+  }));
+  productionJobs.forEach((record) => archiveExactJob("productionJobs", record));
+  installationJobs.forEach((record) => archiveExactJob("installationJobs", record));
+
+  if (!protectedOwnershipValuesUnchanged(state, nextState, { addedOrders: 1 })) {
+    return { ok: false, message: "Safety check failed: existing customer, item or financial data would change." };
+  }
+  if (!protectedWorkflowPayloadUnchanged(state, nextState)) {
+    return { ok: false, message: "Safety check failed: Production or Installation payload data would change." };
+  }
+  return {
+    ok: true,
+    orderNo,
+    confirmedQuotationId,
+    confirmedOrderId,
+    incorrectQuotationIds: incorrectQuotationIds.values,
+    incorrectOrderIds: incorrectOrderIds.values,
+    productionJobIds: productionJobs.map((record) => String(record.id || "")),
+    installationJobIds: installationJobs.map((record) => String(record.id || "")),
+    changes,
+    comparison,
+    nextState
+  };
+}
+
+function uniqueStableIdSelection(values) {
+  if (!Array.isArray(values) || values.some((value) => typeof value !== "string" || !value.trim())) return { ok: false, values: [] };
+  const normalized = values.map((value) => value.trim());
+  return { ok: new Set(normalized).size === normalized.length, values: normalized };
 }
 
 function planCoveredOrderRecovery(values) {
@@ -3226,7 +3767,9 @@ function downloadCoveredOrderBackup(plan) {
         confirmedQuotationId: plan.confirmedQuotationId,
         confirmedOrderId: plan.confirmedOrderId,
         unconfirmedQuotationId: plan.unconfirmedQuotationId,
-        erroneousOrderId: plan.erroneousOrderId
+        erroneousOrderId: plan.erroneousOrderId,
+        incorrectQuotationIds: plan.incorrectQuotationIds || [],
+        incorrectOrderIds: plan.incorrectOrderIds || []
       },
       exactFieldChanges: plan.changes,
       state: structuredCloneSafe(stateSnapshot())
@@ -3364,13 +3907,17 @@ function recordFieldChanges(changes, collection, before, after) {
   });
 }
 
-function protectedOwnershipValuesUnchanged(before, after) {
+function protectedOwnershipValuesUnchanged(before, after, options = {}) {
   const protectedFields = ["customer", "customerName", "phone", "items", "total", "amount", "deposit", "balance", "remarks", "remark"];
-  return ["quotations", "orders"].every((collection) => before[collection].length === after[collection].length && before[collection].every((record) => {
+  const addedOrders = Number(options.addedOrders || 0);
+  return ["quotations", "orders"].every((collection) => {
+    const expectedLength = before[collection].length + (collection === "orders" ? addedOrders : 0);
+    return after[collection].length === expectedLength && before[collection].every((record) => {
     const candidate = after[collection].find((row) => String(row.id || "") === String(record.id || ""));
     if (!candidate) return false;
     return protectedFields.every((field) => JSON.stringify(record[field]) === JSON.stringify(candidate[field]));
-  }));
+    });
+  });
 }
 
 function protectedWorkflowPayloadUnchanged(before, after) {
