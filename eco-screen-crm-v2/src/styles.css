@@ -765,6 +765,80 @@ input:focus, select:focus, textarea:focus {
   min-width: 0;
   margin: 0;
 }
+.order-action-panel,
+.payment-history {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--soft);
+}
+.order-action-panel {
+  display: grid;
+  gap: 12px;
+}
+.order-action-panel h3,
+.order-action-panel h4 { margin: 0; }
+.order-action-facts,
+.payment-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.order-action-facts span,
+.payment-preview-grid span {
+  display: grid;
+  gap: 3px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  color: var(--muted);
+  font-size: 12px;
+}
+.order-action-facts strong,
+.payment-preview-grid strong { color: var(--ink); }
+.payment-warning {
+  margin: 0;
+  padding: 12px;
+  border: 2px solid #f59e0b;
+  border-radius: 10px;
+  background: #fffbeb;
+  color: #9a3412;
+}
+.change-preview-list {
+  display: grid;
+  gap: 8px;
+  max-height: 360px;
+  overflow: auto;
+}
+.change-preview-list div {
+  display: grid;
+  gap: 4px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+}
+.change-preview-list span { font-size: 12px; }
+.payment-history summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+.payment-history-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.payment-history-row:first-of-type { margin-top: 10px; }
+.payment-history-row span,
+.payment-history-row small { display: block; }
+.payment-history-row small { color: var(--muted); }
 .pagination-row {
   display: flex;
   align-items: center;
@@ -1036,7 +1110,10 @@ input:focus, select:focus, textarea:focus {
   .order-editor-summary { display: grid; grid-template-columns: 1fr 1fr; justify-content: stretch; }
   .order-editor-summary span { justify-content: space-between; }
   .order-status-action,
-  .order-number-editor {
+  .order-number-editor,
+  .order-action-facts,
+  .payment-preview-grid,
+  .payment-history-row {
     display: grid;
     grid-template-columns: 1fr;
     align-items: stretch;

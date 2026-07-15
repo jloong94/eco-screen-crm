@@ -52,8 +52,12 @@ const {
   restoreArchivedProductionJob,
   recoverCoveredOrder,
   recoverMissingConfirmedOrder,
+  recordOrderPayment,
   repairWorkflowIntegrityIssue,
   repairOrderOwnership,
+  returnOrderToFollowUp,
+  reverseOrderPayment,
+  getOrderPaymentSummary,
   scanWorkflowIntegrity,
   scanCoveredOrderReferences,
   scanMissingConfirmedOrderRecovery,
@@ -1329,6 +1333,164 @@ const persistedWorkflow = {
 assert(persistedWorkflow.orders.find((order) => order.id === syncOrder.id).productionStatus === "completed", "X: synchronized Order Production status must survive refresh storage");
 assert(persistedWorkflow.productionJobs.find((job) => job.orderId === syncOrder.id).status === "completed", "X: synchronized Production Job status must survive refresh storage");
 
+resetWorkflowState();
+state.currentUser = { userId: "boss-test", username: "boss-test", name: "Boss Test", role: "Boss", active: true };
+state.role = "Boss";
+const followUpQuote = validQuote("FOLLOW-UP-QUOTE", "Unconfirmed Customer");
+followUpQuote.status = "won";
+state.quotations = [followUpQuote];
+const followUpConversion = await convertQuoteToOrder(followUpQuote.id);
+const followUpOrderId = followUpConversion.order.id;
+const followUpOrderNo = followUpConversion.order.orderNo;
+state.orders = state.orders.map((order) => order.id === followUpOrderId ? {
+  ...order,
+  paidAmount: 225,
+  amountPaid: 225,
+  totalPaid: 225,
+  balance: order.total - 225,
+  remarks: "Preserve Order history"
+} : order);
+state.productionJobs.push({ id: "production-unrelated-number-only", orderId: "another-order", orderNo: followUpOrderNo, status: "in_production", remarks: "Must remain active" });
+state.installationJobs.push({ id: "installation-unrelated-number-only", orderId: "another-order", orderNo: followUpOrderNo, status: "scheduled", remarks: "Must remain active" });
+const returnBefore = structuredClone({ quotations: state.quotations, orders: state.orders, productionJobs: state.productionJobs, installationJobs: state.installationJobs });
+const returnResult = await returnOrderToFollowUp(followUpOrderId, "Customer did not confirm", { confirmPaid: false, downloadBackup: false });
+assert(returnResult.ok, "Y1: Boss must be able to return an exact active Order to Follow Up");
+const returnedQuote = state.quotations.find((quote) => quote.id === followUpQuote.id);
+const archivedFollowUpOrder = state.orders.find((order) => order.id === followUpOrderId);
+assert(returnedQuote.status === "follow_up" && returnedQuote.workflowStatus === "follow_up"
+  && returnedQuote.orderId === "" && returnedQuote.linkedOrderId === ""
+  && returnedQuote.orderNo === "" && returnedQuote.orderNumber === ""
+  && returnedQuote.converted === false && returnedQuote.convertedToOrder === false, "Y1: exact linked quotation must return to Follow Up with no SO relationship fields");
+assert(archivedFollowUpOrder.status === "cancelled_archived" && archivedFollowUpOrder.isArchived === true
+  && archivedFollowUpOrder.archiveReason === "Customer did not confirm"
+  && archivedFollowUpOrder.statusBeforeArchive === returnBefore.orders[0].status
+  && !isActiveOrderRecord(archivedFollowUpOrder), "Y1: selected Order must be archived, auditable and hidden from active Orders");
+assert(archivedFollowUpOrder.orderNo === followUpOrderNo
+  && archivedFollowUpOrder.paidAmount === 225 && archivedFollowUpOrder.amountPaid === 225 && archivedFollowUpOrder.totalPaid === 225
+  && archivedFollowUpOrder.balance === returnBefore.orders[0].balance
+  && JSON.stringify(archivedFollowUpOrder.customer) === JSON.stringify(returnBefore.orders[0].customer)
+  && JSON.stringify(archivedFollowUpOrder.items) === JSON.stringify(returnBefore.orders[0].items), "Y1: original SO, customer, items and every existing payment value must remain unchanged");
+assert(state.productionJobs.find((job) => job.orderId === followUpOrderId)?.status === "cancelled_archived"
+  && state.productionJobs.find((job) => job.orderId === followUpOrderId)?.statusBeforeArchive
+  && state.installationJobs.find((job) => job.orderId === followUpOrderId)?.status === "cancelled_archived"
+  && state.installationJobs.find((job) => job.orderId === followUpOrderId)?.statusBeforeArchive, "Y1: only exact orderId-linked Production and Installation jobs must be safely archived");
+assert(state.productionJobs.find((job) => job.id === "production-unrelated-number-only").status === "in_production"
+  && state.installationJobs.find((job) => job.id === "installation-unrelated-number-only").status === "scheduled", "Y1: unrelated same-number jobs must remain unchanged");
+assert(JSON.parse(localStorage.getItem("ecoScreenV2.orders") || "[]").find((order) => order.id === followUpOrderId)?.status === "cancelled_archived", "Y1: Return to Follow Up must survive refresh storage");
+applyCloudSnapshot({
+  quotations: returnBefore.quotations.map((row) => ({ ...row, updatedAt: "2020-01-01T00:00:00.000Z" })),
+  orders: returnBefore.orders.map((row) => ({ ...row, updatedAt: "2020-01-01T00:00:00.000Z" })),
+  productionJobs: returnBefore.productionJobs.map((row) => ({ ...row, updatedAt: "2020-01-01T00:00:00.000Z" })),
+  installationJobs: returnBefore.installationJobs.map((row) => ({ ...row, updatedAt: "2020-01-01T00:00:00.000Z" }))
+});
+assert(state.orders.find((order) => order.id === followUpOrderId)?.status === "cancelled_archived"
+  && state.quotations.find((quote) => quote.id === followUpQuote.id)?.status === "follow_up", "Y1: older cloud data must not reverse Return to Follow Up");
+await updateQuotationStatus(followUpQuote.id, "won");
+const reconfirmed = await convertQuoteToOrder(followUpQuote.id);
+assert(reconfirmed.ok && reconfirmed.order.id !== followUpOrderId && reconfirmed.order.orderNo !== followUpOrderNo
+  && state.orders.find((order) => order.id === followUpOrderId)?.status === "cancelled_archived", "Y1: later confirmation must create a new active Order with the next unused SO and never restore the archived Order");
+
+resetWorkflowState();
+const legacyPaymentOrder = {
+  id: "order-payment-ledger",
+  orderNo: "SO2607099",
+  orderNumber: "SO2607099",
+  quoteId: "quote-payment-ledger",
+  quotationId: "quote-payment-ledger",
+  quoteNumber: "PAYMENT-QUOTE",
+  quotationNo: "PAYMENT-QUOTE",
+  customer: { name: "Payment Customer", phone: "0129999999" },
+  items: [{ id: "payment-item", productName: "Security Screen", quantity: 1, width: 1000, height: 1000 }],
+  total: 1000,
+  deposit: 100,
+  paidAmount: 100,
+  amountPaid: 100,
+  totalPaid: 100,
+  balance: 900,
+  status: "Confirmed",
+  payments: [{ id: "payment-original-deposit", amount: 100, paymentDate: "2026-06-01", type: "Deposit", method: "Bank Transfer", status: "active", createdAt: "2026-06-01T00:00:00.000Z", createdBy: "Boss Test" }],
+  productionJobId: "production-payment-ledger",
+  installationJobId: "installation-payment-ledger",
+  updatedAt: "2026-07-01T00:00:00.000Z"
+};
+state.orders = [legacyPaymentOrder];
+state.quotations = [{ id: "quote-payment-ledger", orderId: legacyPaymentOrder.id, linkedOrderId: legacyPaymentOrder.id, status: "won", total: 1000 }];
+state.productionJobs = [{ id: "production-payment-ledger", orderId: legacyPaymentOrder.id, status: "not_produced" }];
+state.installationJobs = [{ id: "installation-payment-ledger", orderId: legacyPaymentOrder.id, status: "not_scheduled" }];
+const normalizedLegacy = getOrderPaymentSummary(legacyPaymentOrder);
+assert(normalizedLegacy.legacyPaid === 0 && normalizedLegacy.activePaymentTotal === 100 && normalizedLegacy.totalPaid === 100 && normalizedLegacy.balance === 900, "Y2: a legacy deposit mirrored by an active payment record must not be counted twice");
+const paymentIdentityBefore = structuredClone({
+  orderNo: legacyPaymentOrder.orderNo,
+  customer: legacyPaymentOrder.customer,
+  items: legacyPaymentOrder.items,
+  total: legacyPaymentOrder.total,
+  quoteId: legacyPaymentOrder.quoteId,
+  productionJobId: legacyPaymentOrder.productionJobId,
+  installationJobId: legacyPaymentOrder.installationJobId,
+  paidAmount: legacyPaymentOrder.paidAmount,
+  amountPaid: legacyPaymentOrder.amountPaid,
+  deposit: legacyPaymentOrder.deposit
+});
+const missedDeposit = await recordOrderPayment({
+  orderId: legacyPaymentOrder.id,
+  paymentId: "payment-missed-progress",
+  amount: 200,
+  paymentDate: "2026-05-15",
+  type: "Progress Payment",
+  method: "Cash",
+  referenceNumber: "OLD-CASH-15",
+  note: "Forgotten historical payment"
+}, { downloadBackup: false });
+assert(missedDeposit.ok, "Y2: a missed payment must accept its older actual payment date");
+let paymentOrder = state.orders.find((order) => order.id === legacyPaymentOrder.id);
+let paymentSummary = getOrderPaymentSummary(paymentOrder);
+assert(paymentSummary.totalPaid === 300 && paymentSummary.balance === 700
+  && paymentOrder.payments.find((payment) => payment.id === "payment-missed-progress")?.paymentDate === "2026-05-15", "Y2: legacy deposit plus appended payment must calculate totalPaid and balance correctly");
+const secondPayment = await recordOrderPayment({
+  orderId: legacyPaymentOrder.id,
+  paymentId: "payment-second-progress",
+  amount: 150,
+  paymentDate: "2026-07-10",
+  type: "Progress Payment",
+  method: "Card",
+  referenceNumber: "CARD-150",
+  note: "Second payment"
+}, { downloadBackup: false });
+paymentOrder = state.orders.find((order) => order.id === legacyPaymentOrder.id);
+paymentSummary = getOrderPaymentSummary(paymentOrder);
+assert(secondPayment.ok && paymentSummary.totalPaid === 450 && paymentSummary.balance === 550, "Y2: multiple active payments must use one normalized totalPaid and balance calculation");
+const blockedOverpayment = await recordOrderPayment({
+  orderId: legacyPaymentOrder.id,
+  paymentId: "payment-blocked-overpay",
+  amount: 600,
+  paymentDate: "2026-07-11",
+  type: "Final Payment",
+  method: "Cash"
+}, { downloadBackup: false });
+assert(!blockedOverpayment.ok && !state.orders.find((order) => order.id === legacyPaymentOrder.id).payments.some((payment) => payment.id === "payment-blocked-overpay"), "Y2: overpayment must be blocked without explicit Boss/Admin confirmation");
+const reversedPayment = await reverseOrderPayment({ orderId: legacyPaymentOrder.id, paymentId: "payment-second-progress", reversalReason: "Entered against the wrong receipt" }, { downloadBackup: false });
+paymentOrder = state.orders.find((order) => order.id === legacyPaymentOrder.id);
+paymentSummary = getOrderPaymentSummary(paymentOrder);
+const reversedAudit = paymentOrder.payments.find((payment) => payment.id === "payment-second-progress");
+assert(reversedPayment.ok && reversedAudit.status === "reversed" && reversedAudit.reversedAt && reversedAudit.reversedBy && reversedAudit.reversalReason === "Entered against the wrong receipt"
+  && paymentSummary.totalPaid === 300 && paymentSummary.balance === 700, "Y2: payment reversal must preserve the original audit record and recalculate balance");
+assert(JSON.stringify({
+  orderNo: paymentOrder.orderNo,
+  customer: paymentOrder.customer,
+  items: paymentOrder.items,
+  total: paymentOrder.total,
+  quoteId: paymentOrder.quoteId,
+  productionJobId: paymentOrder.productionJobId,
+  installationJobId: paymentOrder.installationJobId,
+  paidAmount: paymentOrder.paidAmount,
+  amountPaid: paymentOrder.amountPaid,
+  deposit: paymentOrder.deposit
+}) === JSON.stringify(paymentIdentityBefore), "Y2: payment recording and reversal must not alter SO, customer, items, total, legacy paid fields or relationships");
+assert(JSON.parse(localStorage.getItem("ecoScreenV2.orders") || "[]").find((order) => order.id === legacyPaymentOrder.id)?.payments.find((payment) => payment.id === "payment-second-progress")?.status === "reversed", "Y2: Payment History and reversal must survive refresh storage");
+applyCloudSnapshot({ orders: [{ ...legacyPaymentOrder, updatedAt: "2020-01-01T00:00:00.000Z" }] });
+assert(state.orders.find((order) => order.id === legacyPaymentOrder.id)?.payments.find((payment) => payment.id === "payment-second-progress")?.status === "reversed"
+  && getOrderPaymentSummary(state.orders.find((order) => order.id === legacyPaymentOrder.id)).balance === 700, "Y2: older cloud data must not overwrite the payment ledger or reversal");
+
 console.log([
   "Editable unit price and manual final price: passed",
   "Monthly SO numbering including legacy formats and >999: passed",
@@ -1355,4 +1517,6 @@ console.log([
   ,"Reusable Covered Order recovery for Tze Yee and Datin Conni, exact-ID archive and safety stops: passed"
   ,"Missing confirmed Order recovery, exact quotation snapshot creation and explicit conflict handling: passed"
   ,"Transactional Send to Production and Production/Order status synchronization: passed"
+  ,"Boss/Admin Return to Follow Up exact-link archive, financial preservation and later reconversion: passed"
+  ,"Normalized legacy payment ledger, historical payment entry, reversal and stale-cloud protection: passed"
 ].join("\n"));
