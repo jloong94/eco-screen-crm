@@ -31,6 +31,8 @@ const { mergeRows, safeSyncWithCloud } = await import("../src/cloudSync.js");
 const { lineTotal } = await import("../src/calculations.js");
 const {
   archiveDuplicateGroup,
+  archiveProductionDuplicateGroup,
+  activeProductionJobForOrder,
   convertQuoteToOrder,
   duplicateArchiveActionHtml,
   findExistingOrderForQuote,
@@ -42,9 +44,13 @@ const {
   markInstallationStatus,
   markProductionStatus,
   productionJobMatchesSearch,
+  productionJobsForDisplay,
+  productionDuplicateArchiveActionHtml,
   productionOrderNumber,
   restoreArchivedDuplicate,
+  restoreArchivedProductionJob,
   scanDuplicateOrders,
+  scanDuplicateProductionJobs,
   updateOrderNumber,
   updateOrderStatus,
   updateQuotationStatus
@@ -520,6 +526,73 @@ const productionInstallationJob = state.installationJobs[0];
 markInstallationStatus(productionInstallationJob.id, "scheduled");
 assert(state.installationJobs.find((job) => job.id === productionInstallationJob.id).status === "scheduled", "Q: Installation status updates must still work");
 
+const productionMainSnapshot = JSON.stringify(state.productionJobs.find((job) => job.id === productionJob.id));
+const duplicateProductionJob = {
+  ...JSON.parse(JSON.stringify(productionJob)),
+  id: "duplicate-production-v2",
+  productionNumber: "ESP-DUPLICATE-V2",
+  status: "completed",
+  assignedStaff: "Latest progress staff",
+  remark: "Preserved duplicate progress",
+  createdAt: "2026-07-15T08:05:00.000Z",
+  updatedAt: "2026-07-15T09:05:00.000Z"
+};
+state.productionJobs.push(duplicateProductionJob);
+state.installationJobs[0] = { ...state.installationJobs[0], productionJobId: duplicateProductionJob.id };
+const productionDuplicateCounts = {
+  orders: state.orders.length,
+  productionJobs: state.productionJobs.length,
+  installationJobs: state.installationJobs.length
+};
+const productionDuplicateScan = scanDuplicateProductionJobs();
+const confirmedProductionGroup = productionDuplicateScan.confirmedGroups.find((group) => group.members.some((member) => member.job.id === productionJob.id)
+  && group.members.some((member) => member.job.id === duplicateProductionJob.id));
+assert(confirmedProductionGroup, "R: same linked Order and exact items should be a confirmed Production duplicate group");
+const productionMainKey = confirmedProductionGroup.members.find((member) => member.job.id === productionJob.id).key;
+assert(!productionDuplicateArchiveActionHtml(confirmedProductionGroup, "").includes("Archive Other Production Duplicates"), "R: Production archive action must stay hidden before Main selection");
+assert(productionDuplicateArchiveActionHtml(confirmedProductionGroup, productionMainKey).includes("Archive Other Production Duplicates"), "R: Main Production Job selection should reveal the archive action");
+const productionArchiveResult = await archiveProductionDuplicateGroup(confirmedProductionGroup.id, productionMainKey, { confirm: false, downloadBackup: false });
+assert(productionArchiveResult.ok, "R: confirmed Production duplicate should archive");
+const archivedProductionJob = state.productionJobs.find((job) => job.id === duplicateProductionJob.id);
+assert(archivedProductionJob.status === "duplicate_archived" && archivedProductionJob.isArchived, "R: duplicate Production Job should remain stored as archived");
+assert(archivedProductionJob.duplicateOfProductionJobId === productionJob.id, "R: archived Production Job should reference the selected Main Job");
+assert(JSON.stringify(state.productionJobs.find((job) => job.id === productionJob.id)) === productionMainSnapshot, "R: Main Production Job must not be overwritten");
+assert(productionJobsForDisplay(state.productionJobs, false).length === 1, "R: normal Production view should show one active Job");
+assert(productionJobsForDisplay(state.productionJobs, true).some((job) => job.id === duplicateProductionJob.id), "R: archived Production filter should find the preserved Job");
+assert(state.installationJobs[0].productionJobId === productionJob.id, "R: Installation reference should point to Main Production Job");
+assert(state.orders.length === productionDuplicateCounts.orders, "R: Production archive must not create an Order");
+assert(state.installationJobs.length === productionDuplicateCounts.installationJobs, "R: Production archive must not create an Installation Job");
+assert(state.productionJobs.length === productionDuplicateCounts.productionJobs, "R: Production archive must not hard-delete a Production Job");
+assert(JSON.parse(localStorage.getItem("ecoScreenV2.productionJobs") || "[]").some((job) => job.id === duplicateProductionJob.id && job.status === "duplicate_archived"), "R: archived Production Job should survive refresh storage reload");
+
+const productionRestoreResult = await restoreArchivedProductionJob(duplicateProductionJob.id, { confirm: false });
+assert(productionRestoreResult.ok && !state.productionJobs.find((job) => job.id === duplicateProductionJob.id).isArchived, "S: archived Production Job should restore");
+runtimeEnv.VITE_SUPABASE_URL = "https://offline.example.invalid";
+runtimeEnv.VITE_SUPABASE_ANON_KEY = "test-key";
+globalThis.fetch = async () => { throw new Error("Simulated offline cloud"); };
+const restoredProductionGroup = scanDuplicateProductionJobs().confirmedGroups.find((group) => group.members.some((member) => member.job.id === duplicateProductionJob.id));
+const restoredMainKey = restoredProductionGroup.members.find((member) => member.job.id === productionJob.id).key;
+const offlineProductionArchive = await archiveProductionDuplicateGroup(restoredProductionGroup.id, restoredMainKey, { confirm: false, downloadBackup: false });
+assert(offlineProductionArchive.ok && offlineProductionArchive.cloudOk === false, "S: cloud failure should preserve the local Production archive");
+assert(JSON.parse(localStorage.getItem("ecoScreenV2.productionJobs") || "[]").some((job) => job.id === duplicateProductionJob.id && job.isArchived), "S: cloud-failed Production archive should remain in local storage");
+
+runtimeEnv.VITE_SUPABASE_URL = "";
+runtimeEnv.VITE_SUPABASE_ANON_KEY = "";
+const activeProductionBeforeRepeat = state.productionJobs.filter((job) => !job.isArchived && job.status !== "duplicate_archived").length;
+const repeatProductionConversion = await convertQuoteToOrder(productionQuote.id);
+assert(repeatProductionConversion.ok, "S: converting the same quotation again should safely reuse its workflow");
+assert(state.productionJobs.filter((job) => !job.isArchived && job.status !== "duplicate_archived").length === activeProductionBeforeRepeat, "S: repeat conversion must not create a second active Production Job");
+assert(activeProductionJobForOrder(productionOrder)?.id === productionJob.id, "S: prevention should reuse the existing active Production Job and ignore archived duplicates");
+assert(state.orders.length === productionDuplicateCounts.orders && state.installationJobs.length === productionDuplicateCounts.installationJobs, "S: repeat conversion must not increase Order or Installation counts");
+
+state.orders = [];
+state.productionJobs = [
+  { id: "possible-production-a", orderId: "missing-order-a", orderNo: "SO2607888", customerName: "Possible Customer", items: [{ productId: "screen", width: 1000, height: 1200, quantity: 1 }] },
+  { id: "possible-production-b", orderId: "missing-order-b", orderNo: "SO2607888", customerName: "Possible Customer", items: [{ productId: "screen", width: 1000, height: 1200, quantity: 1 }] }
+];
+const possibleProductionScan = scanDuplicateProductionJobs();
+assert(possibleProductionScan.confirmedGroups.length === 0 && possibleProductionScan.possibleGroups.length === 1, "S: matching SO/customer/items without an exact linked Order should remain Possible only");
+
 console.log([
   "Editable unit price and manual final price: passed",
   "Monthly SO numbering including legacy formats and >999: passed",
@@ -538,4 +611,6 @@ console.log([
   "Order number conflict and possible duplicate preview: passed"
   ,"Safe cloud stable-ID merge and missing configuration diagnostics: passed"
   ,"Production SO Order No resolution and search: passed"
+  ,"Production duplicate scan, selectable Main, safe archive, reference repair and restore: passed"
+  ,"Production cloud-failure persistence and repeat-conversion prevention: passed"
 ].join("\n"));

@@ -401,6 +401,45 @@ input:focus, select:focus, textarea:focus {
 }
 .duplicate-archive-action p { margin: 0; }
 .production-tools { margin-bottom: 14px; }
+.production-duplicate-table {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.production-duplicate-table table {
+  width: 100%;
+  min-width: 1500px;
+  border-collapse: collapse;
+  background: white;
+}
+.production-duplicate-table th,
+.production-duplicate-table td {
+  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  padding: 8px;
+  text-align: left;
+  vertical-align: top;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.production-duplicate-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--soft);
+}
+.production-duplicate-table label {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  min-width: 170px;
+}
+.production-duplicate-table input[type="radio"] {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
 .internal-details {
   border: 1px dashed var(--line);
   border-radius: 8px;
