@@ -50,10 +50,11 @@ const {
   productionOrderNumber,
   restoreArchivedDuplicate,
   restoreArchivedProductionJob,
-  repairConfirmedTzeYeeOwnership,
+  recoverCoveredOrder,
   repairWorkflowIntegrityIssue,
   repairOrderOwnership,
   scanWorkflowIntegrity,
+  scanCoveredOrderReferences,
   scanDuplicateOrders,
   scanDuplicateProductionJobs,
   sendOrderToProduction,
@@ -850,10 +851,19 @@ const confirmedBefore = structuredClone({
   productionJobs: state.productionJobs,
   installationJobs: state.installationJobs
 });
-const confirmedIssue = scanWorkflowIntegrity().categories.M.find((issue) => issue.repair?.confirmedCase === "tze-yee-so2607011");
-assert(confirmedIssue && confirmedIssue.repair.quotationId === ownershipQuote.id && confirmedIssue.repair.orderId === tzeOrder.id, "W3: confirmed Tze Yee Category M issue must expose only the exact dedicated repair");
-const confirmedRepair = await repairConfirmedTzeYeeOwnership({ confirm: false, downloadBackup: false });
-assert(confirmedRepair.ok, "W3: confirmed one-click Tze Yee repair must complete with exact stable IDs");
+const coveredTzeScan = scanCoveredOrderReferences("SO2607011");
+assert(coveredTzeScan.ok
+  && coveredTzeScan.confirmedOrderCandidates.includes(tzeOrder.id)
+  && coveredTzeScan.quotationCandidates.includes(wrongOwnerQuote.id)
+  && coveredTzeScan.records.some((entry) => entry.collection === "productionJobs" && entry.record.id === "production-number-only"), "W3: SO2607011 lookup must display every exact reference and derive selectable stable IDs");
+const missingCoveredSelection = await recoverCoveredOrder({ orderNo: "SO2607011", confirmedOrderId: [tzeOrder.id], unconfirmedQuotationId: wrongOwnerQuote.id }, { confirm: false, downloadBackup: false });
+assert(!missingCoveredSelection.ok && JSON.stringify(state.orders) === JSON.stringify(confirmedBefore.orders), "W3: multiple or missing stable-ID selections must stop without changing data");
+const confirmedRepair = await recoverCoveredOrder({
+  orderNo: "SO2607011",
+  confirmedOrderId: tzeOrder.id,
+  unconfirmedQuotationId: wrongOwnerQuote.id
+}, { confirm: false, downloadBackup: false });
+assert(confirmedRepair.ok, "W3: reusable Covered Order recovery must complete with the selected exact stable IDs");
 const confirmedTzeQuote = state.quotations.find((row) => row.id === ownershipQuote.id);
 const confirmedMsQuote = state.quotations.find((row) => row.id === wrongOwnerQuote.id);
 const confirmedTzeOrder = state.orders.find((row) => row.id === tzeOrder.id);
@@ -869,7 +879,7 @@ assert(confirmedMsQuote.orderId === "" && confirmedMsQuote.linkedOrderId === ""
   && confirmedMsQuote.orderNo === "" && confirmedMsQuote.orderNumber === ""
   && confirmedMsQuote.converted === false && confirmedMsQuote.convertedToOrder === false, "W3: MS Chew must have no Order link or SO number");
 assert(confirmedMsOrder.status === "cancelled_archived" && confirmedMsOrder.isArchived === true
-  && confirmedMsOrder.archiveReason === "Quotation was not confirmed; erroneous Order record"
+  && confirmedMsOrder.archiveReason === "Unconfirmed quotation incorrectly created or linked as Order"
   && !isActiveOrderRecord(confirmedMsOrder), "W3: erroneous MS Chew Order must remain stored but be hidden from normal Orders");
 const confirmedMsProduction = state.productionJobs.find((row) => row.id === "production-ms");
 const confirmedMsInstallation = state.installationJobs.find((row) => row.id === "installation-ms");
@@ -914,6 +924,117 @@ applyCloudSnapshot({
 assert(state.quotations.find((row) => row.id === wrongOwnerQuote.id)?.status === "follow_up"
   && state.orders.find((row) => row.id === msOrder.id)?.status === "cancelled_archived"
   && state.productionJobs.find((row) => row.id === "production-ms")?.status === "cancelled_archived", "W3: stale cloud roundtrip must not reverse the confirmed repair");
+
+resetWorkflowState();
+const datinQuote = validQuote("ESQ-DATIN", "Datin Conni");
+Object.assign(datinQuote, {
+  id: "quote-datin-conni",
+  customer: { name: "Datin Conni", phone: "0123000001" },
+  items: [{ id: "datin-item", quantity: 2, width: 1200, height: 1800 }],
+  total: 6800,
+  deposit: 1800,
+  balance: 5000,
+  status: "won",
+  orderId: "order-datin-conni",
+  linkedOrderId: "order-datin-conni",
+  orderNo: "SO2607013",
+  orderNumber: "SO2607013",
+  remarks: "Confirmed Datin quotation"
+});
+const datinConflictQuote = validQuote("ESQ-DATIN-CONFLICT", "Unconfirmed Customer");
+Object.assign(datinConflictQuote, {
+  id: "quote-datin-conflict",
+  customer: { name: "Unconfirmed Customer", phone: "0123000002" },
+  items: [{ id: "conflict-item", quantity: 1, width: 800, height: 1000 }],
+  total: 1900,
+  deposit: 0,
+  balance: 1900,
+  status: "won",
+  orderId: "order-datin-conflict",
+  linkedOrderId: "order-datin-conflict",
+  orderNo: "SO2607013",
+  orderNumber: "SO2607013",
+  converted: true,
+  convertedToOrder: true,
+  remarks: "Unconfirmed quotation remains auditable"
+});
+const datinOrder = {
+  id: "order-datin-conni",
+  orderNo: "SO2607013",
+  orderNumber: "SO2607013",
+  quoteId: datinConflictQuote.id,
+  quotationId: datinConflictQuote.id,
+  quoteNumber: datinConflictQuote.quotationNo,
+  quotationNo: datinConflictQuote.quotationNo,
+  customer: structuredClone(datinQuote.customer),
+  items: structuredClone(datinQuote.items),
+  total: datinQuote.total,
+  deposit: datinQuote.deposit,
+  balance: datinQuote.balance,
+  status: "Confirmed",
+  remarks: "Datin confirmed Order"
+};
+const datinConflictOrder = {
+  id: "order-datin-conflict",
+  orderNo: "SO2607013",
+  orderNumber: "SO2607013",
+  quoteId: datinConflictQuote.id,
+  quotationId: datinConflictQuote.id,
+  quoteNumber: datinConflictQuote.quotationNo,
+  quotationNo: datinConflictQuote.quotationNo,
+  customer: structuredClone(datinConflictQuote.customer),
+  items: structuredClone(datinConflictQuote.items),
+  total: datinConflictQuote.total,
+  deposit: datinConflictQuote.deposit,
+  balance: datinConflictQuote.balance,
+  status: "Confirmed",
+  remarks: "Erroneous Order retained for audit"
+};
+state.quotations = [datinQuote, datinConflictQuote];
+state.orders = [datinOrder, datinConflictOrder];
+state.productionJobs = [
+  { id: "production-datin-conflict", orderId: datinConflictOrder.id, orderNo: "SO2607013", status: "in_production", assignedStaff: ["staff-d"], items: structuredClone(datinConflictOrder.items), remarks: "Preserve production payload", statusHistory: ["not_produced", "in_production"] },
+  { id: "production-datin-number-only", orderNo: "SO2607013", status: "not_produced", remarks: "Number-only reference stays active" }
+];
+state.installationJobs = [
+  { id: "installation-datin-conflict", orderId: datinConflictOrder.id, orderNo: "SO2607013", status: "scheduled", assignedStaff: ["installer-d"], items: structuredClone(datinConflictOrder.items), remarks: "Preserve installation payload", statusHistory: ["not_scheduled", "scheduled"] }
+];
+const datinBefore = structuredClone({ quotations: state.quotations, orders: state.orders, productionJobs: state.productionJobs, installationJobs: state.installationJobs });
+const datinScan = scanCoveredOrderReferences("SO2607013");
+assert(datinScan.ok
+  && datinScan.confirmedOrderCandidates.includes(datinOrder.id)
+  && datinScan.quotationCandidates.includes(datinConflictQuote.id)
+  && ["quotations", "orders", "productionJobs", "installationJobs"].every((collection) => datinScan.records.some((entry) => entry.collection === collection)), "W4: SO2607013 lookup must display Datin Conni and every conflicting collection");
+const realConfirmedSelection = await recoverCoveredOrder({ orderNo: "SO2607013", confirmedOrderId: datinOrder.id, unconfirmedQuotationId: datinQuote.id }, { confirm: false, downloadBackup: false });
+assert(!realConfirmedSelection.ok && JSON.stringify(state.orders) === JSON.stringify(datinBefore.orders), "W4: a quotation already pointing to the confirmed Order must not be returned to Follow Up");
+const datinRepair = await recoverCoveredOrder({
+  orderNo: "SO2607013",
+  confirmedOrderId: datinOrder.id,
+  unconfirmedQuotationId: datinConflictQuote.id
+}, { confirm: false, downloadBackup: false });
+assert(datinRepair.ok, "W4: Datin Conni must be selectable as the confirmed SO2607013 customer");
+const recoveredDatinQuote = state.quotations.find((row) => row.id === datinQuote.id);
+const recoveredDatinOrder = state.orders.find((row) => row.id === datinOrder.id);
+const recoveredConflictQuote = state.quotations.find((row) => row.id === datinConflictQuote.id);
+const archivedConflictOrder = state.orders.find((row) => row.id === datinConflictOrder.id);
+assert(recoveredDatinQuote.status === "won" && recoveredDatinQuote.orderId === datinOrder.id
+  && recoveredDatinOrder.quoteId === datinQuote.id && recoveredDatinOrder.orderNo === "SO2607013", "W4: SO2607013 must open Datin Conni through exact bidirectional links");
+assert(recoveredConflictQuote.status === "follow_up" && !recoveredConflictQuote.orderNo && !recoveredConflictQuote.orderId
+  && archivedConflictOrder.status === "cancelled_archived" && archivedConflictOrder.orderNo === "SO2607013", "W4: the unconfirmed customer receives no new SO number and its erroneous Order remains archived for audit");
+assert(JSON.stringify(protectedView(recoveredDatinQuote)) === JSON.stringify(protectedView(datinQuote))
+  && JSON.stringify(protectedView(recoveredDatinOrder)) === JSON.stringify(protectedView(datinOrder))
+  && JSON.stringify(protectedView(recoveredConflictQuote)) === JSON.stringify(protectedView(datinConflictQuote))
+  && JSON.stringify(protectedView(archivedConflictOrder)) === JSON.stringify(protectedView(datinConflictOrder)), "W4: customer, items and financial values must never move between Datin records");
+const archivedDatinProduction = state.productionJobs.find((row) => row.id === "production-datin-conflict");
+const archivedDatinInstallation = state.installationJobs.find((row) => row.id === "installation-datin-conflict");
+assert(archivedDatinProduction.status === "cancelled_archived" && archivedDatinProduction.orderId === datinConflictOrder.id
+  && archivedDatinInstallation.status === "cancelled_archived" && archivedDatinInstallation.orderId === datinConflictOrder.id
+  && state.productionJobs.find((row) => row.id === "production-datin-number-only").status === "not_produced", "W4: jobs are archived only through the exact erroneous orderId; number-only references remain untouched");
+assert(JSON.stringify(archivedDatinProduction.items) === JSON.stringify(datinBefore.productionJobs[0].items)
+  && JSON.stringify(archivedDatinProduction.statusHistory) === JSON.stringify(datinBefore.productionJobs[0].statusHistory)
+  && archivedDatinProduction.assignedStaff[0] === "staff-d"
+  && archivedDatinInstallation.remarks === "Preserve installation payload", "W4: Production and Installation payload, history, staff and remarks must be preserved");
+assert(JSON.parse(localStorage.getItem("ecoScreenV2.orders") || "[]").find((row) => row.id === datinConflictOrder.id)?.status === "cancelled_archived", "W4: refresh storage must preserve the Datin recovery");
 
 resetWorkflowState();
 const syncQuote = validQuote("SYNC-QUOTE", "Production Sync Customer");
@@ -961,6 +1082,6 @@ console.log([
   ,"Strict quotation tabs, exact stable-ID relationships and Order conflict isolation: passed"
   ,"Workflow Integrity Check categories A-M, preview safety and selected repairs: passed"
   ,"Safe Order Ownership Repair, exact-ID conflict renumbering and cloud-roundtrip protection: passed"
-  ,"Confirmed one-click Tze Yee repair, Follow Up restoration and safe erroneous-workflow archive: passed"
+  ,"Reusable Covered Order recovery for Tze Yee and Datin Conni, exact-ID archive and safety stops: passed"
   ,"Transactional Send to Production and Production/Order status synchronization: passed"
 ].join("\n"));

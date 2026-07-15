@@ -77,19 +77,6 @@ const orderFilters = [
   { id: "completed", label: "Completed" },
   { id: "duplicate-archived", label: "Archived duplicates" }
 ];
-const confirmedTzeYeeRepair = Object.freeze({
-  quotationId: "quote-1783130657886-e7f8c485de65a8",
-  orderId: "order-ESQ-2026-0003",
-  orderNo: "SO2607011",
-  quotationNo: "ESQ-2026-0003",
-  customer: "Tze Yee",
-  total: 5245.0113,
-  wrongOrderId: "order-1784103199329-c9c68eddeaad2e",
-  wrongQuotationNo: "ESQ-2026-0011",
-  wrongCustomer: "MS Chew",
-  wrongTotal: 2436
-});
-
 const progressCategories = [
   { id: "new", title: "New Orders / Haven't Produced", shortTitle: "New Orders" },
   { id: "in-production", title: "In Production", shortTitle: "In Production" },
@@ -117,6 +104,7 @@ let showArchivedProductionDuplicates = false;
 const productionDuplicateMainSelections = new Map();
 let workflowIntegrityVisible = false;
 let workflowIntegrityResult = null;
+let coveredOrderRecovery = null;
 let orderSearch = {
   orderNumber: "",
   customerName: "",
@@ -772,12 +760,14 @@ function renderOrderTools() {
         <button class="btn" type="button" data-order-tool="find">${t("Find Order")}</button>
         ${isBossOrAdmin() ? `<button class="btn" type="button" data-order-tool="duplicates">${t("Duplicate Order Check")}</button>` : ""}
         ${isBossOrAdmin() ? `<button class="btn" type="button" data-order-tool="workflow-integrity">Workflow Integrity Check</button>` : ""}
+        ${isBossOrAdmin() ? `<button class="btn" type="button" data-order-tool="recover-covered-order">Recover Covered Order</button>` : ""}
       </div>
       <div class="filter-tabs">
         ${visibleFilters.map((filter) => `<button class="filter-tab ${orderSearch.filter === filter.id ? "active" : ""}" type="button" data-order-filter="${filter.id}">${t(filter.label)}</button>`).join("")}
       </div>
       ${duplicateOrderPanelHtml()}
       ${workflowIntegrityPanelHtml()}
+      ${coveredOrderRecoveryPanelHtml()}
     </section>
   `;
 }
@@ -1277,9 +1267,7 @@ function workflowIntegrityPanelHtml() {
 
 function workflowIntegrityIssueRow(issue) {
   const repair = issue.repair;
-  const selector = repair?.confirmedCase === "tze-yee-so2607011"
-    ? workflowIntegrityRepairInput(issue)
-    : repair
+  const selector = repair
     ? `<label class="workflow-integrity-selector"><input type="radio" name="workflow-integrity-issue" data-workflow-integrity-issue="${escapeHtml(issue.id)}" /> Select</label>${workflowIntegrityRepairInput(issue)}`
     : "Preview only";
   return `
@@ -1363,7 +1351,6 @@ function ownershipRecordView(record, type, snapshot) {
 function safeOrderOwnershipRepairHtml(issue) {
   const comparison = buildSafeOrderOwnershipComparison(issue.repair.quotationId, issue.repair.orderId);
   if (!comparison) return `<span class="danger-text">Exact Quotation or active Order is no longer available. Scan again.</span>`;
-  if (issue.repair.confirmedCase === "tze-yee-so2607011") return confirmedTzeYeeRepairHtml(comparison);
   return `
     <details class="safe-ownership-repair" open>
       <summary>Safe Order Ownership Repair</summary>
@@ -1394,23 +1381,59 @@ function safeOrderOwnershipRepairHtml(issue) {
   `;
 }
 
-function confirmedTzeYeeRepairHtml(comparison) {
-  const wrongOrder = comparison.conflicts.find((record) => record.id === confirmedTzeYeeRepair.wrongOrderId);
+function coveredOrderRecoveryPanelHtml() {
+  if (!coveredOrderRecovery) return "";
+  const { orderNo, scan } = coveredOrderRecovery;
+  const records = scan.records || [];
   return `
-    <div class="confirmed-tze-repair">
-      <strong>Confirmed business repair</strong>
-      <h4>Fix Tze Yee SO2607011</h4>
-      <ul>
-        <li>Keep ${escapeHtml(confirmedTzeYeeRepair.orderNo)} with Tze Yee quotation ${escapeHtml(confirmedTzeYeeRepair.quotationNo)} and Order ${escapeHtml(confirmedTzeYeeRepair.orderId)}.</li>
-        <li>Return MS Chew quotation ${escapeHtml(confirmedTzeYeeRepair.wrongQuotationNo)} to Follow Up with no SO number.</li>
-        <li>Safely archive erroneous Order ${escapeHtml(confirmedTzeYeeRepair.wrongOrderId)} and only its exact orderId-linked Production/Installation records.</li>
-        <li>No customer, item, total, deposit or balance values will change.</li>
-      </ul>
-      ${wrongOrder ? `<p class="muted-text">Verified conflict: ${escapeHtml(wrongOrder.customer)} · RM${escapeHtml(wrongOrder.total)} · ${escapeHtml(wrongOrder.id)}</p>` : ""}
-      <button class="btn primary" type="button" data-order-tool="fix-tze-yee-so2607011">Fix Tze Yee SO2607011</button>
-      <p class="muted-text">The next step downloads a full JSON backup and shows the exact before/after fields. Confirmation phrase: REPAIR TZE YEE.</p>
-    </div>
+    <section class="covered-order-panel" data-covered-order-panel data-covered-order-no="${escapeHtml(orderNo)}">
+      <div class="section-head">
+        <div>
+          <h3>Recover Covered Order · ${escapeHtml(orderNo)}</h3>
+          <p class="muted-text">Choose one exact active Order to keep and one exact quotation to return to Follow Up. Stable IDs are used automatically.</p>
+        </div>
+        <div class="actions">
+          <button class="btn" type="button" data-order-tool="recover-covered-order-refresh">Refresh</button>
+          <button class="btn" type="button" data-order-tool="recover-covered-order-close">Close</button>
+        </div>
+      </div>
+      ${scan.message ? `<p class="${scan.ok ? "muted-text" : "danger-text"}">${escapeHtml(scan.message)}</p>` : ""}
+      <div class="table-wrap covered-order-table-wrap">
+        <table class="data-table covered-order-table">
+          <thead><tr><th>Role</th><th>Record</th><th>Customer / Phone</th><th>Quotation / Order</th><th>Status</th><th>Total</th><th>Stable IDs</th><th>Production / Installation IDs</th><th>Forward / Reverse links</th></tr></thead>
+          <tbody>${records.map((entry) => coveredOrderRecoveryRowHtml(entry)).join("") || `<tr><td colspan="9">No records reference this exact SO number.</td></tr>`}</tbody>
+        </table>
+      </div>
+      <div class="covered-order-safety">
+        <strong>Before repair</strong>
+        <p>A full JSON backup and exact before/after preview are required. Customer, phone, items, totals, deposit, balance and remarks are preserved. No record is hard-deleted.</p>
+      </div>
+      <button class="btn primary" type="button" data-order-tool="recover-covered-order-apply" ${scan.ok ? "" : "disabled"}>Preview &amp; Repair Selected Records</button>
+      <p class="muted-text">Confirmation phrase: REPAIR COVERED ORDER</p>
+    </section>
   `;
+}
+
+function coveredOrderRecoveryRowHtml(entry) {
+  const view = entry.view;
+  const activeOrder = entry.collection === "orders" && isActiveOrderRecord(entry.record);
+  const quotation = entry.collection === "quotations";
+  const roleControl = activeOrder
+    ? `<label><input type="radio" name="covered-confirmed-order" value="${escapeHtml(view.orderStableId)}" /> Keep as Confirmed Order</label>`
+    : quotation
+      ? `<label><input type="radio" name="covered-unconfirmed-quotation" value="${escapeHtml(view.quotationStableId)}" /> Return to Quotation / Follow Up</label>`
+      : "Reference only";
+  return `<tr>
+    <td>${roleControl}</td>
+    <td>${escapeHtml(entry.collectionLabel)}<br><span class="muted-text">${escapeHtml(entry.matchReason)}</span></td>
+    <td>${escapeHtml(view.customer || "-")}<br>${escapeHtml(view.phone || "-")}</td>
+    <td>${escapeHtml(view.quotationNo || "-")}<br>${escapeHtml(view.orderNo || "-")}</td>
+    <td>${escapeHtml(view.quotationStatus || "-")}<br>${escapeHtml(view.orderStatus || "-")}</td>
+    <td>${escapeHtml(view.total === "" ? "-" : view.total)}</td>
+    <td><strong>Q:</strong> ${escapeHtml(view.quotationStableId || "-")}<br><strong>O:</strong> ${escapeHtml(view.orderStableId || "-")}</td>
+    <td><strong>P:</strong> ${escapeHtml(view.productionJobIds.join(", ") || "-")}<br><strong>I:</strong> ${escapeHtml(view.installationJobIds.join(", ") || "-")}</td>
+    <td><pre>${escapeHtml(JSON.stringify({ forward: view.forwardLinks, reverse: view.reverseLinks }, null, 2))}</pre></td>
+  </tr>`;
 }
 
 function ownershipRecordHtml(title, record) {
@@ -2563,7 +2586,13 @@ function handleOrderToolsClick(event) {
     renderOrderTools();
   }
   if (tool === "workflow-integrity-repair") repairSelectedWorkflowIntegrityIssue(event.target);
-  if (tool === "fix-tze-yee-so2607011") repairConfirmedTzeYeeFromPanel(event.target);
+  if (tool === "recover-covered-order") openCoveredOrderRecovery();
+  if (tool === "recover-covered-order-refresh") refreshCoveredOrderRecovery();
+  if (tool === "recover-covered-order-close") {
+    coveredOrderRecovery = null;
+    renderOrderTools();
+  }
+  if (tool === "recover-covered-order-apply") recoverCoveredOrderFromPanel(event.target);
   if (tool === "duplicates" || tool === "duplicates-refresh") {
     if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
     if (tool === "duplicates-refresh" || !duplicateScanVisible) duplicateMainSelections.clear();
@@ -2584,18 +2613,46 @@ function handleOrderToolsClick(event) {
   if (duplicateOrderId) highlightOrder(duplicateOrderId);
 }
 
-async function repairConfirmedTzeYeeFromPanel(button) {
+function openCoveredOrderRecovery() {
   if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+  const entered = window.prompt("Enter the exact SO number to recover, for example SO2607011 or SO2607013.");
+  if (entered === null) return;
+  const orderNo = normalizeRefNo(entered);
+  if (!orderNo) return showWorkflowMessage("Enter an SO number.", "error");
+  coveredOrderRecovery = { orderNo, scan: scanCoveredOrderReferences(orderNo) };
+  renderOrderTools();
+  setTimeout(() => document.querySelector?.(".covered-order-panel")?.scrollIntoView({ behavior: "smooth", block: "start" }), 25);
+}
+
+function refreshCoveredOrderRecovery() {
+  if (!coveredOrderRecovery) return;
+  coveredOrderRecovery = { orderNo: coveredOrderRecovery.orderNo, scan: scanCoveredOrderReferences(coveredOrderRecovery.orderNo) };
+  renderOrderTools();
+  showWorkflowMessage("Covered Order references refreshed. Preview only; no records changed.", "success");
+}
+
+async function recoverCoveredOrderFromPanel(button) {
+  if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+  const panel = button.closest("[data-covered-order-panel]");
+  const confirmedOrderId = panel?.querySelector('input[name="covered-confirmed-order"]:checked')?.value || "";
+  const unconfirmedQuotationId = panel?.querySelector('input[name="covered-unconfirmed-quotation"]:checked')?.value || "";
+  if (!confirmedOrderId || !unconfirmedQuotationId) {
+    return showWorkflowMessage("Select exactly one confirmed Order and one quotation to return to Follow Up.", "error");
+  }
   button.disabled = true;
   const originalLabel = button.textContent;
-  button.textContent = "Repairing...";
-  const result = await repairConfirmedTzeYeeOwnership();
+  button.textContent = "Preparing repair...";
+  const result = await recoverCoveredOrder({
+    orderNo: panel.dataset.coveredOrderNo,
+    confirmedOrderId,
+    unconfirmedQuotationId
+  });
   if (button.isConnected) {
     button.disabled = false;
     button.textContent = originalLabel;
   }
   if (!result?.ok) return;
-  workflowIntegrityResult = scanWorkflowIntegrity();
+  coveredOrderRecovery = null;
   renderWorkflowModules();
 }
 
@@ -2824,26 +2881,141 @@ export async function repairOrderOwnership(values = {}, options = {}) {
   }
 }
 
-export async function repairConfirmedTzeYeeOwnership(options = {}) {
+export function scanCoveredOrderReferences(orderNo, source = state) {
+  const normalizedOrderNo = normalizeRefNo(orderNo);
+  if (!normalizedOrderNo) return { ok: false, orderNo: "", records: [], message: "Enter an exact SO number." };
+  const collections = ["quotations", "orders", "productionJobs", "installationJobs"];
+  const rows = Object.fromEntries(collections.map((collection) => [collection, Array.isArray(source[collection]) ? source[collection] : []]));
+  const directlyMatches = (record) => coveredOrderNumberFields(record).some((value) => normalizeRefNo(value) === normalizedOrderNo);
+  const directRecords = collections.flatMap((collection) => rows[collection]
+    .filter(directlyMatches)
+    .map((record) => ({ collection, record })));
+  if (!directRecords.length) {
+    return { ok: false, orderNo: normalizedOrderNo, records: [], message: `No record currently references ${normalizedOrderNo}.` };
+  }
+
+  const orderIds = new Set();
+  const quotationIds = new Set();
+  const collectIds = (collection, record) => {
+    if (collection === "orders" && record.id) orderIds.add(String(record.id));
+    if (collection === "quotations" && record.id) quotationIds.add(String(record.id));
+    [record.orderId, record.linkedOrderId].filter(Boolean).forEach((id) => orderIds.add(String(id)));
+    [record.quoteId, record.quotationId].filter(Boolean).forEach((id) => quotationIds.add(String(id)));
+  };
+  directRecords.forEach(({ collection, record }) => collectIds(collection, record));
+  for (let pass = 0; pass < 3; pass += 1) {
+    rows.orders.filter((record) => orderIds.has(String(record.id || ""))).forEach((record) => collectIds("orders", record));
+    rows.quotations.filter((record) => quotationIds.has(String(record.id || ""))
+      || orderIds.has(String(record.orderId || ""))
+      || orderIds.has(String(record.linkedOrderId || ""))).forEach((record) => collectIds("quotations", record));
+  }
+
+  const included = new Set(directRecords.map(({ collection, record }) => coveredOrderRecordKey(collection, record)));
+  rows.orders.filter((record) => orderIds.has(String(record.id || ""))).forEach((record) => included.add(coveredOrderRecordKey("orders", record)));
+  rows.quotations.filter((record) => quotationIds.has(String(record.id || ""))
+    || orderIds.has(String(record.orderId || ""))
+    || orderIds.has(String(record.linkedOrderId || ""))).forEach((record) => included.add(coveredOrderRecordKey("quotations", record)));
+  ["productionJobs", "installationJobs"].forEach((collection) => rows[collection]
+    .filter((record) => orderIds.has(String(record.orderId || "")))
+    .forEach((record) => included.add(coveredOrderRecordKey(collection, record))));
+
+  const records = collections.flatMap((collection) => rows[collection]
+    .filter((record) => included.has(coveredOrderRecordKey(collection, record)))
+    .map((record) => ({
+      collection,
+      collectionLabel: ({ quotations: "Quotation", orders: "Order", productionJobs: "Production Job", installationJobs: "Installation Job" })[collection],
+      record,
+      matchReason: directlyMatches(record) ? `Exact ${normalizedOrderNo} reference` : "Exact stable-ID relationship",
+      view: coveredOrderRecordView(collection, record, rows)
+    })));
+  const confirmedOrderCandidates = records.filter((entry) => entry.collection === "orders"
+    && entry.record.id
+    && isActiveOrderRecord(entry.record)).map((entry) => String(entry.record.id));
+  return {
+    ok: confirmedOrderCandidates.length > 0,
+    orderNo: normalizedOrderNo,
+    records,
+    confirmedOrderCandidates,
+    quotationCandidates: records.filter((entry) => entry.collection === "quotations" && entry.record.id).map((entry) => String(entry.record.id)),
+    message: confirmedOrderCandidates.length
+      ? `${records.length} exact-number or exact stable-ID-linked record(s) found.`
+      : "No exact active Order candidate exists. Recovery is blocked."
+  };
+}
+
+function coveredOrderNumberFields(record = {}) {
+  return [record.orderNo, record.orderNumber, record.orderReference, record.orderRef, record.order_no, record.order_number];
+}
+
+function coveredOrderRecordKey(collection, record) {
+  return `${collection}:${String(record.id || "missing-id")}`;
+}
+
+function coveredOrderRecordView(collection, record, rows) {
+  const ownId = String(record.id || "");
+  const orderId = collection === "orders" ? ownId : String(record.orderId || record.linkedOrderId || "");
+  const order = rows.orders.find((candidate) => String(candidate.id || "") === orderId);
+  const quotationId = collection === "quotations"
+    ? ownId
+    : String(record.quoteId || record.quotationId || order?.quoteId || order?.quotationId || "");
+  const quotation = rows.quotations.find((candidate) => String(candidate.id || "") === quotationId);
+  const customerSource = record.customer || record.customerName ? record : (order || quotation || record);
+  const customer = customerSource.customer && typeof customerSource.customer === "object" ? customerSource.customer : {};
+  const exactOrderId = orderId || String(order?.id || "");
+  return {
+    customer: String(customer.name ?? customerSource.customerName ?? ""),
+    phone: String(customer.phone ?? customerSource.phone ?? ""),
+    quotationNo: getQuotationDisplayNo(collection === "quotations" ? record : (quotation || record)),
+    orderNo: collection === "orders" ? getOrderDisplayNo(record) : String(record.orderNo || record.orderNumber || order?.orderNo || order?.orderNumber || ""),
+    quotationStatus: String(quotation?.status || (collection === "quotations" ? record.status : "") || ""),
+    orderStatus: String(order?.status || (collection === "orders" ? record.status : "") || ""),
+    total: record.total ?? record.amount ?? order?.total ?? quotation?.total ?? "",
+    quotationStableId: quotationId,
+    orderStableId: exactOrderId,
+    productionJobIds: exactOrderId
+      ? rows.productionJobs.filter((candidate) => String(candidate.orderId || "") === exactOrderId).map((candidate) => String(candidate.id || ""))
+      : collection === "productionJobs" && ownId ? [ownId] : [],
+    installationJobIds: exactOrderId
+      ? rows.installationJobs.filter((candidate) => String(candidate.orderId || "") === exactOrderId).map((candidate) => String(candidate.id || ""))
+      : collection === "installationJobs" && ownId ? [ownId] : [],
+    forwardLinks: collection === "quotations" ? {
+      orderId: String(record.orderId || ""),
+      linkedOrderId: String(record.linkedOrderId || ""),
+      orderNo: String(record.orderNo || ""),
+      orderNumber: String(record.orderNumber || "")
+    } : { orderId: String(record.orderId || "") },
+    reverseLinks: collection === "orders" ? {
+      quoteId: String(record.quoteId || ""),
+      quotationId: String(record.quotationId || ""),
+      quoteNumber: String(record.quoteNumber || ""),
+      quotationNo: String(record.quotationNo || "")
+    } : order ? {
+      quoteId: String(order.quoteId || ""),
+      quotationId: String(order.quotationId || "")
+    } : {}
+  };
+}
+
+export async function recoverCoveredOrder(values = {}, options = {}) {
   if (!isBossOrAdmin()) return failWorkflowIntegrityRepair("Permission denied: your role cannot perform this action.");
-  const plan = planConfirmedTzeYeeRepair();
+  const plan = planCoveredOrderRecovery(values);
   if (!plan.ok) return failWorkflowIntegrityRepair(plan.message);
-  if (options.downloadBackup !== false && !downloadConfirmedTzeYeeBackup(plan)) {
+  if (options.downloadBackup !== false && !downloadCoveredOrderBackup(plan)) {
     return failWorkflowIntegrityRepair("Full JSON backup download failed. No workflow records were changed.");
   }
   if (options.confirm !== false) {
     const confirmation = window.prompt([
-      "Fix Tze Yee SO2607011",
-      "Tze Yee: ESQ-2026-0003 remains Won and owns SO2607011.",
-      `MS Chew: ${plan.wrongQuotationId} returns to Follow Up with no SO number.`,
-      `Erroneous Order: ${confirmedTzeYeeRepair.wrongOrderId} is archived without deletion or a replacement SO number.`,
+      `Recover Covered Order ${plan.orderNo}`,
+      `Keep exact Order ${plan.confirmedOrderId} with exact quotation ${plan.confirmedQuotationId}.`,
+      `Return exact quotation ${plan.unconfirmedQuotationId} to Follow Up with no SO number.`,
+      `Erroneous Order archived: ${plan.erroneousOrderId || "none"}. No replacement SO number is assigned.`,
       `Exact linked Production archived: ${plan.productionJobIds.join(", ") || "none"}`,
       `Exact linked Installation archived: ${plan.installationJobIds.join(", ") || "none"}`,
       "Exact before/after field changes:",
       JSON.stringify(plan.changes, null, 2),
-      "Type REPAIR TZE YEE to confirm."
+      "Type REPAIR COVERED ORDER to confirm."
     ].join("\n"));
-    if (confirmation !== "REPAIR TZE YEE") return { ok: false, cancelled: true, message: "Tze Yee repair cancelled." };
+    if (confirmation !== "REPAIR COVERED ORDER") return { ok: false, cancelled: true, message: "Covered Order recovery cancelled." };
   }
 
   const previousState = snapshotOrderWorkflowState();
@@ -2857,64 +3029,93 @@ export async function repairConfirmedTzeYeeOwnership(options = {}) {
     const localSave = persistOrderConversionLocally();
     if (!localSave.ok) {
       restoreConversionState(previousState);
-      return failWorkflowIntegrityRepair(`Failed to save the Tze Yee repair locally: ${localSave.reason}`);
+      return failWorkflowIntegrityRepair(`Failed to save Covered Order recovery locally: ${localSave.reason}`);
     }
     localCommitted = true;
     workflowIntegrityResult = scanWorkflowIntegrity();
     renderWorkflowModules();
-    showWorkflowMessage("Tze Yee repair saved locally. Syncing cloud...", "info");
+    showWorkflowMessage("Covered Order recovery saved locally. Syncing cloud...", "info");
     const cloudSync = await syncOrderConversionCollections();
     if (!cloudSync.ok && !cloudSync.localOnly) {
-      const message = `Tze Yee repair saved locally but cloud sync failed: ${cloudSync.reason}`;
+      const message = `Covered Order recovery saved locally but cloud sync failed: ${cloudSync.reason}`;
       showWorkflowMessage(message, "warning");
       return { ok: true, cloudOk: false, changes: plan.changes, message };
     }
-    showWorkflowMessage("Tze Yee now owns SO2607011. MS Chew was returned to Follow Up.", "success");
+    showWorkflowMessage(`${plan.orderNo} recovered. The selected unconfirmed quotation was returned to Follow Up.`, "success");
     return {
       ok: true,
       cloudOk: !cloudSync.localOnly,
       localOnly: cloudSync.localOnly,
       changes: plan.changes,
-      wrongQuotationId: plan.wrongQuotationId,
+      confirmedQuotationId: plan.confirmedQuotationId,
+      confirmedOrderId: plan.confirmedOrderId,
+      unconfirmedQuotationId: plan.unconfirmedQuotationId,
+      erroneousOrderId: plan.erroneousOrderId,
       productionJobIds: plan.productionJobIds,
       installationJobIds: plan.installationJobIds
     };
   } catch (error) {
     if (!localCommitted) {
       restoreConversionState(previousState);
-      return failWorkflowIntegrityRepair(`Tze Yee repair failed before local commit: ${error.message || "Unknown error"}`);
+      return failWorkflowIntegrityRepair(`Covered Order recovery failed before local commit: ${error.message || "Unknown error"}`);
     }
-    const message = `Tze Yee repair saved locally but cloud sync failed: ${error.message || "Unknown cloud error"}`;
+    const message = `Covered Order recovery saved locally but cloud sync failed: ${error.message || "Unknown cloud error"}`;
     showWorkflowMessage(message, "warning");
     return { ok: true, cloudOk: false, changes: plan.changes, message };
   }
 }
 
-function planConfirmedTzeYeeRepair() {
-  const quote = state.quotations.find((row) => String(row.id || "") === confirmedTzeYeeRepair.quotationId);
-  const order = state.orders.find((row) => isActiveOrderRecord(row) && String(row.id || "") === confirmedTzeYeeRepair.orderId);
-  const wrongOrder = state.orders.find((row) => isActiveOrderRecord(row) && String(row.id || "") === confirmedTzeYeeRepair.wrongOrderId);
-  if (!quote || !order || !wrongOrder) return { ok: false, message: "One or more exact confirmed Tze Yee/MS Chew stable IDs are missing or already archived." };
-  if (!matchesConfirmedRecord(quote, confirmedTzeYeeRepair.quotationNo, confirmedTzeYeeRepair.customer, confirmedTzeYeeRepair.total)
-    || !matchesConfirmedRecord(order, "", confirmedTzeYeeRepair.customer, confirmedTzeYeeRepair.total)
-    || !matchesConfirmedRecord(wrongOrder, "", confirmedTzeYeeRepair.wrongCustomer, confirmedTzeYeeRepair.wrongTotal)) {
-    return { ok: false, message: "The exact stable IDs no longer match the confirmed customer and financial facts. No records were changed." };
+function planCoveredOrderRecovery(values) {
+  if (typeof values.orderNo !== "string" || typeof values.confirmedOrderId !== "string" || typeof values.unconfirmedQuotationId !== "string") {
+    return { ok: false, message: "Select exactly one confirmed Order and one unconfirmed quotation." };
+  }
+  const orderNo = normalizeRefNo(values.orderNo);
+  const confirmedOrderId = values.confirmedOrderId.trim();
+  const unconfirmedQuotationId = values.unconfirmedQuotationId.trim();
+  if (!orderNo || !confirmedOrderId || !unconfirmedQuotationId) {
+    return { ok: false, message: "The exact selected stable IDs or SO number are missing." };
+  }
+  const scan = scanCoveredOrderReferences(orderNo);
+  if (!scan.ok || !scan.confirmedOrderCandidates.includes(confirmedOrderId)) {
+    return { ok: false, message: "The selected exact confirmed Order is not an active candidate for this SO number." };
+  }
+  if (!scan.quotationCandidates.includes(unconfirmedQuotationId)) {
+    return { ok: false, message: "The selected exact unconfirmed quotation is not a candidate for this SO number." };
+  }
+  const order = state.orders.find((row) => isActiveOrderRecord(row) && String(row.id || "") === confirmedOrderId);
+  const wrongQuote = state.quotations.find((row) => String(row.id || "") === unconfirmedQuotationId);
+  if (!order?.id || !wrongQuote?.id) return { ok: false, message: "A selected stable ID is missing. No records were changed." };
+
+  const confirmedQuoteCandidates = state.quotations.filter((candidate) => {
+    const id = String(candidate.id || "");
+    if (!id || id === unconfirmedQuotationId) return false;
+    return String(candidate.orderId || "") === confirmedOrderId
+      || String(candidate.linkedOrderId || "") === confirmedOrderId
+      || [order.quoteId, order.quotationId].filter(Boolean).map(String).includes(id);
+  });
+  if (confirmedQuoteCandidates.length !== 1) {
+    return { ok: false, message: "The confirmed Order does not resolve to exactly one different quotation through stable-ID links." };
+  }
+  const quote = confirmedQuoteCandidates[0];
+  if (!quote.id || String(quote.id) === unconfirmedQuotationId) {
+    return { ok: false, message: "The selected unconfirmed record is already the confirmed Order quotation. No records were changed." };
+  }
+  const unconfirmedPointsToSelectedOrder = [wrongQuote.orderId, wrongQuote.linkedOrderId].filter(Boolean).map(String).includes(confirmedOrderId);
+  if (unconfirmedPointsToSelectedOrder) {
+    return { ok: false, message: "The selected unconfirmed quotation already points to the selected confirmed Order. Recovery is blocked." };
   }
 
-  const reverseQuoteIds = new Set([wrongOrder.quoteId, wrongOrder.quotationId].filter(Boolean).map(String));
-  const wrongQuoteCandidates = state.quotations.filter((candidate) => (
-    reverseQuoteIds.has(String(candidate.id || ""))
-      || String(candidate.orderId || "") === confirmedTzeYeeRepair.wrongOrderId
-      || String(candidate.linkedOrderId || "") === confirmedTzeYeeRepair.wrongOrderId
-  ) && matchesConfirmedRecord(candidate, confirmedTzeYeeRepair.wrongQuotationNo, confirmedTzeYeeRepair.wrongCustomer, confirmedTzeYeeRepair.wrongTotal));
-  if (wrongQuoteCandidates.length !== 1) {
-    return { ok: false, message: "The exact MS Chew quotation cannot be resolved uniquely through stable-ID links. No records were changed." };
+  const erroneousOrderCandidates = state.orders.filter((candidate) => isActiveOrderRecord(candidate)
+    && String(candidate.id || "") !== confirmedOrderId
+    && ([wrongQuote.orderId, wrongQuote.linkedOrderId].filter(Boolean).map(String).includes(String(candidate.id || ""))
+      || [candidate.quoteId, candidate.quotationId].filter(Boolean).map(String).includes(unconfirmedQuotationId)));
+  if (erroneousOrderCandidates.length > 1) {
+    return { ok: false, message: "The selected unconfirmed quotation links to more than one active Order. Recovery is blocked." };
   }
-  const wrongQuote = wrongQuoteCandidates[0];
-  const unexpectedOwners = state.orders.filter((candidate) => isActiveOrderRecord(candidate)
-    && ![confirmedTzeYeeRepair.orderId, confirmedTzeYeeRepair.wrongOrderId].includes(String(candidate.id || ""))
-    && [candidate.orderNo, candidate.orderNumber].some((value) => normalizeRefNo(value) === confirmedTzeYeeRepair.orderNo));
-  if (unexpectedOwners.length) return { ok: false, message: "Another active Order also uses SO2607011. Review it before using the confirmed repair." };
+  const wrongOrder = erroneousOrderCandidates[0] || null;
+  if (wrongOrder && normalizeRefNo(getOrderDisplayNo(wrongOrder)) !== orderNo) {
+    return { ok: false, message: "The selected unconfirmed quotation has a different real confirmed Order number. Recovery is blocked." };
+  }
 
   const now = new Date().toISOString();
   const archivedBy = state.currentUser?.username || state.currentUser?.userId || state.role || "Boss/Admin";
@@ -2931,10 +3132,10 @@ function planConfirmedTzeYeeRepair() {
   replaceRecord("quotations", quote.id, (record) => ({
     ...record,
     status: "won",
-    orderId: confirmedTzeYeeRepair.orderId,
-    linkedOrderId: confirmedTzeYeeRepair.orderId,
-    orderNo: confirmedTzeYeeRepair.orderNo,
-    orderNumber: confirmedTzeYeeRepair.orderNo,
+    orderId: confirmedOrderId,
+    linkedOrderId: confirmedOrderId,
+    orderNo,
+    orderNumber: orderNo,
     converted: true,
     convertedToOrder: true,
     convertedAt: record.convertedAt || now,
@@ -2942,12 +3143,12 @@ function planConfirmedTzeYeeRepair() {
   }));
   replaceRecord("orders", order.id, (record) => ({
     ...record,
-    quoteId: confirmedTzeYeeRepair.quotationId,
-    quotationId: confirmedTzeYeeRepair.quotationId,
-    quoteNumber: confirmedTzeYeeRepair.quotationNo,
-    quotationNo: confirmedTzeYeeRepair.quotationNo,
-    orderNo: confirmedTzeYeeRepair.orderNo,
-    orderNumber: confirmedTzeYeeRepair.orderNo,
+    quoteId: String(quote.id),
+    quotationId: String(quote.id),
+    quoteNumber: getQuotationDisplayNo(quote),
+    quotationNo: getQuotationDisplayNo(quote),
+    orderNo,
+    orderNumber: orderNo,
     updatedAt: now
   }));
   replaceRecord("quotations", wrongQuote.id, (record) => ({
@@ -2961,40 +3162,52 @@ function planConfirmedTzeYeeRepair() {
     convertedToOrder: false,
     updatedAt: now
   }));
-  replaceRecord("orders", wrongOrder.id, (record) => ({
-    ...record,
-    statusBeforeArchive: record.status,
-    status: "cancelled_archived",
-    isArchived: true,
-    archiveReason: "Quotation was not confirmed; erroneous Order record",
-    archivedAt: now,
-    archivedBy,
-    updatedAt: now
-  }));
+  if (wrongOrder) {
+    replaceRecord("orders", wrongOrder.id, (record) => ({
+      ...record,
+      statusBeforeArchive: record.status,
+      status: "cancelled_archived",
+      isArchived: true,
+      archiveReason: "Unconfirmed quotation incorrectly created or linked as Order",
+      archivedAt: now,
+      archivedBy,
+      updatedAt: now
+    }));
+  }
 
   const archiveExactJob = (collection, record) => replaceRecord(collection, record.id, (candidate) => ({
     ...candidate,
     statusBeforeArchive: candidate.status,
     status: "cancelled_archived",
     isArchived: true,
-    archiveReason: "Generated from erroneous unconfirmed Order",
+    archiveReason: "Generated from unconfirmed quotation incorrectly created or linked as Order",
     archivedAt: now,
     archivedBy,
     updatedAt: now
   }));
-  const productionJobs = state.productionJobs.filter((record) => isActiveWorkflowRecord(record)
-    && String(record.orderId || "") === confirmedTzeYeeRepair.wrongOrderId);
-  const installationJobs = state.installationJobs.filter((record) => isActiveWorkflowRecord(record)
-    && String(record.orderId || "") === confirmedTzeYeeRepair.wrongOrderId);
+  const erroneousOrderId = String(wrongOrder?.id || "");
+  const productionJobs = state.productionJobs.filter((record) => erroneousOrderId
+    && isActiveWorkflowRecord(record)
+    && String(record.orderId || "") === erroneousOrderId);
+  const installationJobs = state.installationJobs.filter((record) => erroneousOrderId
+    && isActiveWorkflowRecord(record)
+    && String(record.orderId || "") === erroneousOrderId);
   productionJobs.forEach((record) => archiveExactJob("productionJobs", record));
   installationJobs.forEach((record) => archiveExactJob("installationJobs", record));
 
   if (!protectedOwnershipValuesUnchanged(state, nextState)) {
     return { ok: false, message: "Safety check failed: customer, item or financial data would change." };
   }
+  if (!protectedWorkflowPayloadUnchanged(state, nextState)) {
+    return { ok: false, message: "Safety check failed: Production or Installation payload data would change." };
+  }
   return {
     ok: true,
-    wrongQuotationId: String(wrongQuote.id || ""),
+    orderNo,
+    confirmedQuotationId: String(quote.id),
+    confirmedOrderId,
+    unconfirmedQuotationId,
+    erroneousOrderId,
     productionJobIds: productionJobs.map((record) => String(record.id || "")),
     installationJobIds: installationJobs.map((record) => String(record.id || "")),
     changes,
@@ -3002,22 +3215,19 @@ function planConfirmedTzeYeeRepair() {
   };
 }
 
-function matchesConfirmedRecord(record, quotationNo, customerName, total) {
-  const customer = record?.customer && typeof record.customer === "object" ? record.customer : {};
-  const actualName = String(customer.name ?? record?.customerName ?? "").trim().toLowerCase();
-  const correctQuotation = !quotationNo || normalizeRefNo(getQuotationDisplayNo(record)) === normalizeRefNo(quotationNo);
-  return correctQuotation
-    && actualName === String(customerName).trim().toLowerCase()
-    && Math.abs(Number(record?.total ?? record?.amount) - Number(total)) < 0.000001;
-}
-
-function downloadConfirmedTzeYeeBackup(plan) {
+function downloadCoveredOrderBackup(plan) {
   try {
     if (typeof document?.createElement !== "function" || typeof URL?.createObjectURL !== "function") return false;
     const payload = {
-      type: "eco-screen-crm-v2-full-backup-before-tze-yee-repair",
+      type: "eco-screen-crm-v2-full-backup-before-covered-order-recovery",
       timestamp: new Date().toISOString(),
-      confirmedStableIds: confirmedTzeYeeRepair,
+      orderNo: plan.orderNo,
+      selectedStableIds: {
+        confirmedQuotationId: plan.confirmedQuotationId,
+        confirmedOrderId: plan.confirmedOrderId,
+        unconfirmedQuotationId: plan.unconfirmedQuotationId,
+        erroneousOrderId: plan.erroneousOrderId
+      },
       exactFieldChanges: plan.changes,
       state: structuredCloneSafe(stateSnapshot())
     };
@@ -3025,14 +3235,14 @@ function downloadConfirmedTzeYeeBackup(plan) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `eco-screen-crm-v2-full-backup-before-tze-yee-repair-${backupTimestamp()}.json`;
+    link.download = `eco-screen-crm-v2-full-backup-before-covered-order-recovery-${backupTimestamp()}.json`;
     document.body.appendChild(link);
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
     return true;
   } catch (error) {
-    console.error("Tze Yee repair backup failed", error);
+    console.error("Covered Order recovery backup failed", error);
     return false;
   }
 }
@@ -3155,8 +3365,17 @@ function recordFieldChanges(changes, collection, before, after) {
 }
 
 function protectedOwnershipValuesUnchanged(before, after) {
-  const protectedFields = ["customer", "customerName", "phone", "items", "total", "amount", "deposit", "balance"];
-  return ["quotations", "orders"].every((collection) => before[collection].every((record) => {
+  const protectedFields = ["customer", "customerName", "phone", "items", "total", "amount", "deposit", "balance", "remarks", "remark"];
+  return ["quotations", "orders"].every((collection) => before[collection].length === after[collection].length && before[collection].every((record) => {
+    const candidate = after[collection].find((row) => String(row.id || "") === String(record.id || ""));
+    if (!candidate) return false;
+    return protectedFields.every((field) => JSON.stringify(record[field]) === JSON.stringify(candidate[field]));
+  }));
+}
+
+function protectedWorkflowPayloadUnchanged(before, after) {
+  const protectedFields = ["customer", "customerName", "phone", "items", "total", "amount", "deposit", "balance", "remarks", "remark", "productionRemarks", "staff", "assignedStaff", "statusHistory", "history"];
+  return ["productionJobs", "installationJobs"].every((collection) => before[collection].length === after[collection].length && before[collection].every((record) => {
     const candidate = after[collection].find((row) => String(row.id || "") === String(record.id || ""));
     if (!candidate) return false;
     return protectedFields.every((field) => JSON.stringify(record[field]) === JSON.stringify(candidate[field]));
