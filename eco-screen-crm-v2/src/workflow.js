@@ -103,6 +103,11 @@ let duplicateScanResult = null;
 let duplicateArchiveBusy = false;
 const duplicateMainSelections = new Map();
 let productionSearch = "";
+let productionDuplicateScanVisible = false;
+let productionDuplicateScanResult = null;
+let productionDuplicateArchiveBusy = false;
+let showArchivedProductionDuplicates = false;
+const productionDuplicateMainSelections = new Map();
 let orderSearch = {
   orderNumber: "",
   customerName: "",
@@ -335,7 +340,7 @@ export function createProductionJobFromOrder(order) {
 
 function upsertWorkflowJobsForOrder(order, productionJobs, installationJobs) {
   const orderNo = getOrderDisplayNo(order);
-  const productionJob = productionJobs.find((job) => job.orderId === order.id || normalizeRefNo(job.orderNumber || job.orderNo) === normalizeRefNo(orderNo));
+  const productionJob = activeProductionJobForOrder(order, productionJobs);
   let nextProductionJobs;
   if (productionJob) {
     const updatedProductionJob = {
@@ -385,6 +390,23 @@ function upsertWorkflowJobsForOrder(order, productionJobs, installationJobs) {
     productionJobs: nextProductionJobs,
     installationJobs: nextInstallationJobs
   };
+}
+
+export function isArchivedProductionJob(job = {}) {
+  return job.isArchived === true || String(job.status || "").toLowerCase() === "duplicate_archived";
+}
+
+export function activeProductionJobForOrder(order = {}, productionJobs = state.productionJobs) {
+  const activeJobs = productionJobs.filter((job) => !isArchivedProductionJob(job));
+  const exactId = order.id ? activeJobs.find((job) => String(job.orderId || "") === String(order.id)) : null;
+  if (exactId) return exactId;
+  const resolvedId = String(order.id || "");
+  const resolved = activeJobs.find((job) => String(resolveProductionOrderId(job) || "") === resolvedId);
+  if (resolved) return resolved;
+  const orderNo = normalizeRefNo(getOrderDisplayNo(order));
+  return orderNo
+    ? activeJobs.find((job) => normalizeRefNo(job.orderNumber || job.orderNo) === orderNo) || null
+    : null;
 }
 
 function updateWarrantyOrderNumbers(order, warrantyCards) {
@@ -696,6 +718,7 @@ export function attachWorkflowEvents() {
   document.querySelector("#productionList")?.addEventListener("change", handleProductionChange);
   document.querySelector("#productionTools")?.addEventListener("input", handleProductionSearch);
   document.querySelector("#productionTools")?.addEventListener("click", handleProductionSearchClick);
+  document.querySelector("#productionTools")?.addEventListener("change", handleProductionToolsChange);
   document.querySelector("#installationList")?.addEventListener("click", handleInstallationClick);
   document.querySelector("#installationList")?.addEventListener("change", handleInstallationChange);
 }
@@ -1262,8 +1285,7 @@ function escapeHtml(value) {
 }
 
 function getOrderProductionJob(order) {
-  const orderNo = getOrderDisplayNo(order);
-  return state.productionJobs.find((job) => job.orderId === order.id || normalizeRefNo(job.orderNumber || job.orderNo) === normalizeRefNo(orderNo)) || null;
+  return activeProductionJobForOrder(order);
 }
 
 function getOrderInstallationJob(order) {
@@ -1378,7 +1400,7 @@ function renderProductionJobs() {
   renderProductionTools();
   const list = document.querySelector("#productionList");
   if (!list) return;
-  const jobs = state.productionJobs.filter((job) => productionJobMatchesSearch(job));
+  const jobs = productionJobsForDisplay().filter((job) => productionJobMatchesSearch(job));
   list.innerHTML = jobs.length ? jobs.map((job) => {
     const order = linkedOrderForProduction(job);
     const orderNumber = productionOrderNumber(job);
@@ -1395,18 +1417,19 @@ function renderProductionJobs() {
         <span class="pill">${statusLabel(job.status)}</span>
       </div>
       ${!order && isBossOrAdmin() ? `<p class="warning-text"><strong>Linked Order record is missing.</strong> Production job ID: ${escapeHtml(job.id || "-")}. Repair the order relationship before production.</p>` : ""}
-      <label>${t("Production Status")}<select data-production-id="${job.id}" data-production-field="status" ${canEditProduction() ? "" : "disabled"}>${productionStatuses.map((status) => `<option value="${status}" ${normalizeProductionStatus(job.status, true) === status ? "selected" : ""}>${statusLabel(status)}</option>`).join("")}</select></label>
-      <label>${t("Production Remark")}<textarea rows="2" data-production-id="${job.id}" data-production-field="remark" ${canEditProduction() ? "" : "readonly"}>${job.remark || ""}</textarea></label>
+      <label>${t("Production Status")}<select data-production-id="${job.id}" data-production-field="status" ${canEditProduction() && !isArchivedProductionJob(job) ? "" : "disabled"}>${isArchivedProductionJob(job) ? `<option selected value="duplicate_archived">${statusLabel("duplicate_archived")}</option>` : productionStatuses.map((status) => `<option value="${status}" ${normalizeProductionStatus(job.status, true) === status ? "selected" : ""}>${statusLabel(status)}</option>`).join("")}</select></label>
+      <label>${t("Production Remark")}<textarea rows="2" data-production-id="${job.id}" data-production-field="remark" ${canEditProduction() && !isArchivedProductionJob(job) ? "" : "readonly"}>${job.remark || ""}</textarea></label>
       ${itemsSummary(job.items)}
       ${isBossOrAdmin() ? `<details class="internal-details"><summary>Internal Details</summary><p>Production Job ID: ${escapeHtml(job.id || "-")}</p><p>ESP reference: ${escapeHtml(job.productionNumber || "-")}</p></details>` : ""}
       <div class="actions">
         <button class="btn" type="button" data-view-production="${job.id}">${t("View Production Job")}</button>
         <button class="btn primary" type="button" data-print-production="${job.id}">${t("Print Production Sheet")}</button>
-        ${canEditProduction() ? `<button class="btn" type="button" data-mark-production-status="${job.id}" data-status="in_production">${t("Mark In Production")}</button><button class="btn" type="button" data-mark-production-status="${job.id}" data-status="completed">${t("Mark Production Completed")}</button>` : ""}
+        ${canEditProduction() && !isArchivedProductionJob(job) ? `<button class="btn" type="button" data-mark-production-status="${job.id}" data-status="in_production">${t("Mark In Production")}</button><button class="btn" type="button" data-mark-production-status="${job.id}" data-status="completed">${t("Mark Production Completed")}</button>` : ""}
+        ${isBossOrAdmin() && isArchivedProductionJob(job) ? `<button class="btn" type="button" data-restore-production-job="${escapeHtml(job.id || "")}">${t("Restore Production Job")}</button>` : ""}
       </div>
     </article>
   `;
-  }).join("") : `<p class="muted-text">${state.productionJobs.length ? "No production job matches this search." : t("No production jobs yet.")}</p>`;
+  }).join("") : `<p class="muted-text">${state.productionJobs.length ? "No production job matches this search or filter." : t("No production jobs yet.")}</p>`;
 }
 
 function renderProductionTools() {
@@ -1417,9 +1440,19 @@ function renderProductionTools() {
       <label>Search SO Order No, Customer, Phone or Quotation No
         <input data-production-search value="${escapeHtml(productionSearch)}" placeholder="SO2607006, customer, phone or quotation" />
       </label>
-      <div class="actions"><button class="btn" type="button" data-production-search-clear>Clear Search</button></div>
+      <div class="actions">
+        <button class="btn" type="button" data-production-search-clear>Clear Search</button>
+        ${isBossOrAdmin() ? `<button class="btn" type="button" data-production-tool="duplicates">${t("Duplicate Production Check")}</button>` : ""}
+        ${isBossOrAdmin() ? `<button class="btn ${showArchivedProductionDuplicates ? "primary" : ""}" type="button" data-production-tool="archived">${t("Show Archived Production Duplicates")}</button>` : ""}
+      </div>
+      ${productionDuplicatePanelHtml()}
     </section>
   `;
+}
+
+export function productionJobsForDisplay(jobs = state.productionJobs, showArchived = showArchivedProductionDuplicates) {
+  if (showArchived && isBossOrAdmin()) return jobs.filter((job) => isArchivedProductionJob(job));
+  return jobs.filter((job) => !isArchivedProductionJob(job));
 }
 
 export function linkedOrderForProduction(job = {}) {
@@ -1427,6 +1460,10 @@ export function linkedOrderForProduction(job = {}) {
   if (byId) return byId;
   const reference = normalizeRefNo(job.orderNo || job.orderNumber);
   return reference ? state.orders.find((order) => normalizeRefNo(getOrderDisplayNo(order)) === reference) || null : null;
+}
+
+function resolveProductionOrderId(job = {}) {
+  return linkedOrderForProduction(job)?.id || job.orderId || "";
 }
 
 export function productionOrderNumber(job = {}) {
@@ -1448,6 +1485,447 @@ export function productionJobMatchesSearch(job = {}, search = productionSearch) 
     job.quoteNumber,
     job.quotationNo
   ].some((value) => normalizeText(value).includes(term));
+}
+
+export function scanDuplicateProductionJobs() {
+  const entries = state.productionJobs
+    .map((job, index) => ({ job, index, key: productionEntryKey(job, index) }))
+    .filter((entry) => !isArchivedProductionJob(entry.job));
+  const parent = new Map(entries.map((entry) => [entry.key, entry.key]));
+  const edges = [];
+  const find = (key) => {
+    let root = key;
+    while (parent.get(root) !== root) root = parent.get(root);
+    let current = key;
+    while (parent.get(current) !== current) {
+      const next = parent.get(current);
+      parent.set(current, root);
+      current = next;
+    }
+    return root;
+  };
+  const connect = (left, right, reasons) => {
+    const leftRoot = find(left.key);
+    const rightRoot = find(right.key);
+    if (leftRoot !== rightRoot) parent.set(rightRoot, leftRoot);
+    edges.push({ left: left.key, right: right.key, reasons });
+  };
+
+  entries.forEach((left, leftIndex) => entries.slice(leftIndex + 1).forEach((right) => {
+    const leftOrderId = String(resolveProductionOrderId(left.job) || "");
+    const rightOrderId = String(resolveProductionOrderId(right.job) || "");
+    const sameResolvedOrder = Boolean(leftOrderId && leftOrderId === rightOrderId);
+    const sameExactOrderId = Boolean(left.job.orderId && String(left.job.orderId) === String(right.job.orderId || ""));
+    const leftItems = productionItemSignature(left.job.items);
+    if (!sameResolvedOrder || leftItems === "[]" || leftItems !== productionItemSignature(right.job.items)) return;
+    connect(left, right, [
+      sameExactOrderId ? `Same exact orderId: ${left.job.orderId}` : `Resolved to the same linked Order ID: ${leftOrderId}`,
+      "Same product items, dimensions and quantities."
+    ]);
+  }));
+
+  const components = new Map();
+  entries.forEach((entry) => {
+    const root = find(entry.key);
+    if (!components.has(root)) components.set(root, []);
+    components.get(root).push(entry);
+  });
+  const confirmedGroups = [...components.values()]
+    .filter((rows) => rows.length > 1)
+    .map((rows) => {
+      const keys = new Set(rows.map((entry) => entry.key));
+      const reasons = [...new Set(edges
+        .filter((edge) => keys.has(edge.left) && keys.has(edge.right))
+        .flatMap((edge) => edge.reasons))];
+      return makeProductionDuplicateGroup("confirmed", rows, reasons);
+    });
+  const confirmedPairs = new Set();
+  confirmedGroups.forEach((group) => group.members.forEach((left, index) => {
+    group.members.slice(index + 1).forEach((right) => confirmedPairs.add(pairKey(left.key, right.key)));
+  }));
+
+  const possibleGroups = [];
+  entries.forEach((left, leftIndex) => entries.slice(leftIndex + 1).forEach((right) => {
+    if (confirmedPairs.has(pairKey(left.key, right.key))) return;
+    const exactOrderId = String(left.job.orderId || "") && String(left.job.orderId || "") === String(right.job.orderId || "");
+    if (exactOrderId) return;
+    const sameOrderNo = normalizeRefNo(productionOrderReference(left.job))
+      && normalizeRefNo(productionOrderReference(left.job)) === normalizeRefNo(productionOrderReference(right.job));
+    const sameCustomer = normalizeText(productionCustomerName(left.job))
+      && normalizeText(productionCustomerName(left.job)) === normalizeText(productionCustomerName(right.job));
+    if (!sameOrderNo || !sameCustomer || !productionItemsAreSimilar(left.job.items, right.job.items)) return;
+    possibleGroups.push(makeProductionDuplicateGroup("possible", [left, right], [
+      `Same SO Order No: ${productionOrderReference(left.job)}`,
+      `Same customer: ${productionCustomerName(left.job)}`,
+      "Similar product items, but no exact matching orderId. Manual review required."
+    ]));
+  }));
+
+  return { scannedAt: new Date().toISOString(), confirmedGroups, possibleGroups };
+}
+
+function productionEntryKey(job, index) {
+  return `${String(job.id || "missing")}::${index}`;
+}
+
+function makeProductionDuplicateGroup(type, rows, reasons) {
+  const sorted = [...rows].sort((left, right) => left.index - right.index);
+  return { id: `production-${type}-${sorted.map((entry) => entry.index).join("-")}`, type, reasons, members: sorted };
+}
+
+function productionOrderReference(job = {}) {
+  const order = linkedOrderForProduction(job);
+  return order ? getOrderDisplayNo(order) : job.orderNo || job.orderNumber || "";
+}
+
+function productionCustomerName(job = {}) {
+  const order = linkedOrderForProduction(job);
+  return order?.customer?.name || order?.customerName || job.customerName || job.customer?.name || "";
+}
+
+function productionAssignedStaff(job = {}) {
+  const value = job.assignedStaff ?? job.assignedTo ?? job.staffName ?? job.productionStaff ?? "";
+  return Array.isArray(value) ? value.join(", ") : String(value || "");
+}
+
+function normalizedProductionItem(item = {}) {
+  return {
+    product: normalizeText(item.productId || item.productName || item.name),
+    width: String(toNumber(item.width)),
+    height: String(toNumber(item.height)),
+    quantity: String(toNumber(item.quantity))
+  };
+}
+
+function productionItemSignature(items = []) {
+  if (!Array.isArray(items) || !items.length) return "[]";
+  return JSON.stringify(items.map(normalizedProductionItem)
+    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))));
+}
+
+function productionItemsAreSimilar(leftItems = [], rightItems = []) {
+  if (!Array.isArray(leftItems) || !leftItems.length || !Array.isArray(rightItems) || !rightItems.length) return false;
+  const left = leftItems.map(normalizedProductionItem);
+  const right = [...rightItems.map(normalizedProductionItem)];
+  let matches = 0;
+  left.forEach((item) => {
+    const index = right.findIndex((candidate) => item.product && item.product === candidate.product
+      && item.quantity === candidate.quantity
+      && dimensionsAreSimilar(item.width, candidate.width)
+      && dimensionsAreSimilar(item.height, candidate.height));
+    if (index < 0) return;
+    matches += 1;
+    right.splice(index, 1);
+  });
+  return matches / Math.max(left.length, rightItems.length) >= 0.5;
+}
+
+function dimensionsAreSimilar(left, right) {
+  const leftNumber = Number(left);
+  const rightNumber = Number(right);
+  if (leftNumber === rightNumber) return true;
+  if (!leftNumber || !rightNumber) return false;
+  return Math.abs(leftNumber - rightNumber) / Math.max(leftNumber, rightNumber) <= 0.1;
+}
+
+function productionDuplicatePanelHtml() {
+  if (!isBossOrAdmin() || !productionDuplicateScanVisible) return "";
+  const scan = productionDuplicateScanResult || scanDuplicateProductionJobs();
+  return `
+    <section class="duplicate-order-panel production-duplicate-panel">
+      <div class="section-head">
+        <div><h3>${t("Duplicate Production Check")}</h3><p class="muted-text">Preview only. Compare all differences and select the Production Job with the correct/latest progress.</p></div>
+        <div class="actions"><button class="btn" type="button" data-production-tool="duplicates-refresh">${t("Scan Again")}</button><button class="btn" type="button" data-production-tool="duplicates-close">${t("Close")}</button></div>
+      </div>
+      <div class="duplicate-summary"><span>Confirmed duplicate groups: <strong>${scan.confirmedGroups.length}</strong></span><span>Possible duplicate groups: <strong>${scan.possibleGroups.length}</strong></span></div>
+      ${scan.confirmedGroups.length || scan.possibleGroups.length ? "" : `<p class="empty-state">${t("No duplicate Production Jobs detected.")}</p>`}
+      ${productionDuplicateGroupsHtml("Confirmed Duplicates", scan.confirmedGroups, true)}
+      ${productionDuplicateGroupsHtml("Possible Duplicates", scan.possibleGroups, false)}
+    </section>`;
+}
+
+function productionDuplicateGroupsHtml(title, groups, selectable) {
+  return `<div class="duplicate-section"><h4>${t(title)}</h4>${groups.length ? "" : `<p class="muted-text">${t("None found in this section.")}</p>`}${groups.map((group) => `
+    <article class="duplicate-group-card" data-production-duplicate-group-card="${group.id}">
+      <p><strong>${escapeHtml(group.reasons.join(" | "))}</strong></p>
+      <p><strong>Differences:</strong> ${escapeHtml(productionGroupDifferences(group))}</p>
+      <div class="table-wrap production-duplicate-table"><table><thead><tr><th>Main</th><th>Production Job internal ID</th><th>SO Order No</th><th>Customer</th><th>Quotation No</th><th>Production Status</th><th>Item count</th><th>Assigned staff</th><th>Created At</th><th>Updated At</th><th>Installation link</th><th>Duplicate reason</th></tr></thead><tbody>
+        ${group.members.map((member) => productionDuplicateMemberRowHtml(member, group, selectable)).join("")}
+      </tbody></table></div>
+      ${selectable ? productionDuplicateArchiveActionHtml(group) : `<p class="warning-text"><strong>Possible duplicates are never archived automatically. Manual review required.</strong></p>`}
+    </article>`).join("")}</div>`;
+}
+
+function productionDuplicateMemberRowHtml(member, group, selectable) {
+  const job = member.job;
+  const selected = productionDuplicateMainSelections.get(group.id) === member.key;
+  return `<tr>
+    <td>${selectable ? `<label><input type="radio" name="production-duplicate-main-${group.id}" data-production-duplicate-main="${escapeHtml(member.key)}" data-production-duplicate-group="${group.id}" ${selected ? "checked" : ""} /> Select as Main Production Job</label>` : "Review"}</td>
+    <td>${escapeHtml(job.id || "-")}</td><td>${escapeHtml(productionOrderReference(job) || "-")}</td><td>${escapeHtml(productionCustomerName(job) || "-")}</td>
+    <td>${escapeHtml(job.quoteNumber || job.quotationNo || "-")}</td><td>${escapeHtml(statusLabel(job.status || "-") || "-")}</td><td>${Array.isArray(job.items) ? job.items.length : 0}</td>
+    <td>${escapeHtml(productionAssignedStaff(job) || "-")}</td><td>${escapeHtml(job.createdAt || "-")}</td><td>${escapeHtml(job.updatedAt || "-")}</td>
+    <td>${escapeHtml(productionInstallationLinks(job) || "-")}</td><td>${escapeHtml(group.reasons.join(" | "))}</td>
+  </tr>`;
+}
+
+function productionInstallationLinks(job = {}) {
+  const explicit = state.installationJobs.filter((installation) => String(installation.productionJobId || "") === String(job.id || ""));
+  const orderId = String(resolveProductionOrderId(job) || "");
+  const orderNo = normalizeRefNo(productionOrderReference(job));
+  const linked = explicit.length ? explicit : state.installationJobs.filter((installation) => (
+    (orderId && String(installation.orderId || "") === orderId)
+    || (orderNo && normalizeRefNo(installation.orderNo || installation.orderNumber) === orderNo)
+  ));
+  return linked.map((installation) => installation.installationNumber || installation.id || "Linked Installation").join(", ");
+}
+
+function productionGroupDifferences(group) {
+  const fields = [
+    ["orderId", (job) => job.orderId], ["SO Order No", productionOrderReference], ["customer", productionCustomerName],
+    ["quotation", (job) => job.quoteNumber || job.quotationNo], ["status", (job) => job.status],
+    ["items", (job) => productionItemSignature(job.items)], ["assigned staff", productionAssignedStaff],
+    ["createdAt", (job) => job.createdAt], ["updatedAt", (job) => job.updatedAt], ["installation link", productionInstallationLinks],
+    ["production remarks", (job) => job.remark || job.remarks]
+  ];
+  const changed = fields.filter(([, getter]) => new Set(group.members.map((member) => JSON.stringify(getter(member.job) ?? ""))).size > 1).map(([label]) => label);
+  return changed.length ? changed.join(", ") : "No field differences detected.";
+}
+
+export function productionDuplicateArchiveActionHtml(group, selectedKey = productionDuplicateMainSelections.get(group.id)) {
+  if (!selectedKey) return `<p class="muted-text">Select one Main Production Job to reveal the archive action.</p>`;
+  const main = group.members.find((member) => member.key === selectedKey);
+  if (!main) return "";
+  const duplicates = group.members.filter((member) => member.key !== selectedKey);
+  return `<div class="duplicate-archive-action"><p><strong>Main Production Job:</strong> ${escapeHtml(main.job.id || "-")}</p><p><strong>Production Jobs to archive:</strong> ${duplicates.map((member) => escapeHtml(member.job.id || "-")).join(", ")}</p><p>The selected Main Job is not overwritten. A full JSON backup is downloaded before the local transaction.</p><button class="btn danger" type="button" data-archive-production-duplicate-group="${group.id}" ${productionDuplicateArchiveBusy ? "disabled" : ""}>${t("Archive Other Production Duplicates")}</button></div>`;
+}
+
+async function archiveProductionDuplicateGroupFromPanel(groupId, button) {
+  const card = button.closest("[data-production-duplicate-group-card]");
+  const selectedMain = productionDuplicateMainSelections.get(groupId)
+    || card?.querySelector("[data-production-duplicate-main]:checked")?.dataset.productionDuplicateMain;
+  if (!selectedMain) return showWorkflowMessage("Select the Main Production Job first.", "error");
+  button.disabled = true;
+  const originalLabel = button.textContent;
+  button.textContent = t("Archiving...");
+  const result = await archiveProductionDuplicateGroup(groupId, selectedMain);
+  if (button.isConnected) {
+    button.disabled = false;
+    button.textContent = originalLabel;
+  }
+  if (!result.ok) return;
+  productionDuplicateScanResult = scanDuplicateProductionJobs();
+  showArchivedProductionDuplicates = false;
+  renderProductionJobs();
+}
+
+export async function archiveProductionDuplicateGroup(groupId, mainMemberKey, options = {}) {
+  if (!isBossOrAdmin()) return failProductionDuplicateAction("Permission denied: your role cannot perform this action.");
+  if (productionDuplicateArchiveBusy) return failProductionDuplicateAction("Production duplicate archive is already in progress.");
+  const group = scanDuplicateProductionJobs().confirmedGroups.find((row) => row.id === groupId);
+  if (!group) return failProductionDuplicateAction("Confirmed Production duplicate group not found. Please scan again.");
+  const mainMember = group.members.find((member) => member.key === mainMemberKey);
+  if (!mainMember) return failProductionDuplicateAction("Select the Main Production Job first.");
+  const duplicateMembers = group.members.filter((member) => member.key !== mainMember.key);
+  if (!duplicateMembers.length) return failProductionDuplicateAction("No duplicate Production Job selected for archiving.");
+
+  if (options.confirm !== false) {
+    const confirmation = window.prompt([
+      `Main Production Job: ${mainMember.job.id || "-"}`,
+      `Production Jobs to archive: ${duplicateMembers.map((member) => member.job.id || "-").join(", ")}`,
+      "The Main Production Job will not be overwritten.",
+      "Type ARCHIVE PRODUCTION DUPLICATE to confirm. No Production Job will be permanently deleted."
+    ].join("\n"));
+    if (confirmation !== "ARCHIVE PRODUCTION DUPLICATE") return { ok: false, cancelled: true, message: "Archive cancelled." };
+  }
+  if (options.downloadBackup !== false && !downloadProductionDuplicateBackup(group, mainMember)) {
+    return failProductionDuplicateAction("Full JSON backup download failed. Production Jobs were not changed.");
+  }
+
+  productionDuplicateArchiveBusy = true;
+  const previousState = snapshotOrderWorkflowState();
+  let localCommitted = false;
+  try {
+    const now = new Date().toISOString();
+    const mainJob = mainMember.job;
+    const mainOrderId = resolveProductionOrderId(mainJob) || mainJob.orderId || "";
+    const mainOrderNo = productionOrderReference(mainJob);
+    const duplicateIndexes = new Set(duplicateMembers.map((member) => member.index));
+    const duplicateIds = new Set(duplicateMembers.map((member) => String(member.job.id || "")).filter(Boolean));
+    const duplicateReason = group.reasons.join(" | ");
+    const archivedBy = state.currentUser?.name || state.currentUser?.username || state.currentUser?.userId || role();
+
+    state.productionJobs = state.productionJobs.map((job, index) => {
+      if (index === mainMember.index) return job;
+      if (!duplicateIndexes.has(index)) return repairProductionJobReferences(job, duplicateIds, mainJob.id, now);
+      return {
+        ...job,
+        statusBeforeDuplicateArchive: job.status,
+        isArchivedBeforeDuplicateArchive: job.isArchived === true,
+        archivedAtBeforeDuplicateArchive: job.archivedAt || null,
+        status: "duplicate_archived",
+        isArchived: true,
+        duplicateOfProductionJobId: mainJob.id,
+        duplicateOfOrderId: mainOrderId,
+        duplicateOfOrderNo: mainOrderNo,
+        duplicateReason,
+        archivedAt: now,
+        archivedBy,
+        updatedAt: now
+      };
+    });
+    state.orders = state.orders.map((record) => repairProductionJobReferences(record, duplicateIds, mainJob.id, now));
+    state.quotations = state.quotations.map((record) => repairProductionJobReferences(record, duplicateIds, mainJob.id, now));
+    state.installationJobs = state.installationJobs.map((record) => repairProductionJobReferences(record, duplicateIds, mainJob.id, now));
+    state.warrantyCards = state.warrantyCards.map((record) => repairProductionJobReferences(record, duplicateIds, mainJob.id, now));
+
+    const localSave = persistOrderConversionLocally();
+    if (!localSave.ok) {
+      restoreConversionState(previousState);
+      return failProductionDuplicateAction(`Failed to archive Production duplicates locally: ${localSave.reason}`);
+    }
+    localCommitted = true;
+    const cloudSync = await syncOrderConversionCollections();
+    const cloudFailed = !cloudSync.ok && !cloudSync.localOnly;
+    const message = cloudFailed
+      ? `Production duplicate archive saved locally but cloud sync failed: ${cloudSync.reason}`
+      : cloudSync.localOnly
+        ? "Production duplicates archived locally."
+        : "Production duplicates archived successfully.";
+    showWorkflowMessage(message, cloudFailed ? "warning" : "success");
+    return {
+      ok: true,
+      mainProductionJob: mainJob,
+      archivedProductionJobIds: duplicateMembers.map((member) => member.job.id),
+      cloudOk: cloudSync.ok && !cloudSync.localOnly,
+      localOnly: cloudSync.localOnly,
+      message
+    };
+  } catch (error) {
+    console.error("Archive duplicate Production Jobs failed", error);
+    if (!localCommitted) {
+      restoreConversionState(previousState);
+      return failProductionDuplicateAction(`Failed to archive Production duplicates: ${error.message || "Unknown error"}`);
+    }
+    const message = `Production duplicate archive saved locally but cloud sync failed: ${error.message || "Unknown cloud error"}`;
+    showWorkflowMessage(message, "warning");
+    return { ok: true, mainProductionJob: mainMember.job, cloudOk: false, message };
+  } finally {
+    productionDuplicateArchiveBusy = false;
+  }
+}
+
+export async function restoreArchivedProductionJob(jobId, options = {}) {
+  if (!isBossOrAdmin()) return failProductionDuplicateAction("Permission denied: your role cannot perform this action.");
+  const entry = state.productionJobs
+    .map((job, index) => ({ job, index }))
+    .find(({ job }) => String(job.id || "") === String(jobId || "") && isArchivedProductionJob(job));
+  if (!entry) return failProductionDuplicateAction("Archived Production Job not found.");
+  if (options.confirm !== false && !window.confirm(`Restore archived Production Job ${entry.job.id}?`)) {
+    return { ok: false, cancelled: true, message: "Restore cancelled." };
+  }
+
+  const previousState = snapshotOrderWorkflowState();
+  let localCommitted = false;
+  try {
+    const now = new Date().toISOString();
+    state.productionJobs = state.productionJobs.map((job, index) => index === entry.index ? {
+      ...job,
+      status: job.statusBeforeDuplicateArchive || "not_produced",
+      isArchived: job.isArchivedBeforeDuplicateArchive === true,
+      archivedAt: job.archivedAtBeforeDuplicateArchive || null,
+      duplicateRestoredAt: now,
+      duplicateRestoredBy: state.currentUser?.name || state.currentUser?.username || role(),
+      updatedAt: now
+    } : job);
+    const localSave = persistOrderConversionLocally();
+    if (!localSave.ok) {
+      restoreConversionState(previousState);
+      return failProductionDuplicateAction(`Failed to restore Production Job locally: ${localSave.reason}`);
+    }
+    localCommitted = true;
+    const cloudSync = await syncOrderConversionCollections();
+    productionDuplicateScanResult = productionDuplicateScanVisible ? scanDuplicateProductionJobs() : null;
+    renderProductionJobs();
+    if (!cloudSync.ok && !cloudSync.localOnly) {
+      const message = `Production Job restored locally but cloud sync failed: ${cloudSync.reason}`;
+      showWorkflowMessage(message, "warning");
+      return { ok: true, cloudOk: false, message };
+    }
+    showWorkflowMessage("Production Job restored.", "success");
+    return { ok: true, cloudOk: !cloudSync.localOnly, localOnly: cloudSync.localOnly };
+  } catch (error) {
+    console.error("Restore archived Production Job failed", error);
+    if (!localCommitted) {
+      restoreConversionState(previousState);
+      return failProductionDuplicateAction(`Failed to restore Production Job: ${error.message || "Unknown error"}`);
+    }
+    const message = `Production Job restored locally but cloud sync failed: ${error.message || "Unknown cloud error"}`;
+    showWorkflowMessage(message, "warning");
+    return { ok: true, cloudOk: false, message };
+  }
+}
+
+function repairProductionJobReferences(record, duplicateIds, mainProductionJobId, now) {
+  if (!record || typeof record !== "object") return record;
+  let changed = false;
+  const next = { ...record };
+  ["productionJobId", "linkedProductionJobId", "productionId", "production_job_id"].forEach((field) => {
+    if (!duplicateIds.has(String(record[field] || ""))) return;
+    next[field] = mainProductionJobId;
+    changed = true;
+  });
+  ["workflow", "links", "references"].forEach((field) => {
+    if (!record[field] || typeof record[field] !== "object" || Array.isArray(record[field])) return;
+    const repaired = repairProductionJobReferences(record[field], duplicateIds, mainProductionJobId, now);
+    if (repaired === record[field]) return;
+    next[field] = repaired;
+    changed = true;
+  });
+  if (Array.isArray(record.workflowReferences)) {
+    const repaired = record.workflowReferences.map((reference) => repairProductionJobReferences(reference, duplicateIds, mainProductionJobId, now));
+    if (repaired.some((reference, index) => reference !== record.workflowReferences[index])) {
+      next.workflowReferences = repaired;
+      changed = true;
+    }
+  }
+  if (!changed) return record;
+  next.productionReferenceRepairedAt = now;
+  if (Object.prototype.hasOwnProperty.call(record, "updatedAt")) next.updatedAt = now;
+  return next;
+}
+
+function productionDuplicateBackupPayload(group, mainMember) {
+  return {
+    type: "eco-screen-crm-v2-full-backup-before-production-duplicate-archive",
+    timestamp: new Date().toISOString(),
+    selectedMainProductionJobKey: mainMember.key,
+    selectedGroup: { id: group.id, reasons: group.reasons, productionJobKeys: group.members.map((member) => member.key) },
+    state: structuredCloneSafe(state)
+  };
+}
+
+function downloadProductionDuplicateBackup(group, mainMember) {
+  try {
+    if (typeof document?.createElement !== "function" || typeof URL?.createObjectURL !== "function") return false;
+    const blob = new Blob([JSON.stringify(productionDuplicateBackupPayload(group, mainMember), null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `eco-screen-crm-v2-full-backup-before-production-duplicate-archive-${backupTimestamp()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    return true;
+  } catch (error) {
+    console.error("Production duplicate archive backup failed", error);
+    return false;
+  }
+}
+
+function failProductionDuplicateAction(message) {
+  showWorkflowMessage(message, "error");
+  return { ok: false, message };
 }
 
 function renderInstallationJobs() {
@@ -1820,7 +2298,7 @@ async function saveOrderItemEditor(orderId, button) {
   };
 
   state.orders = state.orders.map((order) => order.id === orderId ? updatedOrder : order);
-  state.productionJobs = state.productionJobs.map((job) => isJobForOrder(job, original) ? {
+  state.productionJobs = state.productionJobs.map((job) => !isArchivedProductionJob(job) && isJobForOrder(job, original) ? {
     ...job,
     items: items.map((item) => ({ ...item })),
     updatedAt: now
@@ -2542,7 +3020,7 @@ function sendOrderToProduction(orderId) {
   if (!canSendOrder()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
   const order = findOrder(orderId);
   if (!order) return showWorkflowMessage("Order not found.", "error");
-  const existing = state.productionJobs.find((job) => job.orderId === order.id);
+  const existing = activeProductionJobForOrder(order);
   const wasAlreadySent = order.sentToProduction === true || ["Sent to Production", "Production Completed"].includes(order.status);
   order.status = "Sent to Production";
   order.sentToProduction = true;
@@ -2550,6 +3028,10 @@ function sendOrderToProduction(orderId) {
   order.updatedAt = new Date().toISOString();
 
   if (existing) {
+    const orderNo = getOrderDisplayNo(order);
+    existing.orderId = order.id;
+    existing.orderNo = orderNo;
+    existing.orderNumber = orderNo;
     existing.installationDate = order.installationDate || existing.installationDate || "";
     if (normalizeProductionStatus(existing.status, true) !== "completed") existing.status = "in_production";
     existing.updatedAt = new Date().toISOString();
@@ -2597,7 +3079,7 @@ function sendOrderToInstaller(orderId) {
 }
 
 function syncJobInstallationDate(orderId, installationDate) {
-  state.productionJobs = state.productionJobs.map((job) => job.orderId === orderId ? { ...job, installationDate, updatedAt: new Date().toISOString() } : job);
+  state.productionJobs = state.productionJobs.map((job) => !isArchivedProductionJob(job) && job.orderId === orderId ? { ...job, installationDate, updatedAt: new Date().toISOString() } : job);
   state.installationJobs = state.installationJobs.map((job) => job.orderId === orderId ? { ...job, installationDate, status: normalizeInstallationStatus(job.status) === "not_scheduled" && installationDate ? "scheduled" : job.status, updatedAt: new Date().toISOString() } : job);
   state.orders = state.orders.map((order) => order.id === orderId ? { ...order, installationStatus: order.installationStatus === "not_scheduled" && installationDate ? "scheduled" : order.installationStatus, updatedAt: new Date().toISOString() } : order);
   persistProductionJobs();
@@ -2616,18 +3098,55 @@ function handleProductionSearch(event) {
 }
 
 function handleProductionSearchClick(event) {
-  if (!event.target.matches("[data-production-search-clear]")) return;
-  productionSearch = "";
+  if (event.target.matches("[data-production-search-clear]")) {
+    productionSearch = "";
+    renderProductionJobs();
+    return;
+  }
+  const tool = event.target.dataset.productionTool;
+  const archiveGroupId = event.target.dataset.archiveProductionDuplicateGroup;
+  if (tool === "duplicates" || tool === "duplicates-refresh") {
+    if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+    if (tool === "duplicates-refresh" || !productionDuplicateScanVisible) productionDuplicateMainSelections.clear();
+    productionDuplicateScanVisible = true;
+    productionDuplicateScanResult = scanDuplicateProductionJobs();
+    renderProductionJobs();
+    showWorkflowMessage("Duplicate Production Check updated.", "success");
+    setTimeout(() => document.querySelector?.(".production-duplicate-panel")?.scrollIntoView({ behavior: "smooth", block: "start" }), 25);
+  }
+  if (tool === "duplicates-close") {
+    productionDuplicateScanVisible = false;
+    productionDuplicateScanResult = null;
+    productionDuplicateMainSelections.clear();
+    renderProductionJobs();
+  }
+  if (tool === "archived") {
+    if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+    showArchivedProductionDuplicates = !showArchivedProductionDuplicates;
+    renderProductionJobs();
+  }
+  if (archiveGroupId) archiveProductionDuplicateGroupFromPanel(archiveGroupId, event.target);
+}
+
+function handleProductionToolsChange(event) {
+  const mainKey = event.target.dataset.productionDuplicateMain;
+  const groupId = event.target.dataset.productionDuplicateGroup;
+  if (!mainKey || !groupId) return;
+  productionDuplicateMainSelections.set(groupId, mainKey);
   renderProductionJobs();
+  showWorkflowMessage("Main Production Job selected. Review the differences, then archive the other duplicates.", "info");
+  setTimeout(() => document.querySelector?.(`[data-production-duplicate-group-card="${groupId}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 25);
 }
 
 function handleProductionClick(event) {
   const printId = event.target.dataset.printProduction;
   const viewId = event.target.dataset.viewProduction;
   const markId = event.target.dataset.markProductionStatus;
+  const restoreId = event.target.dataset.restoreProductionJob;
   if (printId) printProduction(printId);
   if (viewId) viewProductionJob(viewId);
   if (markId) markProductionStatus(markId, event.target.dataset.status);
+  if (restoreId) restoreArchivedProductionJob(restoreId);
 }
 
 function handleProductionChange(event) {
@@ -2648,6 +3167,7 @@ export function markProductionStatus(jobId, status) {
   if (!canEditProduction()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
   const job = state.productionJobs.find((row) => row.id === jobId);
   if (!job || !status) return;
+  if (isArchivedProductionJob(job)) return showWorkflowMessage("Restore this archived Production Job before changing its status.", "error");
   const normalizedStatus = normalizeProductionStatus(status, true);
   job.status = normalizedStatus;
   job.updatedAt = new Date().toISOString();
