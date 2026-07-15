@@ -55,6 +55,9 @@ const orderStatuses = [
 ];
 const productionStatuses = ["not_produced", "in_production", "completed"];
 const installationStatuses = ["not_scheduled", "scheduled", "installed", "pending_collection", "touch_up"];
+const returnToFollowUpReasons = ["Customer did not confirm", "Customer postponed", "Mistakenly converted", "Duplicate Order", "Other"];
+const paymentTypes = ["Deposit", "Progress Payment", "Final Payment"];
+const paymentMethods = ["Bank Transfer", "Cash", "Card", "Other"];
 const checklistLabels = [
   "Product installed correctly",
   "Door/window tested",
@@ -105,6 +108,9 @@ const productionDuplicateMainSelections = new Map();
 let workflowIntegrityVisible = false;
 let workflowIntegrityResult = null;
 let coveredOrderRecovery = null;
+let returnToFollowUpPanel = null;
+let paymentPanel = null;
+let paymentReversalPanel = null;
 let orderSearch = {
   orderNumber: "",
   customerName: "",
@@ -1055,6 +1061,7 @@ function orderActionsHtml(order) {
       <p class="warning-text">${t("Archived duplicate of")} ${escapeHtml(order.duplicateOfOrderNo || order.duplicateOfOrderId || "-")} | ${escapeHtml(order.duplicateReason || "-")}</p>
     `;
   }
+  const bossActiveOrder = isBossOrAdmin() && isActiveOrderRecord(order);
   return `
     <div class="actions">
       <button class="btn" type="button" data-view-order="${order.id}">${t("View Order")}</button>
@@ -1064,9 +1071,15 @@ function orderActionsHtml(order) {
       <button class="btn" type="button" data-highlight-order="${order.id}">${t("Search / Open Customer")}</button>
       ${canEditOrder() ? `<button class="btn" type="button" data-edit-order-items="${order.id}">${editingOrderId === order.id ? t("Close Item Editor") : t("Edit Order Items")}</button>` : ""}
       ${isBossOrAdmin() ? `<button class="btn" type="button" data-edit-order-number="${order.id}">${editingOrderNumberId === order.id ? t("Cancel Order Number Edit") : t("Edit Order Number")}</button>` : ""}
+      ${bossActiveOrder ? `<button class="btn" type="button" data-return-follow-up="${escapeHtml(order.id)}">Return to Follow Up</button>` : ""}
+      ${bossActiveOrder ? `<button class="btn" type="button" data-record-payment="${escapeHtml(order.id)}">Record Payment / Add Deposit</button>` : ""}
     </div>
     ${canSendOrder() ? orderStatusActionHtml(order) : ""}
     ${editingOrderNumberId === order.id && isBossOrAdmin() ? orderNumberEditorHtml(order) : ""}
+    ${isBossOrAdmin() ? paymentHistoryHtml(order) : ""}
+    ${returnToFollowUpPanel?.orderId === order.id ? returnToFollowUpPanelHtml(order) : ""}
+    ${paymentPanel?.orderId === order.id ? recordPaymentPanelHtml(order) : ""}
+    ${paymentReversalPanel?.orderId === order.id ? reversePaymentPanelHtml(order) : ""}
   `;
 }
 
@@ -1105,6 +1118,157 @@ function orderNumberEditorHtml(order) {
       </div>
     </section>
   `;
+}
+
+function returnToFollowUpPanelHtml(order) {
+  const panel = returnToFollowUpPanel;
+  const plan = panel?.preview ? buildReturnToFollowUpPlan(order.id, panel.reason) : null;
+  const summary = getOrderPaymentSummary(order);
+  const productionIds = state.productionJobs.filter((job) => String(job.orderId || "") === String(order.id)).map((job) => job.id).filter(Boolean);
+  const installationIds = state.installationJobs.filter((job) => String(job.orderId || "") === String(order.id)).map((job) => job.id).filter(Boolean);
+  return `
+    <section class="order-action-panel" data-return-follow-up-panel="${escapeHtml(order.id)}">
+      <div class="section-head">
+        <div><h3>Return to Follow Up</h3><p class="muted-text">The Order and exact orderId-linked jobs are archived for audit; the exact linked quotation returns to Follow Up.</p></div>
+        <button class="btn" type="button" data-cancel-return-follow-up="${escapeHtml(order.id)}">Close</button>
+      </div>
+      ${orderActionFactsHtml(order, summary, productionIds, installationIds)}
+      ${summary.totalPaid > 0 ? `<p class="payment-warning"><strong>Payment warning:</strong> ${money(summary.totalPaid)} is recorded as paid/deposit. All financial values will be preserved and a second confirmation is required.</p>` : ""}
+      ${panel?.preview && plan?.ok ? `
+        <h4>Before / After Preview</h4>
+        ${fieldChangesPreviewHtml(plan.changes)}
+        <div class="actions">
+          <button class="btn danger" type="button" data-confirm-return-follow-up="${escapeHtml(order.id)}">Confirm Return to Follow Up</button>
+          <button class="btn" type="button" data-return-follow-up="${escapeHtml(order.id)}">Back</button>
+        </div>
+      ` : `
+        <label>Reason
+          <select data-return-follow-up-reason>
+            ${returnToFollowUpReasons.map((reason) => `<option value="${escapeHtml(reason)}" ${panel?.reason === reason ? "selected" : ""}>${escapeHtml(reason)}</option>`).join("")}
+          </select>
+        </label>
+        <button class="btn primary" type="button" data-preview-return-follow-up="${escapeHtml(order.id)}">Show Before / After Preview</button>
+      `}
+    </section>
+  `;
+}
+
+function recordPaymentPanelHtml(order) {
+  const panel = paymentPanel;
+  const plan = panel?.preview ? buildRecordPaymentPlan(panel.values) : null;
+  const summary = getOrderPaymentSummary(order);
+  return `
+    <section class="order-action-panel" data-record-payment-panel="${escapeHtml(order.id)}">
+      <div class="section-head">
+        <div><h3>Record Payment / Add Deposit</h3><p class="muted-text">Append an auditable payment using its actual payment date.</p></div>
+        <button class="btn" type="button" data-cancel-payment="${escapeHtml(order.id)}">Close</button>
+      </div>
+      ${panel?.preview && plan?.ok ? `
+        <div class="payment-preview-grid">
+          <span>Order total<strong>${money(plan.before.total)}</strong></span>
+          <span>Existing paid<strong>${money(plan.before.totalPaid)}</strong></span>
+          <span>New payment<strong>${money(plan.payment.amount)}</strong></span>
+          <span>New total paid<strong>${money(plan.after.totalPaid)}</strong></span>
+          <span>New balance<strong>${money(plan.after.balance)}</strong></span>
+        </div>
+        <p><strong>Actual date:</strong> ${escapeHtml(plan.payment.paymentDate)} | <strong>Type:</strong> ${escapeHtml(plan.payment.type)} | <strong>Method:</strong> ${escapeHtml(plan.payment.method)}</p>
+        ${plan.requiresOverpaymentConfirmation ? `<p class="payment-warning"><strong>Overpayment warning:</strong> This payment exceeds the current balance by ${money(plan.payment.amount - plan.before.balance)}. Boss/Admin confirmation is required.</p>` : ""}
+        <h4>Before / After Preview</h4>
+        ${fieldChangesPreviewHtml(plan.changes)}
+        <div class="actions">
+          <button class="btn primary" type="button" data-confirm-payment="${escapeHtml(order.id)}">Confirm Record Payment</button>
+          <button class="btn" type="button" data-record-payment="${escapeHtml(order.id)}">Back</button>
+        </div>
+      ` : `
+        <div class="payment-preview-grid">
+          <span>Order total<strong>${money(summary.total)}</strong></span>
+          <span>Existing paid<strong>${money(summary.totalPaid)}</strong></span>
+          <span>Current balance<strong>${money(summary.balance)}</strong></span>
+        </div>
+        <div class="form-grid compact">
+          <label>Amount<input inputmode="decimal" data-payment-field="amount" value="${escapeHtml(panel?.values?.amount || "")}" /></label>
+          <label>Actual payment date<input type="date" data-payment-field="paymentDate" value="${escapeHtml(panel?.values?.paymentDate || "")}" /></label>
+          <label>Payment type<select data-payment-field="type">${paymentTypes.map((value) => `<option value="${value}" ${panel?.values?.type === value ? "selected" : ""}>${value}</option>`).join("")}</select></label>
+          <label>Payment method<select data-payment-field="method">${paymentMethods.map((value) => `<option value="${value}" ${panel?.values?.method === value ? "selected" : ""}>${value}</option>`).join("")}</select></label>
+          <label>Reference number<input data-payment-field="referenceNumber" value="${escapeHtml(panel?.values?.referenceNumber || "")}" /></label>
+          <label class="wide">Note<textarea rows="2" data-payment-field="note">${escapeHtml(panel?.values?.note || "")}</textarea></label>
+        </div>
+        <button class="btn primary" type="button" data-preview-payment="${escapeHtml(order.id)}">Show Before / After Preview</button>
+      `}
+    </section>
+  `;
+}
+
+function reversePaymentPanelHtml(order) {
+  const panel = paymentReversalPanel;
+  const plan = panel?.preview ? buildReversePaymentPlan(panel.values) : null;
+  const payment = getOrderPaymentSummary(order).payments.find((entry) => paymentStableId(entry) === panel?.paymentId);
+  return `
+    <section class="order-action-panel" data-reverse-payment-panel="${escapeHtml(order.id)}">
+      <div class="section-head">
+        <div><h3>Reverse Payment</h3><p class="muted-text">Payment ${escapeHtml(panel?.paymentId || "-")} | ${money(payment?.amount || 0)}</p></div>
+        <button class="btn" type="button" data-cancel-reverse-payment="${escapeHtml(order.id)}">Close</button>
+      </div>
+      ${panel?.preview && plan?.ok ? `
+        <div class="payment-preview-grid">
+          <span>Current total paid<strong>${money(plan.before.totalPaid)}</strong></span>
+          <span>Reversed payment<strong>${money(plan.payment.amount)}</strong></span>
+          <span>New total paid<strong>${money(plan.after.totalPaid)}</strong></span>
+          <span>New balance<strong>${money(plan.after.balance)}</strong></span>
+        </div>
+        ${fieldChangesPreviewHtml(plan.changes)}
+        <div class="actions">
+          <button class="btn danger" type="button" data-confirm-reverse-payment="${escapeHtml(order.id)}">Confirm Reverse Payment</button>
+          <button class="btn" type="button" data-reverse-payment="${escapeHtml(panel.paymentId)}" data-order-id="${escapeHtml(order.id)}">Back</button>
+        </div>
+      ` : `
+        <label>Reversal reason<textarea rows="2" data-reversal-reason>${escapeHtml(panel?.values?.reversalReason || "")}</textarea></label>
+        <button class="btn primary" type="button" data-preview-reverse-payment="${escapeHtml(order.id)}">Show Before / After Preview</button>
+      `}
+    </section>
+  `;
+}
+
+function paymentHistoryHtml(order) {
+  const summary = getOrderPaymentSummary(order);
+  return `
+    <details class="payment-history" ${paymentPanel?.orderId === order.id || paymentReversalPanel?.orderId === order.id ? "open" : ""}>
+      <summary>Payment History — Paid ${money(summary.totalPaid)} | Balance ${money(summary.balance)}</summary>
+      ${summary.legacyPaid > 0 ? `<div class="payment-history-row"><span>Legacy paid/deposit preserved</span><strong>${money(summary.legacyPaid)}</strong></div>` : ""}
+      ${summary.payments.length ? summary.payments.map((payment) => {
+        const stableId = paymentStableId(payment);
+        return `<div class="payment-history-row">
+          <span><strong>${escapeHtml(payment.type || "Payment")}</strong> ${escapeHtml(payment.paymentDate || payment.date || "-")} | ${escapeHtml(payment.method || "-")} | ${escapeHtml(payment.referenceNumber || payment.reference || "-")}<small>${escapeHtml(payment.note || "")}</small><small>ID: ${escapeHtml(stableId || "legacy record without stable ID")}</small></span>
+          <strong>${money(payment.amount)} — ${escapeHtml(payment.status || "active")}</strong>
+          ${isActivePaymentRecord(payment) && stableId ? `<button class="btn danger" type="button" data-reverse-payment="${escapeHtml(stableId)}" data-order-id="${escapeHtml(order.id)}">Reverse Payment</button>` : ""}
+        </div>`;
+      }).join("") : `<p class="muted-text">No appended payment records.</p>`}
+    </details>
+  `;
+}
+
+function orderActionFactsHtml(order, paymentSummary, productionIds, installationIds) {
+  return `<div class="order-action-facts">
+    <span>Customer<strong>${escapeHtml(order.customer?.name || order.customerName || "-")}</strong></span>
+    <span>Phone<strong>${escapeHtml(order.customer?.phone || order.phone || "-")}</strong></span>
+    <span>Quotation<strong>${escapeHtml(order.quoteNumber || order.quotationNo || "-")}</strong></span>
+    <span>Order<strong>${escapeHtml(getOrderDisplayNo(order))}</strong></span>
+    <span>Total<strong>${money(paymentSummary.total)}</strong></span>
+    <span>Paid / Deposit<strong>${money(paymentSummary.totalPaid)}</strong></span>
+    <span>Production IDs<strong>${escapeHtml(productionIds.join(", ") || "-")}</strong></span>
+    <span>Installation IDs<strong>${escapeHtml(installationIds.join(", ") || "-")}</strong></span>
+  </div>`;
+}
+
+function fieldChangesPreviewHtml(changes = []) {
+  return `<div class="change-preview-list">${changes.map((change) => `<div><strong>${escapeHtml(change.collection)} / ${escapeHtml(change.stableId)} / ${escapeHtml(change.field)}</strong><span>Before: ${escapeHtml(previewValue(change.from))}</span><span>After: ${escapeHtml(previewValue(change.to))}</span></div>`).join("")}</div>`;
+}
+
+function previewValue(value) {
+  if (value === undefined) return "(missing)";
+  if (value === "") return "(blank)";
+  if (value === null) return "null";
+  return typeof value === "object" ? JSON.stringify(value) : String(value);
 }
 
 function orderItemEditorHtml(order) {
@@ -1629,11 +1793,10 @@ function getOrderInstallationStatus(order, installationJob = getOrderInstallatio
 }
 
 function getRemainingBalance(order, installationJob = getOrderInstallationJob(order)) {
-  const baseBalance = Number(installationJob?.balanceToCollect ?? order.balance ?? 0);
+  const paymentSummary = getOrderPaymentSummary(order);
+  const baseBalance = paymentSummary.balance;
   const collected = Number(installationJob?.amountCollected || 0);
   if (installationJob?.balanceCollected && collected >= baseBalance) return 0;
-  const explicitBalance = Number(installationJob?.balance ?? Number.NaN);
-  if (Number.isFinite(explicitBalance) && installationJob?.completionStatus === "Completed") return Math.max(0, explicitBalance);
   return Math.max(0, baseBalance - collected);
 }
 
@@ -2400,6 +2563,18 @@ function handleOrderClick(event) {
   const saveOrderNumberId = event.target.dataset.saveOrderNumber;
   const cancelOrderNumberId = event.target.dataset.cancelOrderNumber;
   const restoreDuplicateKey = event.target.dataset.restoreDuplicate;
+  const returnFollowUpId = event.target.dataset.returnFollowUp;
+  const previewReturnFollowUpId = event.target.dataset.previewReturnFollowUp;
+  const confirmReturnFollowUpId = event.target.dataset.confirmReturnFollowUp;
+  const cancelReturnFollowUpId = event.target.dataset.cancelReturnFollowUp;
+  const recordPaymentId = event.target.dataset.recordPayment;
+  const previewPaymentId = event.target.dataset.previewPayment;
+  const confirmPaymentId = event.target.dataset.confirmPayment;
+  const cancelPaymentId = event.target.dataset.cancelPayment;
+  const reversePaymentId = event.target.dataset.reversePayment;
+  const previewReversePaymentId = event.target.dataset.previewReversePayment;
+  const confirmReversePaymentId = event.target.dataset.confirmReversePayment;
+  const cancelReversePaymentId = event.target.dataset.cancelReversePayment;
   if (page) {
     orderSearch = { ...orderSearch, page: Number(page) || 1 };
     renderOrderList();
@@ -2418,6 +2593,140 @@ function handleOrderClick(event) {
   if (saveOrderNumberId) saveOrderNumberFromEditor(saveOrderNumberId, event.target);
   if (cancelOrderNumberId) closeOrderNumberEditor();
   if (restoreDuplicateKey) restoreArchivedDuplicate(restoreDuplicateKey);
+  if (returnFollowUpId) openReturnToFollowUpPanel(returnFollowUpId);
+  if (previewReturnFollowUpId) previewReturnToFollowUp(previewReturnFollowUpId, event.target);
+  if (confirmReturnFollowUpId) confirmReturnToFollowUp(confirmReturnFollowUpId, event.target);
+  if (cancelReturnFollowUpId) closeReturnToFollowUpPanel();
+  if (recordPaymentId) openRecordPaymentPanel(recordPaymentId);
+  if (previewPaymentId) previewRecordPayment(previewPaymentId, event.target);
+  if (confirmPaymentId) confirmRecordPayment(confirmPaymentId, event.target);
+  if (cancelPaymentId) closeRecordPaymentPanel();
+  if (reversePaymentId) openReversePaymentPanel(event.target.dataset.orderId, reversePaymentId);
+  if (previewReversePaymentId) previewReversePayment(previewReversePaymentId, event.target);
+  if (confirmReversePaymentId) confirmReversePayment(confirmReversePaymentId, event.target);
+  if (cancelReversePaymentId) closeReversePaymentPanel();
+}
+
+function openReturnToFollowUpPanel(orderId) {
+  if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+  const order = findOrder(orderId);
+  if (!order || !isActiveOrderRecord(order)) return showWorkflowMessage("Active Order not found.", "error");
+  returnToFollowUpPanel = { orderId, reason: "Customer did not confirm", preview: false };
+  paymentPanel = null;
+  paymentReversalPanel = null;
+  renderOrderList();
+}
+
+function closeReturnToFollowUpPanel() {
+  returnToFollowUpPanel = null;
+  renderOrderList();
+}
+
+function previewReturnToFollowUp(orderId, button) {
+  const panel = button.closest("[data-return-follow-up-panel]");
+  const reason = panel?.querySelector("[data-return-follow-up-reason]")?.value || "";
+  const plan = buildReturnToFollowUpPlan(orderId, reason);
+  if (!plan.ok) return failOrderUpdate(plan.message);
+  returnToFollowUpPanel = { orderId, reason, preview: true };
+  renderOrderList();
+}
+
+async function confirmReturnToFollowUp(orderId, button) {
+  if (!returnToFollowUpPanel?.preview || returnToFollowUpPanel.orderId !== orderId) return failOrderUpdate("Review the before/after preview first.");
+  setOrderActionBusy(button, "Returning...");
+  const result = await returnOrderToFollowUp(orderId, returnToFollowUpPanel.reason);
+  if (result.ok) returnToFollowUpPanel = null;
+  renderOrders();
+}
+
+function openRecordPaymentPanel(orderId) {
+  if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+  const order = findOrder(orderId);
+  if (!order || !isActiveOrderRecord(order)) return showWorkflowMessage("Active Order not found.", "error");
+  paymentPanel = {
+    orderId,
+    preview: false,
+    values: { orderId, amount: "", paymentDate: new Date().toISOString().slice(0, 10), type: "Deposit", method: "Bank Transfer", referenceNumber: "", note: "" }
+  };
+  returnToFollowUpPanel = null;
+  paymentReversalPanel = null;
+  renderOrderList();
+}
+
+function closeRecordPaymentPanel() {
+  paymentPanel = null;
+  renderOrderList();
+}
+
+function readPaymentPanelValues(orderId, button) {
+  const panel = button.closest("[data-record-payment-panel]");
+  const read = (field) => panel?.querySelector(`[data-payment-field="${field}"]`)?.value || "";
+  return {
+    orderId,
+    paymentId: paymentPanel?.values?.paymentId || uid("payment"),
+    amount: read("amount"),
+    paymentDate: read("paymentDate"),
+    type: read("type"),
+    method: read("method"),
+    referenceNumber: read("referenceNumber"),
+    note: read("note")
+  };
+}
+
+function previewRecordPayment(orderId, button) {
+  const values = readPaymentPanelValues(orderId, button);
+  const plan = buildRecordPaymentPlan(values);
+  if (!plan.ok) return failOrderUpdate(plan.message);
+  paymentPanel = { orderId, values, preview: true };
+  renderOrderList();
+}
+
+async function confirmRecordPayment(orderId, button) {
+  if (!paymentPanel?.preview || paymentPanel.orderId !== orderId) return failOrderUpdate("Review the before/after preview first.");
+  const plan = buildRecordPaymentPlan(paymentPanel.values);
+  if (!plan.ok) return failOrderUpdate(plan.message);
+  let allowOverpayment = false;
+  if (plan.requiresOverpaymentConfirmation) {
+    allowOverpayment = window.confirm(`This payment exceeds the remaining balance by ${money(plan.payment.amount - plan.before.balance)}. Record the overpayment anyway?`);
+    if (!allowOverpayment) return showWorkflowMessage("Payment recording cancelled.", "warning");
+  }
+  setOrderActionBusy(button, "Saving payment...");
+  const result = await recordOrderPayment(paymentPanel.values, { allowOverpayment });
+  if (result.ok) paymentPanel = null;
+  renderOrders();
+}
+
+function openReversePaymentPanel(orderId, paymentId) {
+  if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+  const order = findOrder(orderId);
+  const payment = getOrderPaymentSummary(order || {}).payments.find((entry) => paymentStableId(entry) === paymentId);
+  if (!order || !isActiveOrderRecord(order) || !payment || !isActivePaymentRecord(payment)) return showWorkflowMessage("Active payment record not found.", "error");
+  paymentReversalPanel = { orderId, paymentId, preview: false, values: { orderId, paymentId, reversalReason: "" } };
+  paymentPanel = null;
+  returnToFollowUpPanel = null;
+  renderOrderList();
+}
+
+function closeReversePaymentPanel() {
+  paymentReversalPanel = null;
+  renderOrderList();
+}
+
+function previewReversePayment(orderId, button) {
+  const reversalReason = button.closest("[data-reverse-payment-panel]")?.querySelector("[data-reversal-reason]")?.value || "";
+  const values = { orderId, paymentId: paymentReversalPanel?.paymentId || "", reversalReason };
+  const plan = buildReversePaymentPlan(values);
+  if (!plan.ok) return failOrderUpdate(plan.message);
+  paymentReversalPanel = { orderId, paymentId: values.paymentId, values, preview: true };
+  renderOrderList();
+}
+
+async function confirmReversePayment(orderId, button) {
+  if (!paymentReversalPanel?.preview || paymentReversalPanel.orderId !== orderId) return failOrderUpdate("Review the before/after preview first.");
+  setOrderActionBusy(button, "Reversing...");
+  const result = await reverseOrderPayment(paymentReversalPanel.values);
+  if (result.ok) paymentReversalPanel = null;
+  renderOrders();
 }
 
 function handleOrderChange(event) {
@@ -2525,12 +2834,13 @@ function handleOrderItemInput(event) {
 
 function recalculateOrderEditorDraft() {
   if (!orderEditorDraft) return;
+  const paymentSummary = getOrderPaymentSummary(orderEditorDraft);
   orderEditorDraft.items = orderEditorDraft.items.map((item) => itemWithCalculatedTotals(item));
   const totals = quoteTotals(orderEditorDraft.items, orderEditorDraft.discount, orderEditorDraft.deposit);
   const installationJob = getOrderInstallationJob(orderEditorDraft);
   orderEditorDraft.subtotal = totals.subtotal;
   orderEditorDraft.total = totals.total;
-  orderEditorDraft.balance = Math.max(totals.balance - toNumber(installationJob?.amountCollected), 0);
+  orderEditorDraft.balance = Math.max(totals.total - paymentSummary.totalPaid - toNumber(installationJob?.amountCollected), 0);
 }
 
 function updateOrderEditorMetrics(itemId) {
@@ -2567,9 +2877,8 @@ async function saveOrderItemEditor(orderId, button) {
   const now = new Date().toISOString();
   const items = orderEditorDraft.items.map((item) => itemWithCalculatedTotals(item));
   const totals = quoteTotals(items, original.discount, original.deposit);
-  const installationJob = getOrderInstallationJob(original);
-  const amountCollected = toNumber(installationJob?.amountCollected);
-  const remainingBalance = Math.max(totals.balance - amountCollected, 0);
+  const paymentSummary = getOrderPaymentSummary(original);
+  const remainingBalance = Math.max(totals.total - paymentSummary.totalPaid, 0);
   const updatedOrder = {
     ...original,
     items,
@@ -2588,8 +2897,8 @@ async function saveOrderItemEditor(orderId, button) {
   state.installationJobs = state.installationJobs.map((job) => isJobForOrder(job, original) ? {
     ...job,
     items: items.map((item) => ({ ...item })),
-    balanceToCollect: totals.balance,
-    balance: Math.max(totals.balance - toNumber(job.amountCollected), 0),
+    balanceToCollect: remainingBalance,
+    balance: Math.max(remainingBalance - toNumber(job.amountCollected), 0),
     updatedAt: now
   } : job);
 
@@ -4341,6 +4650,438 @@ function updateOrderStatusFromCard(orderId, button) {
   updateOrderStatus(orderId, select.value, { button });
 }
 
+export function getOrderPaymentSummary(order = {}) {
+  const payments = collectOrderPaymentRecords(order);
+  const activePayments = payments.filter(isActivePaymentRecord);
+  const activePaymentTotal = activePayments.reduce((sum, payment) => sum + positiveNumber(payment.amount), 0);
+  const total = positiveNumber(order.total ?? order.amount);
+  const explicitLegacyBaseline = finiteNonNegative(order.legacyPaidBaseline);
+  const legacyPaid = explicitLegacyBaseline === null
+    ? deriveLegacyPaidBaseline(order, activePayments, activePaymentTotal, total)
+    : explicitLegacyBaseline;
+  const totalPaid = roundMoneyValue(legacyPaid + activePaymentTotal);
+  return {
+    total,
+    legacyPaid: roundMoneyValue(legacyPaid),
+    activePaymentTotal: roundMoneyValue(activePaymentTotal),
+    totalPaid,
+    balance: roundMoneyValue(total - totalPaid),
+    payments,
+    activePayments
+  };
+}
+
+function collectOrderPaymentRecords(order = {}) {
+  const records = [];
+  const seenIds = new Set();
+  ["payments", "paymentRecords", "collections", "collectionRecords"].forEach((field) => {
+    if (!Array.isArray(order[field])) return;
+    order[field].forEach((payment) => {
+      if (!payment || typeof payment !== "object") return;
+      const stableId = paymentStableId(payment);
+      if (stableId && seenIds.has(stableId)) return;
+      if (stableId) seenIds.add(stableId);
+      records.push(payment);
+    });
+  });
+  return records;
+}
+
+function paymentStableId(payment = {}) {
+  return String(payment.id || payment.paymentId || payment.stableId || "").trim();
+}
+
+function isActivePaymentRecord(payment = {}) {
+  const status = String(payment.status || "active").trim().toLowerCase();
+  return !["reversed", "void", "voided", "cancelled", "canceled"].includes(status) && positiveNumber(payment.amount) > 0;
+}
+
+function deriveLegacyPaidBaseline(order, activePayments, activePaymentTotal, total) {
+  const deposit = positiveNumber(order.deposit);
+  const inferredPaid = total > 0 && finiteNonNegative(order.balance) !== null
+    ? Math.max(0, total - finiteNonNegative(order.balance))
+    : 0;
+  const aggregatePaid = Math.max(
+    positiveNumber(order.paidAmount),
+    positiveNumber(order.amountPaid),
+    positiveNumber(order.totalPaid),
+    inferredPaid
+  );
+  if (!activePayments.length) return Math.max(deposit, aggregatePaid);
+  const activeDepositTotal = activePayments
+    .filter((payment) => normalizeText(payment.type).includes("deposit"))
+    .reduce((sum, payment) => sum + positiveNumber(payment.amount), 0);
+  const depositBaseline = Math.max(0, deposit - activeDepositTotal);
+  const aggregateBaseline = aggregatePaid >= activePaymentTotal
+    ? Math.max(0, aggregatePaid - activePaymentTotal)
+    : aggregatePaid;
+  return Math.max(depositBaseline, aggregateBaseline);
+}
+
+function positiveNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : 0;
+}
+
+function finiteNonNegative(value) {
+  if (value === "" || value === null || value === undefined) return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+function roundMoneyValue(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 10000) / 10000;
+}
+
+export function buildReturnToFollowUpPlan(orderId, reason) {
+  const exactOrderId = String(orderId || "").trim();
+  const selectedReason = String(reason || "").trim();
+  if (!exactOrderId) return { ok: false, message: "The exact Order stable ID is missing." };
+  if (!returnToFollowUpReasons.includes(selectedReason)) return { ok: false, message: "Select a valid Return to Follow Up reason." };
+  const order = state.orders.find((row) => String(row.id || "") === exactOrderId);
+  if (!order || !isActiveOrderRecord(order)) return { ok: false, message: "The exact active Order stable ID was not found." };
+  const linkedQuotation = resolveExactLinkedQuotation(order);
+  if (!linkedQuotation.ok) return linkedQuotation;
+
+  const quote = linkedQuotation.quotation;
+  const now = new Date().toISOString();
+  const archivedBy = currentActor();
+  const changes = [];
+  const nextState = structuredCloneSafe({
+    quotations: state.quotations,
+    orders: state.orders,
+    productionJobs: state.productionJobs,
+    installationJobs: state.installationJobs,
+    warrantyCards: state.warrantyCards
+  });
+  const replace = (collection, stableId, updater) => {
+    const index = nextState[collection].findIndex((row) => String(row.id || "") === String(stableId));
+    if (index < 0) return;
+    const before = nextState[collection][index];
+    const after = updater(before);
+    nextState[collection][index] = after;
+    recordFieldChanges(changes, collection, before, after);
+  };
+
+  replace("quotations", quote.id, (record) => ({
+    ...record,
+    status: "follow_up",
+    workflowStatus: "follow_up",
+    orderId: "",
+    linkedOrderId: "",
+    orderNo: "",
+    orderNumber: "",
+    converted: false,
+    convertedToOrder: false,
+    updatedAt: now
+  }));
+  replace("orders", order.id, (record) => ({
+    ...record,
+    statusBeforeArchive: record.statusBeforeArchive || record.status,
+    status: "cancelled_archived",
+    isArchived: true,
+    archiveReason: selectedReason,
+    archivedAt: now,
+    archivedBy,
+    updatedAt: now
+  }));
+
+  const archiveExactJob = (collection, record) => replace(collection, record.id, (candidate) => ({
+    ...candidate,
+    statusBeforeArchive: candidate.statusBeforeArchive || candidate.status,
+    status: "cancelled_archived",
+    isArchived: true,
+    archiveReason: `Order returned to Follow Up: ${selectedReason}`,
+    archivedAt: now,
+    archivedBy,
+    updatedAt: now
+  }));
+  const productionJobs = state.productionJobs.filter((record) => isActiveWorkflowRecord(record) && String(record.orderId || "") === exactOrderId);
+  const installationJobs = state.installationJobs.filter((record) => isActiveWorkflowRecord(record) && String(record.orderId || "") === exactOrderId);
+  productionJobs.forEach((record) => archiveExactJob("productionJobs", record));
+  installationJobs.forEach((record) => archiveExactJob("installationJobs", record));
+
+  if (!returnToFollowUpPayloadPreserved(order, quote, nextState)) {
+    return { ok: false, message: "Safety check failed: customer, item, financial or history data would change." };
+  }
+  const paymentSummary = getOrderPaymentSummary(order);
+  return {
+    ok: true,
+    action: "return-to-follow-up",
+    orderId: exactOrderId,
+    quotationId: String(quote.id),
+    reason: selectedReason,
+    totalPaid: paymentSummary.totalPaid,
+    changes,
+    productionJobIds: productionJobs.map((record) => String(record.id)),
+    installationJobIds: installationJobs.map((record) => String(record.id)),
+    nextState
+  };
+}
+
+function resolveExactLinkedQuotation(order) {
+  const orderId = String(order.id || "").trim();
+  if (!orderId) return { ok: false, message: "The selected Order stable ID is missing." };
+  const forwardIds = [...new Set([order.quoteId, order.quotationId].map((value) => String(value || "").trim()).filter(Boolean))];
+  if (forwardIds.length > 1) return { ok: false, message: "Multiple quotation stable IDs are stored on this Order. Return to Follow Up is blocked." };
+  const candidates = state.quotations.filter((quote) => {
+    const quoteId = String(quote.id || "").trim();
+    if (!quoteId) return false;
+    return forwardIds.includes(quoteId) || [quote.orderId, quote.linkedOrderId].some((value) => String(value || "") === orderId);
+  });
+  const unique = [...new Map(candidates.map((quote) => [String(quote.id), quote])).values()];
+  if (unique.length !== 1) {
+    return { ok: false, message: unique.length ? "Multiple quotations are ambiguously linked to this Order." : "The exact linked Quotation could not be identified." };
+  }
+  if (forwardIds.length && forwardIds[0] !== String(unique[0].id)) {
+    return { ok: false, message: "Forward and reverse quotation stable-ID links disagree. Return to Follow Up is blocked." };
+  }
+  return { ok: true, quotation: unique[0] };
+}
+
+function returnToFollowUpPayloadPreserved(order, quote, nextState) {
+  const nextOrder = nextState.orders.find((row) => String(row.id) === String(order.id));
+  const nextQuote = nextState.quotations.find((row) => String(row.id) === String(quote.id));
+  const protectedFields = ["customer", "customerName", "phone", "items", "total", "amount", "deposit", "paidAmount", "amountPaid", "totalPaid", "balance", "payments", "paymentRecords", "collections", "collectionRecords", "remarks", "remark", "followUpHistory", "history"];
+  if (!nextOrder || !nextQuote || !protectedFields.every((field) => JSON.stringify(order[field]) === JSON.stringify(nextOrder[field]) && JSON.stringify(quote[field]) === JSON.stringify(nextQuote[field]))) return false;
+  return ["productionJobs", "installationJobs"].every((collection) => state[collection].every((record) => {
+    const candidate = nextState[collection].find((row) => String(row.id) === String(record.id));
+    if (!candidate) return false;
+    return ["customer", "customerName", "items", "remarks", "remark", "productionRemarks", "assignedStaff", "staff", "statusHistory", "history"].every((field) => JSON.stringify(record[field]) === JSON.stringify(candidate[field]));
+  }));
+}
+
+export async function returnOrderToFollowUp(orderId, reason, options = {}) {
+  if (!isBossOrAdmin()) return failOrderUpdate("Permission denied: your role cannot perform this action.");
+  const plan = buildReturnToFollowUpPlan(orderId, reason);
+  if (!plan.ok) return failOrderUpdate(plan.message);
+  if (plan.totalPaid > 0 && options.confirmPaid !== false) {
+    const confirmed = window.confirm(`${money(plan.totalPaid)} is recorded as paid/deposit. Financial values will be preserved. Return this Order to Follow Up?`);
+    if (!confirmed) return { ok: false, cancelled: true, message: "Return to Follow Up cancelled." };
+  }
+  if (options.downloadBackup !== false && !downloadOrderActionBackup(plan)) return failOrderUpdate("Full JSON backup download failed. No records were changed.");
+  return commitOrderActionPlan(plan, {
+    local: "Order returned to Follow Up locally. Syncing cloud...",
+    success: "Order returned to Follow Up. The archived Order remains available for audit.",
+    cloudFailure: "Return to Follow Up saved locally but cloud sync failed"
+  });
+}
+
+export function buildRecordPaymentPlan(values = {}) {
+  const orderId = String(values.orderId || "").trim();
+  const order = state.orders.find((row) => String(row.id || "") === orderId);
+  if (!orderId || !order || !isActiveOrderRecord(order)) return { ok: false, message: "The exact active Order stable ID was not found." };
+  const amount = Number(values.amount);
+  if (!Number.isFinite(amount) || amount <= 0) return { ok: false, message: "Payment amount must be more than RM0." };
+  const paymentDate = String(values.paymentDate || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(paymentDate) || Number.isNaN(Date.parse(`${paymentDate}T00:00:00`))) return { ok: false, message: "Enter a valid actual payment date." };
+  const type = String(values.type || "").trim();
+  const method = String(values.method || "").trim();
+  if (!paymentTypes.includes(type) || !paymentMethods.includes(method)) return { ok: false, message: "Select a valid payment type and method." };
+  const paymentId = String(values.paymentId || uid("payment")).trim();
+  if (!paymentId) return { ok: false, message: "Payment stable ID is missing." };
+  if (collectOrderPaymentRecords(order).some((payment) => paymentStableId(payment) === paymentId)) return { ok: false, message: "Payment stable ID is already in use." };
+
+  const before = getOrderPaymentSummary(order);
+  const now = new Date().toISOString();
+  const payment = {
+    id: paymentId,
+    amount: roundMoneyValue(amount),
+    paymentDate,
+    type,
+    method,
+    referenceNumber: String(values.referenceNumber || "").trim(),
+    note: String(values.note || "").trim(),
+    createdAt: now,
+    createdBy: currentActor(),
+    status: "active"
+  };
+  const updatedOrder = {
+    ...order,
+    payments: [...(Array.isArray(order.payments) ? order.payments : []), payment],
+    legacyPaidBaseline: before.legacyPaid,
+    paymentLedgerVersion: 1,
+    totalPaid: roundMoneyValue(before.totalPaid + payment.amount),
+    balance: roundMoneyValue(before.total - before.totalPaid - payment.amount),
+    paymentUpdatedAt: now,
+    updatedAt: now
+  };
+  const after = getOrderPaymentSummary(updatedOrder);
+  const changes = [];
+  recordFieldChanges(changes, "orders", order, updatedOrder);
+  if (!orderIdentityAndPayloadPreserved(order, updatedOrder)) return { ok: false, message: "Safety check failed: Order ownership, items, total or relationships would change." };
+  return {
+    ok: true,
+    action: "record-payment",
+    orderId,
+    paymentId,
+    payment,
+    before,
+    after,
+    requiresOverpaymentConfirmation: payment.amount > before.balance,
+    changes,
+    nextState: {
+      quotations: state.quotations,
+      orders: state.orders.map((row) => String(row.id) === orderId ? updatedOrder : row),
+      productionJobs: state.productionJobs,
+      installationJobs: state.installationJobs,
+      warrantyCards: state.warrantyCards
+    }
+  };
+}
+
+export async function recordOrderPayment(values = {}, options = {}) {
+  if (!isBossOrAdmin()) return failOrderUpdate("Permission denied: your role cannot perform this action.");
+  const plan = buildRecordPaymentPlan(values);
+  if (!plan.ok) return failOrderUpdate(plan.message);
+  if (plan.requiresOverpaymentConfirmation && options.allowOverpayment !== true) return failOrderUpdate("Payment exceeds the remaining balance. Explicit Boss/Admin overpayment confirmation is required.");
+  if (options.downloadBackup !== false && !downloadOrderActionBackup(plan)) return failOrderUpdate("Full JSON backup download failed. Payment was not recorded.");
+  return commitOrderActionPlan(plan, {
+    local: "Payment recorded locally. Syncing cloud...",
+    success: "Payment recorded successfully.",
+    cloudFailure: "Payment saved locally but cloud sync failed"
+  });
+}
+
+export function buildReversePaymentPlan(values = {}) {
+  const orderId = String(values.orderId || "").trim();
+  const paymentId = String(values.paymentId || "").trim();
+  const reversalReason = String(values.reversalReason || "").trim();
+  const order = state.orders.find((row) => String(row.id || "") === orderId);
+  if (!orderId || !order || !isActiveOrderRecord(order)) return { ok: false, message: "The exact active Order stable ID was not found." };
+  if (!paymentId) return { ok: false, message: "The exact Payment stable ID is missing." };
+  if (!reversalReason) return { ok: false, message: "Enter a reversal reason." };
+  const payment = collectOrderPaymentRecords(order).find((entry) => paymentStableId(entry) === paymentId);
+  if (!payment || !isActivePaymentRecord(payment)) return { ok: false, message: "The exact active Payment stable ID was not found." };
+  const before = getOrderPaymentSummary(order);
+  const now = new Date().toISOString();
+  const reversedBy = currentActor();
+  const updatedOrder = { ...order };
+  let matchCount = 0;
+  ["payments", "paymentRecords", "collections", "collectionRecords"].forEach((field) => {
+    if (!Array.isArray(order[field])) return;
+    updatedOrder[field] = order[field].map((entry) => {
+      if (paymentStableId(entry) !== paymentId) return entry;
+      matchCount += 1;
+      return { ...entry, status: "reversed", reversedAt: now, reversedBy, reversalReason };
+    });
+  });
+  if (!matchCount) return { ok: false, message: "The exact Payment stable ID could not be updated." };
+  const afterReversal = getOrderPaymentSummary(updatedOrder);
+  updatedOrder.legacyPaidBaseline = before.legacyPaid;
+  updatedOrder.paymentLedgerVersion = 1;
+  updatedOrder.totalPaid = afterReversal.totalPaid;
+  updatedOrder.balance = afterReversal.balance;
+  updatedOrder.paymentUpdatedAt = now;
+  updatedOrder.updatedAt = now;
+  const after = getOrderPaymentSummary(updatedOrder);
+  const changes = [];
+  recordFieldChanges(changes, "orders", order, updatedOrder);
+  if (!orderIdentityAndPayloadPreserved(order, updatedOrder)) return { ok: false, message: "Safety check failed: Order ownership, items, total or relationships would change." };
+  return {
+    ok: true,
+    action: "reverse-payment",
+    orderId,
+    paymentId,
+    payment,
+    before,
+    after,
+    changes,
+    nextState: {
+      quotations: state.quotations,
+      orders: state.orders.map((row) => String(row.id) === orderId ? updatedOrder : row),
+      productionJobs: state.productionJobs,
+      installationJobs: state.installationJobs,
+      warrantyCards: state.warrantyCards
+    }
+  };
+}
+
+export async function reverseOrderPayment(values = {}, options = {}) {
+  if (!isBossOrAdmin()) return failOrderUpdate("Permission denied: your role cannot perform this action.");
+  const plan = buildReversePaymentPlan(values);
+  if (!plan.ok) return failOrderUpdate(plan.message);
+  if (options.downloadBackup !== false && !downloadOrderActionBackup(plan)) return failOrderUpdate("Full JSON backup download failed. Payment was not reversed.");
+  return commitOrderActionPlan(plan, {
+    local: "Payment reversal saved locally. Syncing cloud...",
+    success: "Payment reversed. The original record remains in Payment History.",
+    cloudFailure: "Payment reversal saved locally but cloud sync failed"
+  });
+}
+
+function orderIdentityAndPayloadPreserved(before, after) {
+  return ["id", "orderId", "orderNo", "orderNumber", "quoteId", "quotationId", "quoteNumber", "quotationNo", "customer", "customerName", "phone", "items", "total", "amount", "deposit", "paidAmount", "amountPaid", "status", "productionJobId", "installationJobId", "remarks", "remark"].every((field) => JSON.stringify(before[field]) === JSON.stringify(after[field]));
+}
+
+function currentActor() {
+  return state.currentUser?.name || state.currentUser?.username || state.currentUser?.userId || role() || "Boss/Admin";
+}
+
+function downloadOrderActionBackup(plan) {
+  try {
+    if (typeof document?.createElement !== "function" || typeof URL?.createObjectURL !== "function") return false;
+    const payload = {
+      type: `eco-screen-crm-v2-full-backup-before-${plan.action}`,
+      timestamp: new Date().toISOString(),
+      exactSelection: { orderId: plan.orderId, quotationId: plan.quotationId || "", paymentId: plan.paymentId || "" },
+      exactFieldChanges: plan.changes,
+      state: structuredCloneSafe(stateSnapshot())
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `eco-screen-crm-v2-full-backup-before-${plan.action}-${backupTimestamp()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    return true;
+  } catch (error) {
+    console.error("Order action backup failed", error);
+    return false;
+  }
+}
+
+async function commitOrderActionPlan(plan, messages) {
+  const previousState = snapshotOrderWorkflowState();
+  let localCommitted = false;
+  try {
+    state.quotations = plan.nextState.quotations;
+    state.orders = plan.nextState.orders;
+    state.productionJobs = plan.nextState.productionJobs;
+    state.installationJobs = plan.nextState.installationJobs;
+    state.warrantyCards = plan.nextState.warrantyCards;
+    const localSave = persistOrderConversionLocally();
+    if (!localSave.ok) {
+      restoreConversionState(previousState);
+      renderWorkflowModules();
+      return failOrderUpdate(`Local transaction failed: ${localSave.reason}`);
+    }
+    localCommitted = true;
+    showWorkflowMessage(messages.local, "info");
+    const cloudSync = await syncOrderConversionCollections();
+    renderWorkflowModules();
+    if (!cloudSync.ok && !cloudSync.localOnly) {
+      const message = `${messages.cloudFailure}: ${cloudSync.reason}`;
+      showWorkflowMessage(message, "warning");
+      return { ok: true, cloudOk: false, changes: plan.changes, message, orderId: plan.orderId, paymentId: plan.paymentId };
+    }
+    showWorkflowMessage(messages.success, "success");
+    return { ok: true, cloudOk: !cloudSync.localOnly, localOnly: cloudSync.localOnly, changes: plan.changes, orderId: plan.orderId, quotationId: plan.quotationId, paymentId: plan.paymentId };
+  } catch (error) {
+    if (!localCommitted) {
+      restoreConversionState(previousState);
+      renderWorkflowModules();
+      return failOrderUpdate(`Local transaction failed: ${error.message || "Unknown error"}`);
+    }
+    renderWorkflowModules();
+    const message = `${messages.cloudFailure}: ${error.message || "Unknown cloud error"}`;
+    showWorkflowMessage(message, "warning");
+    return { ok: true, cloudOk: false, changes: plan.changes, message, orderId: plan.orderId, paymentId: plan.paymentId };
+  }
+}
+
 export async function updateOrderStatus(orderId, nextStatus, options = {}) {
   if (!canSendOrder()) return failOrderUpdate("Permission denied: your role cannot perform this action.");
   const order = findOrder(orderId);
@@ -5387,12 +6128,14 @@ function priceAdjustmentPrintNote(item) {
 }
 
 function totalsBlock(order) {
+  const paymentSummary = getOrderPaymentSummary(order);
   return `<div class="print-totals">
     <div><span>${t("Subtotal")}</span><strong>${money(order.subtotal)}</strong></div>
     <div><span>${t("Discount")}</span><strong>${money(order.discount)}</strong></div>
     <div><span>${t("Total")}</span><strong>${money(order.total)}</strong></div>
     <div><span>${t("Deposit")}</span><strong>${money(order.deposit)}</strong></div>
-    <div><span>${t("Balance")}</span><strong>${money(order.balance)}</strong></div>
+    <div><span>Total Paid</span><strong>${money(paymentSummary.totalPaid)}</strong></div>
+    <div><span>${t("Balance")}</span><strong>${money(paymentSummary.balance)}</strong></div>
   </div>`;
 }
 
