@@ -48,7 +48,9 @@ const {
   linkedOrderForProduction,
   markInstallationStatus,
   markProductionStatus,
+  getOrderDispatchState,
   productionJobMatchesSearch,
+  productionWorkStageCounts,
   productionSheetPrintHtml,
   productionJobsForCurrentView,
   productionJobsForDisplay,
@@ -59,6 +61,7 @@ const {
   recoverCoveredOrder,
   recoverMissingConfirmedOrder,
   recordOrderPayment,
+  repairProductionDispatchIntegrity,
   repairWorkflowIntegrityIssue,
   repairOrderOwnership,
   returnOrderToFollowUp,
@@ -76,6 +79,7 @@ const {
   nextWarrantyCardNumber,
   recallInstallationFromInstaller,
   saveInstallationArrangement,
+  scanProductionDispatchIntegrity,
   scanWorkflowIntegrity,
   scanCoveredOrderReferences,
   scanMissingConfirmedOrderRecovery,
@@ -98,7 +102,8 @@ const {
   normalizeColor,
   normalizeOpeningDirection,
   openingDirectionLabel,
-  statusLabel
+  statusLabel,
+  t
 } = await import("../src/i18n.js");
 const {
   isActiveOrderRecord,
@@ -1356,8 +1361,18 @@ const productionCountBeforeSend = state.productionJobs.length;
 const sendResult = await sendOrderToProduction(syncOrder.id);
 assert(sendResult.ok && state.orders.find((order) => order.id === syncOrder.id).productionJobId === state.productionJobs[0].id, "X: Send to Production must save the exact Production Job ID on the Order");
 assert(state.orders.find((order) => order.id === syncOrder.id).productionStatus === "not_produced", "X: Send to Production must preserve the normalized initial Production status");
+assert(Number.isFinite(Date.parse(state.orders.find((order) => order.id === syncOrder.id).sentToProductionAt)), "X: future Send to Production must record sentToProductionAt");
 await sendOrderToProduction(syncOrder.id);
 assert(state.productionJobs.length === productionCountBeforeSend, "X: repeated Send to Production must not create another Production Job");
+const duplicateSendJob = { ...state.productionJobs[0], id: "production-send-duplicate-block" };
+state.productionJobs.push(duplicateSendJob);
+const beforeBlockedSend = JSON.stringify(state.orders.find((order) => order.id === syncOrder.id));
+const blockedDuplicateSend = await sendOrderToProduction(syncOrder.id);
+assert(!blockedDuplicateSend.ok && blockedDuplicateSend.blocked
+  && state.productionJobs.length === productionCountBeforeSend + 1
+  && JSON.stringify(state.orders.find((order) => order.id === syncOrder.id)) === beforeBlockedSend,
+"X: Send to Production must block multiple exact active Jobs without changing the Order or creating another Job");
+state.productionJobs = state.productionJobs.filter((job) => job.id !== duplicateSendJob.id);
 await markProductionStatus(state.productionJobs[0].id, "in_production");
 assert(state.orders.find((order) => order.id === syncOrder.id).productionStatus === "in_production", "X: In Production must synchronize to the exact linked Order");
 await markProductionStatus(state.productionJobs[0].id, "completed");
@@ -1760,6 +1775,98 @@ assert(workflowNavigationState().production.search === ""
   && productionJobsForCurrentView().length === 12,
 "AA5: entering Production must clear text search, disable archived-only mode and restore the full unique active list");
 
+resetWorkflowState();
+state.currentUser = { userId: "boss-dispatch-test", username: "boss-dispatch-test", name: "Boss Dispatch Test", role: "Boss", active: true };
+state.role = "Boss";
+const dispatchOrders = Array.from({ length: 19 }, (_, index) => ({
+  id: `dispatch-order-${index + 1}`,
+  orderNo: `SO-DISPATCH-${index + 1}`,
+  orderNumber: `SO-DISPATCH-${index + 1}`,
+  customer: { name: index === 0 ? "Waiting Customer" : `Dispatched Customer ${index + 1}` },
+  status: index === 0 || index >= 14 ? "Confirmed" : "Sent to Production",
+  sentToProduction: index > 0 && index < 14,
+  productionStatus: "not_produced",
+  items: [{ productName: "Dispatch Product", quantity: 1 }],
+  updatedAt: `2026-07-${String(index + 1).padStart(2, "0")}T01:00:00.000Z`
+}));
+const dispatchProductionJobs = dispatchOrders.slice(1).map((order, index) => ({
+  id: `dispatch-production-${index + 1}`,
+  orderId: order.id,
+  orderNo: order.orderNo,
+  status: index < 8 ? "not_produced" : "in_production",
+  updatedAt: `2026-07-${String(index + 2).padStart(2, "0")}T02:00:00.000Z`
+}));
+dispatchOrders.slice(1, 7).forEach((order, index) => {
+  order.productionJobId = dispatchProductionJobs[index].id;
+  order.productionStatus = dispatchProductionJobs[index].status;
+});
+dispatchOrders.slice(7, 14).forEach((order, index) => {
+  order.productionStatus = dispatchProductionJobs[index + 6].status;
+});
+dispatchOrders[18].productionJobId = dispatchProductionJobs[17].id;
+state.orders = dispatchOrders;
+state.productionJobs = dispatchProductionJobs;
+
+assert(getOrderDispatchState(dispatchOrders[0]) === "waiting-to-send"
+  && getOrderDispatchState(dispatchOrders[1]) === "sent-to-production"
+  && getOrderDispatchState({ ...dispatchOrders[1], productionStatus: "not_produced" }) === "sent-to-production",
+"AC1: Order dispatch state must remain separate from the Production Job work stage");
+const dispatchStageCounts = productionWorkStageCounts();
+assert(dispatchStageCounts.not_produced === 8 && dispatchStageCounts.in_production === 10 && dispatchStageCounts.completed === 0,
+  "AC1: Production page stages must independently report 8 Not Produced and 10 In Production");
+const initialDispatchScan = scanProductionDispatchIntegrity();
+assert(initialDispatchScan.counts.Correct === 7
+  && initialDispatchScan.counts["Missing forward productionJobId"] === 7
+  && initialDispatchScan.counts["Production Job exists but Order dispatch fields are stale"] === 5
+  && initialDispatchScan.repairableCount === 12,
+"AC2: dispatch integrity scan must classify exact one-to-one relationships without matching by SO or customer");
+
+const ambiguousOrderId = dispatchOrders[14].id;
+const ambiguousDuplicateJob = { ...dispatchProductionJobs[13], id: "dispatch-production-ambiguous-duplicate" };
+state.productionJobs.push(ambiguousDuplicateJob);
+const ambiguousScan = scanProductionDispatchIntegrity();
+assert(ambiguousScan.entries.find((entry) => entry.orderId === ambiguousOrderId)?.classification === "Multiple active Production Jobs",
+  "AC2: multiple exact active Production Jobs must be classified as ambiguous");
+const ordersBeforeAmbiguousRepair = JSON.stringify(state.orders);
+const ambiguousRepair = await repairProductionDispatchIntegrity({ orderIds: [ambiguousOrderId] }, { confirm: false, downloadBackup: false });
+assert(!ambiguousRepair.ok && JSON.stringify(state.orders) === ordersBeforeAmbiguousRepair,
+  "AC2: ambiguous multiple active Jobs must block repair without changing Orders");
+state.productionJobs = state.productionJobs.filter((job) => job.id !== ambiguousDuplicateJob.id);
+
+const repairableDispatchIds = scanProductionDispatchIntegrity().entries.filter((entry) => entry.repairable).map((entry) => entry.orderId);
+const productionSnapshotBeforeDispatchRepair = JSON.stringify(state.productionJobs);
+const dispatchRepair = await repairProductionDispatchIntegrity({ orderIds: repairableDispatchIds }, { confirm: false, downloadBackup: false });
+const repairedDispatchOrders = uniqueActiveOrders(state.orders);
+assert(dispatchRepair.ok
+  && repairedDispatchOrders.filter((order) => getOrderDispatchState(order) === "waiting-to-send").length === 1
+  && repairedDispatchOrders.filter((order) => getOrderDispatchState(order) === "sent-to-production").length === 18,
+"AC3: 19 active Orders with 18 explicitly repaired dispatch records must produce 1 Waiting and 18 Sent");
+assert(repairableDispatchIds.every((orderId) => {
+  const order = state.orders.find((row) => row.id === orderId);
+  const exactJob = state.productionJobs.find((job) => job.orderId === orderId);
+  return order.productionJobId === exactJob.id
+    && order.status === "Sent to Production"
+    && order.sentToProduction === true
+    && order.productionStatus === normalizeProductionStatus(exactJob.status)
+    && !order.sentToProductionAt;
+}), "AC3: repair must use exact orderId, update only dispatch fields and never invent historical sentToProductionAt");
+assert(JSON.stringify(state.productionJobs) === productionSnapshotBeforeDispatchRepair
+  && state.productionJobs.length === 18
+  && productionWorkStageCounts().not_produced === 8
+  && productionWorkStageCounts().in_production === 10,
+"AC3: one-time repair must not create, delete, archive or change any Production Job stage");
+const persistedDispatchOrders = JSON.parse(localStorage.getItem("ecoScreenV2.orders") || "[]");
+assert(persistedDispatchOrders.filter((order) => getOrderDispatchState(order) === "sent-to-production").length === 18,
+  "AC3: repaired dispatch state must survive storage refresh");
+
+state.language = "en";
+assert(t("Waiting to Send") === "Waiting to Send" && t("Sent to Production") === "Sent to Production" && statusLabel("not_produced") === "Not Produced",
+  "AC4: English dispatch and Production work-stage labels must remain separate");
+state.language = "zh";
+assert(t("Waiting to Send") === "等待发送" && t("Sent to Production") === "已发送生产" && statusLabel("not_produced") === "未开始生产",
+  "AC4: Chinese dispatch and Production work-stage labels must remain language-consistent");
+state.language = "en";
+
 assert(JSON.stringify(OPENING_DIRECTION_VALUES) === JSON.stringify(["close_left", "close_right", "close_down"]),
   "AB1: Opening Direction must expose only the three stable canonical values");
 assert(JSON.stringify(COLOR_VALUES) === JSON.stringify(["white", "grey"]),
@@ -1998,5 +2105,6 @@ console.log([
   ,"Warranty validation, exact links, unique numbering, reuse, regeneration and mobile preview: passed"
   ,"Unique active Dashboard counts, Orders navigation reset and category filters: passed"
   ,"Unique active Production visibility, status aliases and navigation reset: passed"
+  ,"Separate Order dispatch board, Production work stages and safe exact-ID integrity repair: passed"
   ,"Dedicated A4 Production Sheet isolation, exact IDs, fixed table and print footer: passed"
 ].join("\n"));
