@@ -35,6 +35,7 @@ const {
   activeProductionJobForOrder,
   buildSafeOrderOwnershipComparison,
   convertQuoteToOrder,
+  createInstallationJobFromOrder,
   duplicateArchiveActionHtml,
   findExistingOrderForQuote,
   findOrderByNumber,
@@ -58,16 +59,24 @@ const {
   returnOrderToFollowUp,
   reverseOrderPayment,
   getOrderPaymentSummary,
+  generateWarrantyCard,
+  installationDispatchDiagnostics,
+  installationJobsForUser,
+  nextWarrantyCardNumber,
+  recallInstallationFromInstaller,
+  saveInstallationArrangement,
   scanWorkflowIntegrity,
   scanCoveredOrderReferences,
   scanMissingConfirmedOrderRecovery,
   searchCoveredOrderQuotations,
   scanDuplicateOrders,
   scanDuplicateProductionJobs,
+  sendInstallationToInstaller,
   sendOrderToProduction,
   updateOrderNumber,
   updateOrderStatus,
-  updateQuotationStatus
+  updateQuotationStatus,
+  warrantyCardPreviewHtml
 } = await import("../src/workflow.js");
 const { quotationsForTab } = await import("../src/quotations.js");
 const { isActiveOrderRecord, isActiveWorkflowRecord } = await import("../src/workflowIntegrity.js");
@@ -1491,6 +1500,132 @@ applyCloudSnapshot({ orders: [{ ...legacyPaymentOrder, updatedAt: "2020-01-01T00
 assert(state.orders.find((order) => order.id === legacyPaymentOrder.id)?.payments.find((payment) => payment.id === "payment-second-progress")?.status === "reversed"
   && getOrderPaymentSummary(state.orders.find((order) => order.id === legacyPaymentOrder.id)).balance === 700, "Y2: older cloud data must not overwrite the payment ledger or reversal");
 
+resetWorkflowState();
+state.currentUser = { userId: "boss-test", username: "boss-test", name: "Boss Test", role: "Boss", active: true };
+state.role = "Boss";
+state.users = [
+  state.currentUser,
+  { userId: "installer-exact-a", username: "installer-a", name: "Installer A", role: "Installer", active: true },
+  { userId: "installer-exact-b", username: "installer-b", name: "Installer B", role: "Installer", active: true },
+  { userId: "secretary-test", username: "secretary-test", name: "Secretary Test", role: "Secretary", active: true }
+];
+const dispatchOrder = {
+  id: "order-installation-dispatch",
+  orderNo: "SO2607201",
+  orderNumber: "SO2607201",
+  quoteNumber: "ESQ-DISPATCH-1",
+  quotationNo: "ESQ-DISPATCH-1",
+  customer: { name: "Dispatch Customer", phone: "0123000000", address: "Dispatch Address" },
+  items: [{ id: "dispatch-item", productId: "roller", productName: "Roller", quantity: 1, width: 1000, height: 1200, unitPrice: 100, minimumSqft: 0, warrantyPeriod: "3 years" }],
+  total: 500,
+  balance: 300,
+  status: "Confirmed",
+  isArchived: false,
+  updatedAt: "2026-07-15T00:00:00.000Z"
+};
+state.orders = [dispatchOrder];
+const pendingInstallation = createInstallationJobFromOrder(dispatchOrder);
+state.installationJobs = [pendingInstallation];
+assert(pendingInstallation.status === "pending_arrangement" && pendingInstallation.dispatchStatus === "pending", "Z1: a new Installation must default to pending_arrangement and must not auto-dispatch");
+assert(installationJobsForUser({ userId: "installer-exact-a", role: "Installer" }).length === 0, "Z1: a pending Installation must be invisible to Installer users");
+
+const arranged = await saveInstallationArrangement(pendingInstallation.id, {
+  installationDate: "2026-07-25",
+  installationTime: "10:30",
+  assignedInstallerId: "installer-exact-a",
+  address: "Exact Dispatch Address",
+  contactPerson: "Dispatch Contact",
+  phone: "0123000000",
+  installationRemarks: "Call before arrival",
+  requiredItems: "Ladder and fitting kit"
+});
+assert(arranged.ok && arranged.status === "ready_to_send", "Z2: date plus an exact Installer ID must set ready_to_send");
+assert(state.installationJobs[0].assignedInstallerId === "installer-exact-a" && state.installationJobs[0].assignedInstallerName === "Installer A", "Z2: arrangement must store the selected exact staff/user ID and display name");
+assert(installationJobsForUser({ userId: "installer-exact-a", role: "Installer" }).length === 0, "Z2: arranging a date and Installer alone must not expose the job");
+
+const sent = await sendInstallationToInstaller(pendingInstallation.id);
+assert(sent.ok && state.installationJobs[0].status === "sent_to_installer" && state.installationJobs[0].dispatchStatus === "sent"
+  && state.installationJobs[0].sentAt && state.installationJobs[0].sentBy, "Z3: explicit Send to Installer must store dispatch state and audit fields");
+assert(installationJobsForUser({ userId: "installer-exact-a", role: "Installer" }).map((job) => job.id).includes(pendingInstallation.id), "Z3: the exact assigned Installer must see the sent job");
+assert(installationJobsForUser({ userId: "installer-exact-b", role: "Installer" }).length === 0, "Z3: a different Installer stable ID must not see the sent job");
+const firstSentAt = state.installationJobs[0].sentAt;
+const recall = await recallInstallationFromInstaller(pendingInstallation.id, "Wrong appointment time");
+assert(recall.ok && state.installationJobs[0].status === "pending_arrangement" && state.installationJobs[0].dispatchStatus === "recalled"
+  && state.installationJobs[0].recalledAt && state.installationJobs[0].recalledBy && state.installationJobs[0].recallReason === "Wrong appointment time", "Z4: Boss/Admin recall must hide the job and preserve a recall audit");
+assert(state.installationJobs[0].assignedInstallerId === "installer-exact-a" && state.installationJobs[0].sentAt === firstSentAt
+  && state.installationJobs[0].dispatchHistory.some((event) => event.action === "sent")
+  && state.installationJobs[0].dispatchHistory.some((event) => event.action === "recalled"), "Z4: recall must preserve the prior exact assignment and complete dispatch history");
+assert(installationJobsForUser({ userId: "installer-exact-a", role: "Installer" }).length === 0, "Z4: a recalled job must disappear from Installer visibility");
+state.installationJobs.push({ id: "installation-archived-hidden", orderId: dispatchOrder.id, assignedInstallerId: "installer-exact-a", status: "sent_to_installer", isArchived: true });
+state.installationJobs.push({ id: "installation-cancelled-hidden", orderId: dispatchOrder.id, assignedInstallerId: "installer-exact-a", status: "cancelled_archived" });
+assert(installationJobsForUser({ userId: "installer-exact-a", role: "Installer" }).length === 0, "Z4: archived and cancelled jobs must remain hidden from Installer users");
+
+const resent = await sendInstallationToInstaller(pendingInstallation.id);
+assert(resent.ok, "Z5: editing or recall must not auto-send, but a later explicit send must be allowed");
+state.installationJobs = state.installationJobs.map((job) => job.id === pendingInstallation.id ? {
+  ...job,
+  status: "completed",
+  dispatchStatus: "completed",
+  completionStatus: "Completed",
+  completionOutcome: "installed",
+  completionDate: "2026-07-26T14:00",
+  completedAt: "2026-07-26T14:00",
+  afterPhotos: [{ id: "after-photo", dataUrl: "data:image/png;base64,AA==" }],
+  customerSignature: "data:image/png;base64,AA==",
+  installerRemark: "Installation completed",
+  amountCollected: 300,
+  updatedAt: "2026-07-26T14:00:00.000Z"
+} : job);
+const completedInstallation = state.installationJobs.find((job) => job.id === pendingInstallation.id);
+assert(installationJobsForUser({ userId: "installer-exact-a", role: "Installer" }).some((job) => job.id === pendingInstallation.id)
+  && completedInstallation.assignedInstallerId === "installer-exact-a"
+  && completedInstallation.dispatchHistory.filter((event) => event.action === "sent").length === 2
+  && completedInstallation.afterPhotos.length === 1 && completedInstallation.customerSignature && completedInstallation.amountCollected === 300,
+"Z5: completed Installation history must retain exact assignment, dispatch history, photos, signature, payment and remarks");
+const diagnostics = installationDispatchDiagnostics();
+assert(diagnostics.completed === 1 && diagnostics.missingAssignedInstallerId === 0, "Z5: manager diagnostics must count active dispatch states without migrating records");
+
+const incompleteWarrantyJob = createInstallationJobFromOrder(dispatchOrder);
+incompleteWarrantyJob.id = "installation-incomplete-warranty";
+state.installationJobs.push(incompleteWarrantyJob);
+const incompleteWarranty = await generateWarrantyCard(incompleteWarrantyJob.id);
+assert(!incompleteWarranty.ok && incompleteWarranty.message.includes("Complete the Installation"), "Z6: incomplete Installation must show a clear Warranty validation error");
+state.currentUser = state.users.find((user) => user.userId === "secretary-test");
+state.role = "Secretary";
+let popupAttempts = 0;
+const previousWindowOpen = window.open;
+window.open = () => { popupAttempts += 1; return null; };
+const warrantyGenerated = await generateWarrantyCard(completedInstallation.id);
+window.open = previousWindowOpen;
+assert(warrantyGenerated.ok && warrantyGenerated.card && warrantyGenerated.card.status === "active", "Z7: Boss/Admin/Secretary must be able to generate a Warranty Card from a completed Installation");
+assert(warrantyGenerated.card.orderId === dispatchOrder.id && warrantyGenerated.card.installationId === completedInstallation.id, "Z7: Warranty Card must use the exact linked Order and Installation stable IDs");
+assert(/^WC-\d{4}-\d{4}$/.test(warrantyGenerated.card.warrantyCardNo)
+  && warrantyGenerated.card.customerName === "Dispatch Customer"
+  && warrantyGenerated.card.customerPhone === "0123000000"
+  && warrantyGenerated.card.address === "Exact Dispatch Address"
+  && warrantyGenerated.card.orderNo === "SO2607201"
+  && warrantyGenerated.card.quotationNo === "ESQ-DISPATCH-1"
+  && warrantyGenerated.card.warrantyItems[0].warrantyPeriod === "3 years"
+  && warrantyGenerated.card.warrantyStartDate === "2026-07-26"
+  && warrantyGenerated.card.warrantyExpiryDate === "2029-07-26"
+  && warrantyGenerated.card.generatedBy === "Secretary Test", "Z7: Warranty Card must include the required customer, workflow, product, period and audit fields");
+const visibleWarranty = warrantyGenerated.previewHtml;
+assert(visibleWarranty.includes("Eco Screen") && visibleWarranty.includes("0195763499")
+  && visibleWarranty.includes("Download / Print Warranty Card") && visibleWarranty.includes("mobile browser blocks new tabs")
+  && popupAttempts === 0, "Z7: generation must visibly return an inline mobile-safe preview and must not depend on a popup");
+assert(warrantyCardPreviewHtml(warrantyGenerated.card).includes(warrantyGenerated.card.warrantyCardNo), "Z7: saved Warranty Card must remain printable by its exact stable ID");
+const warrantyCount = state.warrantyCards.length;
+const reusedWarranty = await generateWarrantyCard(completedInstallation.id);
+assert(reusedWarranty.ok && reusedWarranty.reused && state.warrantyCards.length === warrantyCount
+  && reusedWarranty.card.id === warrantyGenerated.card.id, "Z8: an existing exact-Installation Warranty must be reused instead of duplicated");
+const originalWarrantyNo = warrantyGenerated.card.warrantyCardNo;
+const regeneratedWarranty = await generateWarrantyCard(completedInstallation.id, { regenerate: true });
+assert(regeneratedWarranty.ok && regeneratedWarranty.regenerated && state.warrantyCards.length === warrantyCount
+  && regeneratedWarranty.card.warrantyCardNo === originalWarrantyNo
+  && regeneratedWarranty.card.auditHistory.some((event) => event.action === "regenerated"), "Z8: regeneration must preserve the Warranty Card number and append audit history");
+const nextWarrantyNo = nextWarrantyCardNumber(new Date());
+assert(/^WC-\d{4}-\d{4}$/.test(nextWarrantyNo) && nextWarrantyNo !== originalWarrantyNo, "Z8: new Warranty Card numbers must be readable and unique");
+
 console.log([
   "Editable unit price and manual final price: passed",
   "Monthly SO numbering including legacy formats and >999: passed",
@@ -1519,4 +1654,6 @@ console.log([
   ,"Transactional Send to Production and Production/Order status synchronization: passed"
   ,"Boss/Admin Return to Follow Up exact-link archive, financial preservation and later reconversion: passed"
   ,"Normalized legacy payment ledger, historical payment entry, reversal and stale-cloud protection: passed"
+  ,"Installation pending/ready/send/recall/completed exact-ID dispatch control: passed"
+  ,"Warranty validation, exact links, unique numbering, reuse, regeneration and mobile preview: passed"
 ].join("\n"));
