@@ -25,7 +25,13 @@ import {
   quoteTotals,
   toNumber
 } from "./calculations.js";
-import { normalizeStatus, statusLabel, t } from "./i18n.js";
+import {
+  colorLabel,
+  normalizeStatus,
+  openingDirectionLabel,
+  statusLabel,
+  t
+} from "./i18n.js";
 import {
   canCompleteInstallation,
   canEditOrder,
@@ -757,9 +763,9 @@ function renderOrderList() {
       ${pageRows.length ? pageRows.map((order) => renderCompactOrderRow(order)).join("") : `<p class="muted-text">${state.orders.length ? t("No order found") : t("No orders yet. Convert a saved quote to create an order.")}</p>`}
     </div>
     <div class="pagination-row">
-      <button class="btn" type="button" data-order-page="${orderSearch.page - 1}" ${orderSearch.page <= 1 ? "disabled" : ""}>Previous</button>
-      <span>${orders.length} orders | Page ${orderSearch.page} / ${totalPages}</span>
-      <button class="btn" type="button" data-order-page="${orderSearch.page + 1}" ${orderSearch.page >= totalPages ? "disabled" : ""}>Next</button>
+      <button class="btn" type="button" data-order-page="${orderSearch.page - 1}" ${orderSearch.page <= 1 ? "disabled" : ""}>${t("Previous")}</button>
+      <span>${orders.length} ${t("orders")} | ${t("Page")} ${orderSearch.page} / ${totalPages}</span>
+      <button class="btn" type="button" data-order-page="${orderSearch.page + 1}" ${orderSearch.page >= totalPages ? "disabled" : ""}>${t("Next")}</button>
     </div>
   `;
 }
@@ -797,13 +803,13 @@ function renderOrderTools() {
   tools.innerHTML = `
     <section class="order-tools">
       <div class="form-grid compact">
-        <label>Search SO Order No / Quotation No<input data-order-search="orderNumber" value="${orderSearch.orderNumber}" placeholder="SO2607001 or quotation number" /></label>
-        <label>${t("Search Customer Name")}<input data-order-search="customerName" value="${orderSearch.customerName}" placeholder="Customer name" /></label>
+      <label>${t("Search SO Order No / Quotation No")}<input data-order-search="orderNumber" value="${orderSearch.orderNumber}" placeholder="${t("SO2607001 or quotation number")}" /></label>
+      <label>${t("Search Customer Name")}<input data-order-search="customerName" value="${orderSearch.customerName}" placeholder="${t("Customer name")}" /></label>
         <label>${t("Search Phone Number")}<input data-order-search="phone" value="${orderSearch.phone}" placeholder="0123456789" /></label>
-        <label>${t("Status")}<select data-order-search="status"><option value="">All status</option>${visibleFilters.map((filter) => `<option value="${filter.id}" ${orderSearch.status === filter.id ? "selected" : ""}>${t(filter.label)}</option>`).join("")}</select></label>
+      <label>${t("Status")}<select data-order-search="status"><option value="">${t("All status")}</option>${visibleFilters.map((filter) => `<option value="${filter.id}" ${orderSearch.status === filter.id ? "selected" : ""}>${t(filter.label)}</option>`).join("")}</select></label>
         <label>${t("Installation Date")}<input type="date" data-order-search="installationDate" value="${orderSearch.installationDate}" /></label>
-        <label>Sort by<select data-order-search="sort">
-          ${[["updated", "Latest Updated"], ["installationDate", "Installation Date"], ["orderNumber", "Order Number"]].map(([value, label]) => `<option value="${value}" ${orderSearch.sort === value ? "selected" : ""}>${label}</option>`).join("")}
+      <label>${t("Sort by")}<select data-order-search="sort">
+          ${[["updated", "Latest Updated"], ["installationDate", "Installation Date"], ["orderNumber", "Order Number"]].map(([value, label]) => `<option value="${value}" ${orderSearch.sort === value ? "selected" : ""}>${t(label)}</option>`).join("")}
         </select></label>
       </div>
       <div class="actions">
@@ -811,8 +817,8 @@ function renderOrderTools() {
         <button class="btn" type="button" data-order-tool="clear">${t("Clear Search")}</button>
         <button class="btn" type="button" data-order-tool="find">${t("Find Order")}</button>
         ${isBossOrAdmin() ? `<button class="btn" type="button" data-order-tool="duplicates">${t("Duplicate Order Check")}</button>` : ""}
-        ${isBossOrAdmin() ? `<button class="btn" type="button" data-order-tool="workflow-integrity">Workflow Integrity Check</button>` : ""}
-        ${isBossOrAdmin() ? `<button class="btn" type="button" data-order-tool="recover-covered-order">Recover Covered Order</button>` : ""}
+      ${isBossOrAdmin() ? `<button class="btn" type="button" data-order-tool="workflow-integrity">${t("Workflow Integrity Check")}</button>` : ""}
+      ${isBossOrAdmin() ? `<button class="btn" type="button" data-order-tool="recover-covered-order">${t("Recover Covered Order")}</button>` : ""}
       </div>
       <div class="filter-tabs">
         ${visibleFilters.map((filter) => `<button class="filter-tab ${orderSearch.filter === filter.id ? "active" : ""}" type="button" data-order-filter="${filter.id}">${t(filter.label)}</button>`).join("")}
@@ -974,7 +980,7 @@ function duplicateMemberHtml(member, group, selectable) {
         <span>${t("Status")}<strong>${statusLabel(order.status || "-")}</strong></span>
         <span>${t("Production job count")}<strong>${details.productionCount}</strong></span>
         <span>${t("Installation job count")}<strong>${details.installationCount}</strong></span>
-        <span>Warranty count<strong>${details.warrantyCount}</strong></span>
+        <span>${t("Warranty count")}<strong>${details.warrantyCount}</strong></span>
       </div>
       ${selectable ? "" : `<button class="btn" type="button" data-duplicate-open-order="${escapeHtml(order.id || "")}">${t("Open Order")}</button>`}
     </div>
@@ -995,9 +1001,9 @@ export function duplicateArchiveActionHtml(group, selectedKey = duplicateMainSel
   }, { production: 0, installation: 0, warranty: 0 });
   return `
     <div class="duplicate-archive-action">
-      <p><strong>Main Order:</strong> ${escapeHtml(getOrderDisplayNo(mainMember.order) || mainMember.order.id || "-")}</p>
-      <p><strong>Orders to archive:</strong> ${duplicateMembers.map((member) => escapeHtml(getOrderDisplayNo(member.order) || member.order.id || "-")).join(", ")}</p>
-      <p><strong>Linked records:</strong> Production ${linkedCounts.production} | Installation ${linkedCounts.installation} | Warranty ${linkedCounts.warranty}</p>
+      <p><strong>${t("Main Order")}:</strong> ${escapeHtml(getOrderDisplayNo(mainMember.order) || mainMember.order.id || "-")}</p>
+      <p><strong>${t("Orders to archive")}:</strong> ${duplicateMembers.map((member) => escapeHtml(getOrderDisplayNo(member.order) || member.order.id || "-")).join(", ")}</p>
+      <p><strong>${t("Linked records")}:</strong> ${t("Production")} ${linkedCounts.production} | ${t("Installation")} ${linkedCounts.installation} | ${t("Warranty Card")} ${linkedCounts.warranty}</p>
       <button class="btn danger" type="button" data-archive-duplicate-group="${group.id}" ${duplicateArchiveBusy ? "disabled" : ""}>${t("Archive Other Duplicates")}</button>
     </div>
   `;
@@ -1087,7 +1093,7 @@ function renderCompactOrderRow(order) {
       <div><strong>${getOrderDisplayNo(order)}</strong><span>${t("Quote")}: ${order.quoteNumber || order.quotationNo || "-"} | ${order.customer?.name || "-"} | ${order.customer?.phone || "-"}</span></div>
       <div><span>${order.customer?.area || "-"}</span><span>${order.installationDate || installationJob?.installationDate || "-"}</span></div>
       <div><span>${t("Production")}: ${statusLabel(getOrderProductionStatus(order, productionJob))}</span><span>${t("Installation")}: ${statusLabel(getOrderInstallationStatus(order, installationJob))}</span></div>
-      <div><span>${t("Remaining Balance")}: ${money(getRemainingBalance(order, installationJob))}</span><span>Updated: ${formatShortDate(order.updatedAt || order.createdAt)}</span></div>
+      <div><span>${t("Remaining Balance")}: ${money(getRemainingBalance(order, installationJob))}</span><span>${t("Updated")}: ${formatShortDate(order.updatedAt || order.createdAt)}</span></div>
       ${orderActionsHtml(order)}
       ${editingOrderId === order.id && orderEditorDraft ? orderItemEditorHtml(orderEditorDraft) : ""}
     </article>
@@ -1112,13 +1118,13 @@ function orderActionsHtml(order) {
       <button class="btn" type="button" data-view-order="${order.id}">${t("View Order")}</button>
       <button class="btn primary" type="button" data-print-order="${order.id}">${t("Print Order")}</button>
       ${canSendOrder() ? `<button class="btn" type="button" data-send-production="${order.id}">${t("Send to Production")}</button>` : ""}
-      ${canScheduleInstallation() ? `<button class="btn" type="button" data-send-installer="${order.id}">Arrange Installation</button>` : ""}
+      ${canScheduleInstallation() ? `<button class="btn" type="button" data-send-installer="${order.id}">${t("Arrange Installation")}</button>` : ""}
       <button class="btn" type="button" data-whatsapp-order="${order.id}">${t("WhatsApp Customer")}</button>
       <button class="btn" type="button" data-highlight-order="${order.id}">${t("Search / Open Customer")}</button>
       ${canEditOrder() ? `<button class="btn" type="button" data-edit-order-items="${order.id}">${editingOrderId === order.id ? t("Close Item Editor") : t("Edit Order Items")}</button>` : ""}
       ${isBossOrAdmin() ? `<button class="btn" type="button" data-edit-order-number="${order.id}">${editingOrderNumberId === order.id ? t("Cancel Order Number Edit") : t("Edit Order Number")}</button>` : ""}
-      ${bossActiveOrder ? `<button class="btn" type="button" data-return-follow-up="${escapeHtml(order.id)}">Return to Follow Up</button>` : ""}
-      ${bossActiveOrder ? `<button class="btn" type="button" data-record-payment="${escapeHtml(order.id)}">Record Payment / Add Deposit</button>` : ""}
+      ${bossActiveOrder ? `<button class="btn" type="button" data-return-follow-up="${escapeHtml(order.id)}">${t("Return to Follow Up")}</button>` : ""}
+      ${bossActiveOrder ? `<button class="btn" type="button" data-record-payment="${escapeHtml(order.id)}">${t("Record Payment / Add Deposit")}</button>` : ""}
     </div>
     ${canSendOrder() ? orderStatusActionHtml(order) : ""}
     ${editingOrderNumberId === order.id && isBossOrAdmin() ? orderNumberEditorHtml(order) : ""}
@@ -1175,25 +1181,25 @@ function returnToFollowUpPanelHtml(order) {
   return `
     <section class="order-action-panel" data-return-follow-up-panel="${escapeHtml(order.id)}">
       <div class="section-head">
-        <div><h3>Return to Follow Up</h3><p class="muted-text">The Order and exact orderId-linked jobs are archived for audit; the exact linked quotation returns to Follow Up.</p></div>
-        <button class="btn" type="button" data-cancel-return-follow-up="${escapeHtml(order.id)}">Close</button>
+        <div><h3>${t("Return to Follow Up")}</h3><p class="muted-text">${t("The Order and exact orderId-linked jobs are archived for audit; the exact linked quotation returns to Follow Up.")}</p></div>
+        <button class="btn" type="button" data-cancel-return-follow-up="${escapeHtml(order.id)}">${t("Close")}</button>
       </div>
       ${orderActionFactsHtml(order, summary, productionIds, installationIds)}
-      ${summary.totalPaid > 0 ? `<p class="payment-warning"><strong>Payment warning:</strong> ${money(summary.totalPaid)} is recorded as paid/deposit. All financial values will be preserved and a second confirmation is required.</p>` : ""}
+      ${summary.totalPaid > 0 ? `<p class="payment-warning"><strong>${t("Payment warning")}:</strong> ${money(summary.totalPaid)} ${t("is recorded as paid/deposit. All financial values will be preserved and a second confirmation is required.")}</p>` : ""}
       ${panel?.preview && plan?.ok ? `
-        <h4>Before / After Preview</h4>
+        <h4>${t("Before / After Preview")}</h4>
         ${fieldChangesPreviewHtml(plan.changes)}
         <div class="actions">
-          <button class="btn danger" type="button" data-confirm-return-follow-up="${escapeHtml(order.id)}">Confirm Return to Follow Up</button>
-          <button class="btn" type="button" data-return-follow-up="${escapeHtml(order.id)}">Back</button>
+          <button class="btn danger" type="button" data-confirm-return-follow-up="${escapeHtml(order.id)}">${t("Confirm Return to Follow Up")}</button>
+          <button class="btn" type="button" data-return-follow-up="${escapeHtml(order.id)}">${t("Back")}</button>
         </div>
       ` : `
-        <label>Reason
+        <label>${t("Reason")}
           <select data-return-follow-up-reason>
             ${returnToFollowUpReasons.map((reason) => `<option value="${escapeHtml(reason)}" ${panel?.reason === reason ? "selected" : ""}>${escapeHtml(reason)}</option>`).join("")}
           </select>
         </label>
-        <button class="btn primary" type="button" data-preview-return-follow-up="${escapeHtml(order.id)}">Show Before / After Preview</button>
+        <button class="btn primary" type="button" data-preview-return-follow-up="${escapeHtml(order.id)}">${t("Show Before / After Preview")}</button>
       `}
     </section>
   `;
@@ -1206,40 +1212,40 @@ function recordPaymentPanelHtml(order) {
   return `
     <section class="order-action-panel" data-record-payment-panel="${escapeHtml(order.id)}">
       <div class="section-head">
-        <div><h3>Record Payment / Add Deposit</h3><p class="muted-text">Append an auditable payment using its actual payment date.</p></div>
-        <button class="btn" type="button" data-cancel-payment="${escapeHtml(order.id)}">Close</button>
+        <div><h3>${t("Record Payment / Add Deposit")}</h3><p class="muted-text">${t("Append an auditable payment using its actual payment date.")}</p></div>
+        <button class="btn" type="button" data-cancel-payment="${escapeHtml(order.id)}">${t("Close")}</button>
       </div>
       ${panel?.preview && plan?.ok ? `
         <div class="payment-preview-grid">
-          <span>Order total<strong>${money(plan.before.total)}</strong></span>
-          <span>Existing paid<strong>${money(plan.before.totalPaid)}</strong></span>
-          <span>New payment<strong>${money(plan.payment.amount)}</strong></span>
-          <span>New total paid<strong>${money(plan.after.totalPaid)}</strong></span>
-          <span>New balance<strong>${money(plan.after.balance)}</strong></span>
+          <span>${t("Order total")}<strong>${money(plan.before.total)}</strong></span>
+          <span>${t("Existing paid")}<strong>${money(plan.before.totalPaid)}</strong></span>
+          <span>${t("New payment")}<strong>${money(plan.payment.amount)}</strong></span>
+          <span>${t("New total paid")}<strong>${money(plan.after.totalPaid)}</strong></span>
+          <span>${t("New balance")}<strong>${money(plan.after.balance)}</strong></span>
         </div>
-        <p><strong>Actual date:</strong> ${escapeHtml(plan.payment.paymentDate)} | <strong>Type:</strong> ${escapeHtml(plan.payment.type)} | <strong>Method:</strong> ${escapeHtml(plan.payment.method)}</p>
-        ${plan.requiresOverpaymentConfirmation ? `<p class="payment-warning"><strong>Overpayment warning:</strong> This payment exceeds the current balance by ${money(plan.payment.amount - plan.before.balance)}. Boss/Admin confirmation is required.</p>` : ""}
-        <h4>Before / After Preview</h4>
+        <p><strong>${t("Actual date")}:</strong> ${escapeHtml(plan.payment.paymentDate)} | <strong>${t("Type")}:</strong> ${escapeHtml(t(plan.payment.type))} | <strong>${t("Method")}:</strong> ${escapeHtml(t(plan.payment.method))}</p>
+        ${plan.requiresOverpaymentConfirmation ? `<p class="payment-warning"><strong>${t("Overpayment warning")}:</strong> ${t("This payment exceeds the current balance. Boss/Admin confirmation is required.")} ${money(plan.payment.amount - plan.before.balance)}</p>` : ""}
+        <h4>${t("Before / After Preview")}</h4>
         ${fieldChangesPreviewHtml(plan.changes)}
         <div class="actions">
-          <button class="btn primary" type="button" data-confirm-payment="${escapeHtml(order.id)}">Confirm Record Payment</button>
-          <button class="btn" type="button" data-record-payment="${escapeHtml(order.id)}">Back</button>
+          <button class="btn primary" type="button" data-confirm-payment="${escapeHtml(order.id)}">${t("Confirm Record Payment")}</button>
+          <button class="btn" type="button" data-record-payment="${escapeHtml(order.id)}">${t("Back")}</button>
         </div>
       ` : `
         <div class="payment-preview-grid">
-          <span>Order total<strong>${money(summary.total)}</strong></span>
-          <span>Existing paid<strong>${money(summary.totalPaid)}</strong></span>
-          <span>Current balance<strong>${money(summary.balance)}</strong></span>
+          <span>${t("Order total")}<strong>${money(summary.total)}</strong></span>
+          <span>${t("Existing paid")}<strong>${money(summary.totalPaid)}</strong></span>
+          <span>${t("Current balance")}<strong>${money(summary.balance)}</strong></span>
         </div>
         <div class="form-grid compact">
-          <label>Amount<input inputmode="decimal" data-payment-field="amount" value="${escapeHtml(panel?.values?.amount || "")}" /></label>
-          <label>Actual payment date<input type="date" data-payment-field="paymentDate" value="${escapeHtml(panel?.values?.paymentDate || "")}" /></label>
-          <label>Payment type<select data-payment-field="type">${paymentTypes.map((value) => `<option value="${value}" ${panel?.values?.type === value ? "selected" : ""}>${value}</option>`).join("")}</select></label>
-          <label>Payment method<select data-payment-field="method">${paymentMethods.map((value) => `<option value="${value}" ${panel?.values?.method === value ? "selected" : ""}>${value}</option>`).join("")}</select></label>
-          <label>Reference number<input data-payment-field="referenceNumber" value="${escapeHtml(panel?.values?.referenceNumber || "")}" /></label>
-          <label class="wide">Note<textarea rows="2" data-payment-field="note">${escapeHtml(panel?.values?.note || "")}</textarea></label>
+          <label>${t("Amount")}<input inputmode="decimal" data-payment-field="amount" value="${escapeHtml(panel?.values?.amount || "")}" /></label>
+          <label>${t("Actual payment date")}<input type="date" data-payment-field="paymentDate" value="${escapeHtml(panel?.values?.paymentDate || "")}" /></label>
+          <label>${t("Payment type")}<select data-payment-field="type">${paymentTypes.map((value) => `<option value="${value}" ${panel?.values?.type === value ? "selected" : ""}>${t(value)}</option>`).join("")}</select></label>
+          <label>${t("Payment method")}<select data-payment-field="method">${paymentMethods.map((value) => `<option value="${value}" ${panel?.values?.method === value ? "selected" : ""}>${t(value)}</option>`).join("")}</select></label>
+          <label>${t("Reference number")}<input data-payment-field="referenceNumber" value="${escapeHtml(panel?.values?.referenceNumber || "")}" /></label>
+          <label class="wide">${t("Note")}<textarea rows="2" data-payment-field="note">${escapeHtml(panel?.values?.note || "")}</textarea></label>
         </div>
-        <button class="btn primary" type="button" data-preview-payment="${escapeHtml(order.id)}">Show Before / After Preview</button>
+        <button class="btn primary" type="button" data-preview-payment="${escapeHtml(order.id)}">${t("Show Before / After Preview")}</button>
       `}
     </section>
   `;
@@ -1252,24 +1258,24 @@ function reversePaymentPanelHtml(order) {
   return `
     <section class="order-action-panel" data-reverse-payment-panel="${escapeHtml(order.id)}">
       <div class="section-head">
-        <div><h3>Reverse Payment</h3><p class="muted-text">Payment ${escapeHtml(panel?.paymentId || "-")} | ${money(payment?.amount || 0)}</p></div>
-        <button class="btn" type="button" data-cancel-reverse-payment="${escapeHtml(order.id)}">Close</button>
+        <div><h3>${t("Reverse Payment")}</h3><p class="muted-text">${t("Payment")} ${escapeHtml(panel?.paymentId || "-")} | ${money(payment?.amount || 0)}</p></div>
+        <button class="btn" type="button" data-cancel-reverse-payment="${escapeHtml(order.id)}">${t("Close")}</button>
       </div>
       ${panel?.preview && plan?.ok ? `
         <div class="payment-preview-grid">
-          <span>Current total paid<strong>${money(plan.before.totalPaid)}</strong></span>
-          <span>Reversed payment<strong>${money(plan.payment.amount)}</strong></span>
-          <span>New total paid<strong>${money(plan.after.totalPaid)}</strong></span>
-          <span>New balance<strong>${money(plan.after.balance)}</strong></span>
+          <span>${t("Current total paid")}<strong>${money(plan.before.totalPaid)}</strong></span>
+          <span>${t("Reversed payment")}<strong>${money(plan.payment.amount)}</strong></span>
+          <span>${t("New total paid")}<strong>${money(plan.after.totalPaid)}</strong></span>
+          <span>${t("New balance")}<strong>${money(plan.after.balance)}</strong></span>
         </div>
         ${fieldChangesPreviewHtml(plan.changes)}
         <div class="actions">
-          <button class="btn danger" type="button" data-confirm-reverse-payment="${escapeHtml(order.id)}">Confirm Reverse Payment</button>
-          <button class="btn" type="button" data-reverse-payment="${escapeHtml(panel.paymentId)}" data-order-id="${escapeHtml(order.id)}">Back</button>
+          <button class="btn danger" type="button" data-confirm-reverse-payment="${escapeHtml(order.id)}">${t("Confirm Reverse Payment")}</button>
+          <button class="btn" type="button" data-reverse-payment="${escapeHtml(panel.paymentId)}" data-order-id="${escapeHtml(order.id)}">${t("Back")}</button>
         </div>
       ` : `
-        <label>Reversal reason<textarea rows="2" data-reversal-reason>${escapeHtml(panel?.values?.reversalReason || "")}</textarea></label>
-        <button class="btn primary" type="button" data-preview-reverse-payment="${escapeHtml(order.id)}">Show Before / After Preview</button>
+        <label>${t("Reversal reason")}<textarea rows="2" data-reversal-reason>${escapeHtml(panel?.values?.reversalReason || "")}</textarea></label>
+        <button class="btn primary" type="button" data-preview-reverse-payment="${escapeHtml(order.id)}">${t("Show Before / After Preview")}</button>
       `}
     </section>
   `;
@@ -1279,35 +1285,35 @@ function paymentHistoryHtml(order) {
   const summary = getOrderPaymentSummary(order);
   return `
     <details class="payment-history" ${paymentPanel?.orderId === order.id || paymentReversalPanel?.orderId === order.id ? "open" : ""}>
-      <summary>Payment History — Paid ${money(summary.totalPaid)} | Balance ${money(summary.balance)}</summary>
-      ${summary.legacyPaid > 0 ? `<div class="payment-history-row"><span>Legacy paid/deposit preserved</span><strong>${money(summary.legacyPaid)}</strong></div>` : ""}
+      <summary>${t("Payment History")} — ${t("Paid")} ${money(summary.totalPaid)} | ${t("Balance")} ${money(summary.balance)}</summary>
+      ${summary.legacyPaid > 0 ? `<div class="payment-history-row"><span>${t("Legacy paid/deposit preserved")}</span><strong>${money(summary.legacyPaid)}</strong></div>` : ""}
       ${summary.payments.length ? summary.payments.map((payment) => {
         const stableId = paymentStableId(payment);
         return `<div class="payment-history-row">
-          <span><strong>${escapeHtml(payment.type || "Payment")}</strong> ${escapeHtml(payment.paymentDate || payment.date || "-")} | ${escapeHtml(payment.method || "-")} | ${escapeHtml(payment.referenceNumber || payment.reference || "-")}<small>${escapeHtml(payment.note || "")}</small><small>ID: ${escapeHtml(stableId || "legacy record without stable ID")}</small></span>
+          <span><strong>${escapeHtml(t(payment.type || "Payment"))}</strong> ${escapeHtml(payment.paymentDate || payment.date || "-")} | ${escapeHtml(t(payment.method || "-"))} | ${escapeHtml(payment.referenceNumber || payment.reference || "-")}<small>${escapeHtml(payment.note || "")}</small><small>ID: ${escapeHtml(stableId || t("legacy record without stable ID"))}</small></span>
           <strong>${money(payment.amount)} — ${escapeHtml(payment.status || "active")}</strong>
-          ${isActivePaymentRecord(payment) && stableId ? `<button class="btn danger" type="button" data-reverse-payment="${escapeHtml(stableId)}" data-order-id="${escapeHtml(order.id)}">Reverse Payment</button>` : ""}
+          ${isActivePaymentRecord(payment) && stableId ? `<button class="btn danger" type="button" data-reverse-payment="${escapeHtml(stableId)}" data-order-id="${escapeHtml(order.id)}">${t("Reverse Payment")}</button>` : ""}
         </div>`;
-      }).join("") : `<p class="muted-text">No appended payment records.</p>`}
+      }).join("") : `<p class="muted-text">${t("No appended payment records.")}</p>`}
     </details>
   `;
 }
 
 function orderActionFactsHtml(order, paymentSummary, productionIds, installationIds) {
   return `<div class="order-action-facts">
-    <span>Customer<strong>${escapeHtml(order.customer?.name || order.customerName || "-")}</strong></span>
-    <span>Phone<strong>${escapeHtml(order.customer?.phone || order.phone || "-")}</strong></span>
-    <span>Quotation<strong>${escapeHtml(order.quoteNumber || order.quotationNo || "-")}</strong></span>
-    <span>Order<strong>${escapeHtml(getOrderDisplayNo(order))}</strong></span>
-    <span>Total<strong>${money(paymentSummary.total)}</strong></span>
-    <span>Paid / Deposit<strong>${money(paymentSummary.totalPaid)}</strong></span>
-    <span>Production IDs<strong>${escapeHtml(productionIds.join(", ") || "-")}</strong></span>
-    <span>Installation IDs<strong>${escapeHtml(installationIds.join(", ") || "-")}</strong></span>
+    <span>${t("Customer")}<strong>${escapeHtml(order.customer?.name || order.customerName || "-")}</strong></span>
+    <span>${t("Phone")}<strong>${escapeHtml(order.customer?.phone || order.phone || "-")}</strong></span>
+    <span>${t("Quotation")}<strong>${escapeHtml(order.quoteNumber || order.quotationNo || "-")}</strong></span>
+    <span>${t("Order")}<strong>${escapeHtml(getOrderDisplayNo(order))}</strong></span>
+    <span>${t("Total")}<strong>${money(paymentSummary.total)}</strong></span>
+    <span>${t("Paid / Deposit")}<strong>${money(paymentSummary.totalPaid)}</strong></span>
+    <span>${t("Production IDs")}<strong>${escapeHtml(productionIds.join(", ") || "-")}</strong></span>
+    <span>${t("Installation IDs")}<strong>${escapeHtml(installationIds.join(", ") || "-")}</strong></span>
   </div>`;
 }
 
 function fieldChangesPreviewHtml(changes = []) {
-  return `<div class="change-preview-list">${changes.map((change) => `<div><strong>${escapeHtml(change.collection)} / ${escapeHtml(change.stableId)} / ${escapeHtml(change.field)}</strong><span>Before: ${escapeHtml(previewValue(change.from))}</span><span>After: ${escapeHtml(previewValue(change.to))}</span></div>`).join("")}</div>`;
+  return `<div class="change-preview-list">${changes.map((change) => `<div><strong>${escapeHtml(change.collection)} / ${escapeHtml(change.stableId)} / ${escapeHtml(change.field)}</strong><span>${t("Before")}: ${escapeHtml(previewValue(change.from))}</span><span>${t("After")}: ${escapeHtml(previewValue(change.to))}</span></div>`).join("")}</div>`;
 }
 
 function previewValue(value) {
@@ -1395,7 +1401,7 @@ function renderOrderProgressCard(order) {
         <span>${t("Production")}: ${statusLabel(productionJob?.status || "Not sent")}</span>
         <span>${t("Installation")}: ${statusLabel(installationJob?.status || "Not sent")}</span>
         <span>${t("Balance")}: ${money(getOrderBalance(order))}</span>
-        <span>Updated: ${formatShortDate(order.updatedAt || order.createdAt)}</span>
+        <span>${t("Updated")}: ${formatShortDate(order.updatedAt || order.createdAt)}</span>
       </div>
       ${orderActionsHtml(order)}
     </article>
@@ -1454,12 +1460,12 @@ function workflowIntegrityPanelHtml() {
     <section class="duplicate-order-panel workflow-integrity-panel">
       <div class="section-head">
         <div>
-          <h3>Workflow Integrity Check</h3>
-          <p class="muted-text">Preview only. Scanning does not modify, rename, merge, archive, create or sync any record.</p>
+          <h3>${t("Workflow Integrity Check")}</h3>
+          <p class="muted-text">${t("Preview only. Scanning does not modify, rename, merge, archive, create or sync any record.")}</p>
         </div>
         <div class="actions">
-          <button class="btn" type="button" data-order-tool="workflow-integrity-refresh">Scan Again</button>
-          <button class="btn" type="button" data-order-tool="workflow-integrity-close">Close</button>
+          <button class="btn" type="button" data-order-tool="workflow-integrity-refresh">${t("Scan Again")}</button>
+          <button class="btn" type="button" data-order-tool="workflow-integrity-close">${t("Close")}</button>
         </div>
       </div>
       <div class="duplicate-summary">
@@ -1468,13 +1474,13 @@ function workflowIntegrityPanelHtml() {
       ${scan.issues.length ? `
         <div style="overflow-x:auto">
           <table class="workflow-integrity-table">
-            <thead><tr><th>Select</th><th>Category</th><th>Record type</th><th>Stable ID</th><th>Order No</th><th>Quotation No</th><th>Customer</th><th>Phone</th><th>Amount</th><th>Status</th><th>Linked IDs</th><th>Problem</th><th>Recommended action</th></tr></thead>
+            <thead><tr><th>${t("Select")}</th><th>${t("Category")}</th><th>${t("Record type")}</th><th>${t("Stable ID")}</th><th>${t("Order No")}</th><th>${t("Quotation No")}</th><th>${t("Customer")}</th><th>${t("Phone")}</th><th>${t("Amount")}</th><th>${t("Status")}</th><th>${t("Linked IDs")}</th><th>${t("Problem")}</th><th>${t("Recommended action")}</th></tr></thead>
             <tbody>${scan.issues.map((issue) => workflowIntegrityIssueRow(issue)).join("")}</tbody>
           </table>
         </div>
-        <p class="muted-text">Select one issue at a time. Relationship repairs require an exact stable ID; duplicate archives require selecting the exact Main record.</p>
-        <button class="btn primary" type="button" data-order-tool="workflow-integrity-repair">Repair Selected Record</button>
-      ` : `<p class="empty-state">No workflow integrity conflicts detected.</p>`}
+        <p class="muted-text">${t("Select one issue at a time. Relationship repairs require an exact stable ID; duplicate archives require selecting the exact Main record.")}</p>
+        <button class="btn primary" type="button" data-order-tool="workflow-integrity-repair">${t("Repair Selected Record")}</button>
+      ` : `<p class="empty-state">${t("No workflow integrity conflicts detected.")}</p>`}
     </section>
   `;
 }
@@ -1482,7 +1488,7 @@ function workflowIntegrityPanelHtml() {
 function workflowIntegrityIssueRow(issue) {
   const repair = issue.repair;
   const selector = repair
-    ? `<label class="workflow-integrity-selector"><input type="radio" name="workflow-integrity-issue" data-workflow-integrity-issue="${escapeHtml(issue.id)}" /> Select</label>${workflowIntegrityRepairInput(issue)}`
+    ? `<label class="workflow-integrity-selector"><input type="radio" name="workflow-integrity-issue" data-workflow-integrity-issue="${escapeHtml(issue.id)}" /> ${t("Select")}</label>${workflowIntegrityRepairInput(issue)}`
     : "Preview only";
   return `
     <tr data-workflow-integrity-row="${escapeHtml(issue.id)}">
@@ -1564,33 +1570,33 @@ function ownershipRecordView(record, type, snapshot) {
 
 function safeOrderOwnershipRepairHtml(issue) {
   const comparison = buildSafeOrderOwnershipComparison(issue.repair.quotationId, issue.repair.orderId);
-  if (!comparison) return `<span class="danger-text">Exact Quotation or active Order is no longer available. Scan again.</span>`;
+  if (!comparison) return `<span class="danger-text">${t("Exact Quotation or active Order is no longer available. Scan again.")}</span>`;
   return `
     <details class="safe-ownership-repair" open>
-      <summary>Safe Order Ownership Repair</summary>
-      <p class="danger-text"><strong>Exact stable IDs only.</strong> Customer, items and financial values will never be copied or merged.</p>
+      <summary>${t("Safe Order Ownership Repair")}</summary>
+      <p class="danger-text"><strong>${t("Exact stable IDs only.")}</strong> ${t("Customer, items and financial values will never be copied or merged.")}</p>
       <div class="safe-ownership-grid">
         ${ownershipRecordHtml("Correct Quotation candidate", comparison.quotation)}
         ${ownershipRecordHtml("Correct Order candidate", comparison.order)}
       </div>
       <div class="safe-ownership-links">
-        <div><strong>Existing forward links</strong><pre>${escapeHtml(JSON.stringify(comparison.forwardLink, null, 2))}</pre></div>
-        <div><strong>Existing reverse links</strong><pre>${escapeHtml(JSON.stringify(comparison.reverseLink, null, 2))}</pre></div>
+        <div><strong>${t("Existing forward links")}</strong><pre>${escapeHtml(JSON.stringify(comparison.forwardLink, null, 2))}</pre></div>
+        <div><strong>${t("Existing reverse links")}</strong><pre>${escapeHtml(JSON.stringify(comparison.reverseLink, null, 2))}</pre></div>
       </div>
-      <label>Correct Quotation stable ID<input data-order-ownership-quotation-id placeholder="Type the exact Quotation stable ID" /></label>
-      <label>Correct Order stable ID<input data-order-ownership-order-id placeholder="Type the exact Order stable ID" /></label>
+      <label>${t("Correct Quotation stable ID")}<input data-order-ownership-quotation-id placeholder="${t("Type the exact Quotation stable ID")}" /></label>
+      <label>${t("Correct Order stable ID")}<input data-order-ownership-order-id placeholder="${t("Type the exact Order stable ID")}" /></label>
       ${comparison.conflicts.length ? `
         <div class="safe-ownership-conflict">
-          <strong>Order Number Ownership Conflict</strong>
+          <strong>${t("Order Number Ownership Conflict")}</strong>
           <p>${escapeHtml(comparison.order.orderNo)} is also used by the following exact Order record(s). Each must receive a new unused SO number first.</p>
           ${comparison.conflicts.map((conflict) => `
             ${ownershipRecordHtml("Conflicting Order", conflict)}
-            <label>Conflicting Order stable ID<input data-order-ownership-conflict-id="${escapeHtml(conflict.id)}" placeholder="Type ${escapeHtml(conflict.id)}" /></label>
-            <label>New unused SO number for this exact Order<input data-order-ownership-replacement data-conflict-order-id="${escapeHtml(conflict.id)}" placeholder="Example: ${escapeHtml(nextSalesOrderNumber())}" /></label>
+            <label>${t("Conflicting Order stable ID")}<input data-order-ownership-conflict-id="${escapeHtml(conflict.id)}" placeholder="${t("Type")} ${escapeHtml(conflict.id)}" /></label>
+            <label>${t("New unused SO number for this exact Order")}<input data-order-ownership-replacement data-conflict-order-id="${escapeHtml(conflict.id)}" placeholder="${t("Example")}: ${escapeHtml(nextSalesOrderNumber())}" /></label>
           `).join("")}
         </div>
-      ` : `<p class="muted-text">No active Order Number Ownership Conflict was found for ${escapeHtml(comparison.order.orderNo)}.</p>`}
-      <p class="muted-text">A full JSON backup and a complete field-by-field change preview are required before the confirmation phrase REPAIR ORDER OWNERSHIP is accepted.</p>
+      ` : `<p class="muted-text">${t("No active Order Number Ownership Conflict was found for")} ${escapeHtml(comparison.order.orderNo)}.</p>`}
+      <p class="muted-text">${t("A full JSON backup and a complete field-by-field change preview are required before the confirmation phrase REPAIR ORDER OWNERSHIP is accepted.")}</p>
     </details>
   `;
 }
@@ -1602,18 +1608,18 @@ function coveredOrderRecoveryPanelHtml() {
   return `
     <section class="covered-order-panel" data-covered-order-panel>
       <div class="section-head">
-        <div><h3>Recover Covered Order</h3><p class="muted-text">Choose a search method. Stable IDs are selected from the results and never need to be typed.</p></div>
-        <button class="btn" type="button" data-order-tool="recover-covered-order-close">Close</button>
+        <div><h3>${t("Recover Covered Order")}</h3><p class="muted-text">${t("Choose a search method. Stable IDs are selected from the results and never need to be typed.")}</p></div>
+        <button class="btn" type="button" data-order-tool="recover-covered-order-close">${t("Close")}</button>
       </div>
       ${coveredOrderSearchControlsHtml()}
-      <div class="covered-order-safety"><strong>Choose a recovery mode</strong><p>Use SO search when the correct active Order still exists. Use customer or ESQ search when the confirmed quotation exists but its correct Order payload is missing or covered.</p></div>
+      <div class="covered-order-safety"><strong>${t("Choose a recovery mode")}</strong><p>${t("Use SO search when the correct active Order still exists. Use customer or ESQ search when the confirmed quotation exists but its correct Order payload is missing or covered.")}</p></div>
     </section>`;
 }
 
 function coveredOrderSearchControlsHtml(values = {}) {
   return `<div class="covered-order-search-grid">
-    <label>Search by SO number<span class="covered-order-search-action"><input data-covered-order-so-search value="${escapeHtml(values.orderNo || "")}" placeholder="SO2607011" /><button class="btn" type="button" data-order-tool="recover-covered-order-search-so">Search SO</button></span></label>
-    <label>Search by customer or ESQ<span class="covered-order-search-action"><input data-covered-order-quote-search value="${escapeHtml(values.query || "")}" placeholder="Datin Conni or ESQ-2026-0005" /><button class="btn" type="button" data-order-tool="recover-covered-order-search-quote">Search Quotation</button></span></label>
+    <label>${t("Search by SO number")}<span class="covered-order-search-action"><input data-covered-order-so-search value="${escapeHtml(values.orderNo || "")}" placeholder="SO2607011" /><button class="btn" type="button" data-order-tool="recover-covered-order-search-so">${t("Search SO")}</button></span></label>
+    <label>${t("Search by customer or ESQ")}<span class="covered-order-search-action"><input data-covered-order-quote-search value="${escapeHtml(values.query || "")}" placeholder="Datin Conni or ESQ-2026-0005" /><button class="btn" type="button" data-order-tool="recover-covered-order-search-quote">${t("Search Quotation")}</button></span></label>
   </div>`;
 }
 
@@ -1625,29 +1631,29 @@ function missingConfirmedOrderPanelHtml() {
   return `
     <section class="covered-order-panel" data-covered-order-panel>
       <div class="section-head">
-        <div><h3>Recover Missing Confirmed Order</h3><p class="muted-text">Select the exact confirmed quotation, enter its intended SO number, then review every stable-ID and alias-linked conflict.</p></div>
-        <div class="actions"><button class="btn" type="button" data-order-tool="recover-covered-order-refresh">Refresh</button><button class="btn" type="button" data-order-tool="recover-covered-order-home">Search modes</button><button class="btn" type="button" data-order-tool="recover-covered-order-close">Close</button></div>
+        <div><h3>${t("Recover Missing Confirmed Order")}</h3><p class="muted-text">${t("Select the exact confirmed quotation, enter its intended SO number, then review every stable-ID and alias-linked conflict.")}</p></div>
+        <div class="actions"><button class="btn" type="button" data-order-tool="recover-covered-order-refresh">${t("Refresh")}</button><button class="btn" type="button" data-order-tool="recover-covered-order-home">${t("Search modes")}</button><button class="btn" type="button" data-order-tool="recover-covered-order-close">${t("Close")}</button></div>
       </div>
       ${coveredOrderSearchControlsHtml({ query: recovery.query })}
       ${scan.message ? `<p class="${records.length ? "muted-text" : "danger-text"}">${escapeHtml(scan.message)}</p>` : ""}
-      <div class="form-grid compact covered-order-intended-so"><label>Intended SO number<input data-covered-order-intended-so value="${escapeHtml(recovery.intendedOrderNo || "")}" placeholder="SO2607013" /></label></div>
+      <div class="form-grid compact covered-order-intended-so"><label>${t("Intended SO number")}<input data-covered-order-intended-so value="${escapeHtml(recovery.intendedOrderNo || "")}" placeholder="SO2607013" /></label></div>
       <div class="table-wrap covered-order-table-wrap">
         <table class="data-table covered-order-table">
-          <thead><tr><th>Role</th><th>Record</th><th>Customer / Phone</th><th>Quotation / Order</th><th>Status</th><th>Total</th><th>Stable IDs</th><th>Production / Installation IDs</th><th>Forward / Reverse links</th></tr></thead>
-          <tbody>${records.map((entry) => missingConfirmedOrderRowHtml(entry, recovery)).join("") || `<tr><td colspan="9">No quotation candidate found.</td></tr>`}</tbody>
+          <thead><tr><th>${t("Role")}</th><th>${t("Record")}</th><th>${t("Customer / Phone")}</th><th>${t("Quotation / Order")}</th><th>${t("Status")}</th><th>${t("Total")}</th><th>${t("Stable IDs")}</th><th>${t("Production / Installation IDs")}</th><th>${t("Forward / Reverse links")}</th></tr></thead>
+          <tbody>${records.map((entry) => missingConfirmedOrderRowHtml(entry, recovery)).join("") || `<tr><td colspan="9">${t("No quotation candidate found.")}</td></tr>`}</tbody>
         </table>
       </div>
       ${missingScan?.message ? `<p class="${missingScan.ok ? "muted-text" : "danger-text"}">${escapeHtml(missingScan.message)}</p>` : ""}
       ${missingScan ? `<div class="covered-order-safety">
-        <strong>Recovery roles</strong>
-        <p>Confirmed quotation to recover: ${escapeHtml(recovery.selectedQuotationId || "-")}</p>
-        <p>Incorrect quotations returning to Follow Up and incorrect Orders being archived must be explicitly selected below.</p>
-        <p>Remaining active SO conflicts: ${escapeHtml(missingScan.activeSoOwnerIds?.join(", ") || "none")}</p>
+        <strong>${t("Recovery roles")}</strong>
+        <p>${t("Confirmed quotation to recover")}: ${escapeHtml(recovery.selectedQuotationId || "-")}</p>
+        <p>${t("Incorrect quotations returning to Follow Up and incorrect Orders being archived must be explicitly selected below.")}</p>
+        <p>${t("Remaining active SO conflicts")}: ${escapeHtml(missingScan.activeSoOwnerIds?.join(", ") || t("none"))}</p>
       </div>` : ""}
       ${missingScan
-        ? `<button class="btn primary" type="button" data-order-tool="recover-missing-order-apply" ${missingScan.ok ? "" : "disabled"}>Preview &amp; Recover Missing Confirmed Order</button><p class="muted-text">Confirmation phrase: RECOVER MISSING ORDER</p>`
-        : `<button class="btn" type="button" data-order-tool="recover-missing-order-preview" ${records.length ? "" : "disabled"}>Show Related &amp; Conflicting Records</button>`}
-      <div class="covered-order-safety"><strong>Before repair</strong><p>A full JSON backup and exact before/after preview are required. Existing customer, phone, items, totals, deposit, balance, remarks, progress, staff and history are preserved. No record is hard-deleted.</p></div>
+        ? `<button class="btn primary" type="button" data-order-tool="recover-missing-order-apply" ${missingScan.ok ? "" : "disabled"}>${t("Preview & Recover Missing Confirmed Order")}</button><p class="muted-text">${t("Confirmation phrase")}: RECOVER MISSING ORDER</p>`
+        : `<button class="btn" type="button" data-order-tool="recover-missing-order-preview" ${records.length ? "" : "disabled"}>${t("Show Related & Conflicting Records")}</button>`}
+      <div class="covered-order-safety"><strong>${t("Before repair")}</strong><p>${t("A full JSON backup and exact before/after preview are required. Existing customer, phone, items, totals, deposit, balance, remarks, progress, staff and history are preserved. No record is hard-deleted.")}</p></div>
     </section>`;
 }
 
@@ -1657,13 +1663,13 @@ function missingConfirmedOrderRowHtml(entry, recovery) {
   const ownId = String(entry.record.id || "");
   let roleControl = "Reference only";
   if (!recovery.missingScan && entry.collection === "quotations") {
-    roleControl = `<label><input type="radio" name="missing-confirmed-quotation" value="${escapeHtml(ownId)}" ${selectedQuotationId === ownId ? "checked" : ""} /> Confirmed Quotation to Recover</label>`;
+    roleControl = `<label><input type="radio" name="missing-confirmed-quotation" value="${escapeHtml(ownId)}" ${selectedQuotationId === ownId ? "checked" : ""} /> ${t("Confirmed Quotation to Recover")}</label>`;
   } else if (entry.collection === "quotations" && ownId === selectedQuotationId) {
-    roleControl = "<strong>Confirmed quotation to recover</strong>";
+    roleControl = `<strong>${t("Confirmed quotation to recover")}</strong>`;
   } else if (entry.collection === "quotations") {
-    roleControl = `<label><input type="checkbox" name="missing-incorrect-quotation" value="${escapeHtml(ownId)}" /> Incorrect quotation returning to Follow Up</label>`;
+    roleControl = `<label><input type="checkbox" name="missing-incorrect-quotation" value="${escapeHtml(ownId)}" /> ${t("Incorrect quotation returning to Follow Up")}</label>`;
   } else if (entry.collection === "orders") {
-    roleControl = `<label><input type="checkbox" name="missing-incorrect-order" value="${escapeHtml(ownId)}" /> Incorrect Order being archived</label>`;
+    roleControl = `<label><input type="checkbox" name="missing-incorrect-order" value="${escapeHtml(ownId)}" /> ${t("Incorrect Order being archived")}</label>`;
   }
   return `<tr>
     <td>${roleControl}</td>
@@ -1686,28 +1692,28 @@ function coveredOrderSoPanelHtml() {
     <section class="covered-order-panel" data-covered-order-panel data-covered-order-no="${escapeHtml(orderNo)}">
       <div class="section-head">
         <div>
-          <h3>Recover Covered Order · ${escapeHtml(orderNo)}</h3>
-          <p class="muted-text">Choose one exact active Order to keep and one exact quotation to return to Follow Up. Stable IDs are used automatically.</p>
+          <h3>${t("Recover Covered Order")} · ${escapeHtml(orderNo)}</h3>
+          <p class="muted-text">${t("Choose one exact active Order to keep and one exact quotation to return to Follow Up. Stable IDs are used automatically.")}</p>
         </div>
         <div class="actions">
-          <button class="btn" type="button" data-order-tool="recover-covered-order-refresh">Refresh</button>
-          <button class="btn" type="button" data-order-tool="recover-covered-order-home">Search modes</button>
-          <button class="btn" type="button" data-order-tool="recover-covered-order-close">Close</button>
+          <button class="btn" type="button" data-order-tool="recover-covered-order-refresh">${t("Refresh")}</button>
+          <button class="btn" type="button" data-order-tool="recover-covered-order-home">${t("Search modes")}</button>
+          <button class="btn" type="button" data-order-tool="recover-covered-order-close">${t("Close")}</button>
         </div>
       </div>
       ${scan.message ? `<p class="${scan.ok ? "muted-text" : "danger-text"}">${escapeHtml(scan.message)}</p>` : ""}
       <div class="table-wrap covered-order-table-wrap">
         <table class="data-table covered-order-table">
-          <thead><tr><th>Role</th><th>Record</th><th>Customer / Phone</th><th>Quotation / Order</th><th>Status</th><th>Total</th><th>Stable IDs</th><th>Production / Installation IDs</th><th>Forward / Reverse links</th></tr></thead>
-          <tbody>${records.map((entry) => coveredOrderRecoveryRowHtml(entry)).join("") || `<tr><td colspan="9">No records reference this exact SO number.</td></tr>`}</tbody>
+          <thead><tr><th>${t("Role")}</th><th>${t("Record")}</th><th>${t("Customer / Phone")}</th><th>${t("Quotation / Order")}</th><th>${t("Status")}</th><th>${t("Total")}</th><th>${t("Stable IDs")}</th><th>${t("Production / Installation IDs")}</th><th>${t("Forward / Reverse links")}</th></tr></thead>
+          <tbody>${records.map((entry) => coveredOrderRecoveryRowHtml(entry)).join("") || `<tr><td colspan="9">${t("No records reference this exact SO number.")}</td></tr>`}</tbody>
         </table>
       </div>
       <div class="covered-order-safety">
-        <strong>Before repair</strong>
-        <p>A full JSON backup and exact before/after preview are required. Customer, phone, items, totals, deposit, balance and remarks are preserved. No record is hard-deleted.</p>
+        <strong>${t("Before repair")}</strong>
+        <p>${t("A full JSON backup and exact before/after preview are required. Customer, phone, items, totals, deposit, balance and remarks are preserved. No record is hard-deleted.")}</p>
       </div>
-      <button class="btn primary" type="button" data-order-tool="recover-covered-order-apply" ${scan.ok ? "" : "disabled"}>Preview &amp; Repair Selected Records</button>
-      <p class="muted-text">Confirmation phrase: REPAIR COVERED ORDER</p>
+      <button class="btn primary" type="button" data-order-tool="recover-covered-order-apply" ${scan.ok ? "" : "disabled"}>${t("Preview & Repair Selected Records")}</button>
+      <p class="muted-text">${t("Confirmation phrase")}: REPAIR COVERED ORDER</p>
     </section>
   `;
 }
@@ -1717,9 +1723,9 @@ function coveredOrderRecoveryRowHtml(entry) {
   const activeOrder = entry.collection === "orders" && isActiveOrderRecord(entry.record);
   const quotation = entry.collection === "quotations";
   const roleControl = activeOrder
-    ? `<label><input type="radio" name="covered-confirmed-order" value="${escapeHtml(view.orderStableId)}" /> Keep as Confirmed Order</label>`
+    ? `<label><input type="radio" name="covered-confirmed-order" value="${escapeHtml(view.orderStableId)}" /> ${t("Keep as Confirmed Order")}</label>`
     : quotation
-      ? `<label><input type="radio" name="covered-unconfirmed-quotation" value="${escapeHtml(view.quotationStableId)}" /> Return to Quotation / Follow Up</label>`
+      ? `<label><input type="radio" name="covered-unconfirmed-quotation" value="${escapeHtml(view.quotationStableId)}" /> ${t("Return to Quotation / Follow Up")}</label>`
       : "Reference only";
   return `<tr>
     <td>${roleControl}</td>
@@ -1739,16 +1745,16 @@ function ownershipRecordHtml(title, record) {
     <strong>${escapeHtml(title)}</strong>
     <dl>
       <dt>${record.type === "quotation" ? "Quotation" : "Order"} stable ID</dt><dd>${escapeHtml(record.id || "-")}</dd>
-      <dt>Order No</dt><dd>${escapeHtml(record.orderNo || "-")}</dd>
-      <dt>Quotation No</dt><dd>${escapeHtml(record.quotationNo || "-")}</dd>
-      <dt>Customer</dt><dd>${escapeHtml(record.customer || "-")}</dd>
-      <dt>Phone</dt><dd>${escapeHtml(record.phone || "-")}</dd>
-      <dt>Items</dt><dd><pre>${escapeHtml(JSON.stringify(record.items, null, 2))}</pre></dd>
-      <dt>Total</dt><dd>${escapeHtml(record.total === "" ? "-" : record.total)}</dd>
-      <dt>Deposit</dt><dd>${escapeHtml(record.deposit === "" ? "-" : record.deposit)}</dd>
-      <dt>Balance</dt><dd>${escapeHtml(record.balance === "" ? "-" : record.balance)}</dd>
-      <dt>Production Job IDs</dt><dd>${escapeHtml(record.productionJobIds.join(", ") || "-")}</dd>
-      <dt>Installation Job IDs</dt><dd>${escapeHtml(record.installationJobIds.join(", ") || "-")}</dd>
+      <dt>${t("Order No")}</dt><dd>${escapeHtml(record.orderNo || "-")}</dd>
+      <dt>${t("Quotation No")}</dt><dd>${escapeHtml(record.quotationNo || "-")}</dd>
+      <dt>${t("Customer")}</dt><dd>${escapeHtml(record.customer || "-")}</dd>
+      <dt>${t("Phone")}</dt><dd>${escapeHtml(record.phone || "-")}</dd>
+      <dt>${t("Items")}</dt><dd><pre>${escapeHtml(JSON.stringify(record.items, null, 2))}</pre></dd>
+      <dt>${t("Total")}</dt><dd>${escapeHtml(record.total === "" ? "-" : record.total)}</dd>
+      <dt>${t("Deposit")}</dt><dd>${escapeHtml(record.deposit === "" ? "-" : record.deposit)}</dd>
+      <dt>${t("Balance")}</dt><dd>${escapeHtml(record.balance === "" ? "-" : record.balance)}</dd>
+      <dt>${t("Production Job IDs")}</dt><dd>${escapeHtml(record.productionJobIds.join(", ") || "-")}</dd>
+      <dt>${t("Installation Job IDs")}</dt><dd>${escapeHtml(record.installationJobIds.join(", ") || "-")}</dd>
     </dl>
   </div>`;
 }
@@ -1899,7 +1905,7 @@ function formatShortDate(value) {
   if (!value) return "-";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "-";
-  return date.toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" });
+  return date.toLocaleDateString(state.language === "zh" ? "zh-CN" : "en-MY", { day: "2-digit", month: "short", year: "numeric" });
 }
 
 function renderProductionJobs() {
@@ -1922,11 +1928,11 @@ function renderProductionJobs() {
         </div>
         <span class="pill">${statusLabel(job.status)}</span>
       </div>
-      ${!order && isBossOrAdmin() ? `<p class="warning-text"><strong>Linked Order record is missing.</strong> Production job ID: ${escapeHtml(job.id || "-")}. Repair the order relationship before production.</p>` : ""}
+      ${!order && isBossOrAdmin() ? `<p class="warning-text"><strong>${t("Linked Order record is missing.")}</strong> ${t("Production Job ID")}: ${escapeHtml(job.id || "-")}. ${t("Repair the order relationship before production.")}</p>` : ""}
       <label>${t("Production Status")}<select data-production-id="${job.id}" data-production-field="status" ${canEditProduction() && !isArchivedProductionJob(job) ? "" : "disabled"}>${isArchivedProductionJob(job) ? `<option selected value="duplicate_archived">${statusLabel("duplicate_archived")}</option>` : productionStatuses.map((status) => `<option value="${status}" ${normalizeProductionStatus(job.status, true) === status ? "selected" : ""}>${statusLabel(status)}</option>`).join("")}</select></label>
       <label>${t("Production Remark")}<textarea rows="2" data-production-id="${job.id}" data-production-field="remark" ${canEditProduction() && !isArchivedProductionJob(job) ? "" : "readonly"}>${job.remark || ""}</textarea></label>
       ${itemsSummary(job.items)}
-      ${isBossOrAdmin() ? `<details class="internal-details"><summary>Internal Details</summary><p>Production Job ID: ${escapeHtml(job.id || "-")}</p><p>ESP reference: ${escapeHtml(job.productionNumber || "-")}</p></details>` : ""}
+      ${isBossOrAdmin() ? `<details class="internal-details"><summary>${t("Internal Details")}</summary><p>${t("Production Job ID")}: ${escapeHtml(job.id || "-")}</p><p>${t("ESP reference")}: ${escapeHtml(job.productionNumber || "-")}</p></details>` : ""}
       <div class="actions">
         <button class="btn" type="button" data-view-production="${job.id}">${t("View Production Job")}</button>
         <button class="btn primary" type="button" data-print-production="${job.id}">${t("Print Production Sheet")}</button>
@@ -1943,11 +1949,11 @@ function renderProductionTools() {
   if (!tools) return;
   tools.innerHTML = `
     <section class="order-tools production-tools">
-      <label>Search SO Order No, Customer, Phone or Quotation No
-        <input data-production-search value="${escapeHtml(productionSearch)}" placeholder="SO2607006, customer, phone or quotation" />
+      <label>${t("Search SO Order No, Customer, Phone or Quotation No")}
+        <input data-production-search value="${escapeHtml(productionSearch)}" placeholder="${t("SO2607006, customer, phone or quotation")}" />
       </label>
       <div class="actions">
-        <button class="btn" type="button" data-production-search-clear>Clear Search</button>
+        <button class="btn" type="button" data-production-search-clear>${t("Clear Search")}</button>
         ${isBossOrAdmin() ? `<button class="btn" type="button" data-production-tool="duplicates">${t("Duplicate Production Check")}</button>` : ""}
         ${isBossOrAdmin() ? `<button class="btn ${showArchivedProductionDuplicates ? "primary" : ""}" type="button" data-production-tool="archived">${t("Show Archived Production Duplicates")}</button>` : ""}
       </div>
@@ -2142,10 +2148,10 @@ function productionDuplicatePanelHtml() {
   return `
     <section class="duplicate-order-panel production-duplicate-panel">
       <div class="section-head">
-        <div><h3>${t("Duplicate Production Check")}</h3><p class="muted-text">Preview only. Compare all differences and select the Production Job with the correct/latest progress.</p></div>
+        <div><h3>${t("Duplicate Production Check")}</h3><p class="muted-text">${t("Preview only. Compare all differences and select the Production Job with the correct/latest progress.")}</p></div>
         <div class="actions"><button class="btn" type="button" data-production-tool="duplicates-refresh">${t("Scan Again")}</button><button class="btn" type="button" data-production-tool="duplicates-close">${t("Close")}</button></div>
       </div>
-      <div class="duplicate-summary"><span>Confirmed duplicate groups: <strong>${scan.confirmedGroups.length}</strong></span><span>Possible duplicate groups: <strong>${scan.possibleGroups.length}</strong></span></div>
+      <div class="duplicate-summary"><span>${t("Confirmed duplicate groups")}: <strong>${scan.confirmedGroups.length}</strong></span><span>${t("Possible duplicate groups")}: <strong>${scan.possibleGroups.length}</strong></span></div>
       ${scan.confirmedGroups.length || scan.possibleGroups.length ? "" : `<p class="empty-state">${t("No duplicate Production Jobs detected.")}</p>`}
       ${productionDuplicateGroupsHtml("Confirmed Duplicates", scan.confirmedGroups, true)}
       ${productionDuplicateGroupsHtml("Possible Duplicates", scan.possibleGroups, false)}
@@ -2156,11 +2162,11 @@ function productionDuplicateGroupsHtml(title, groups, selectable) {
   return `<div class="duplicate-section"><h4>${t(title)}</h4>${groups.length ? "" : `<p class="muted-text">${t("None found in this section.")}</p>`}${groups.map((group) => `
     <article class="duplicate-group-card" data-production-duplicate-group-card="${group.id}">
       <p><strong>${escapeHtml(group.reasons.join(" | "))}</strong></p>
-      <p><strong>Differences:</strong> ${escapeHtml(productionGroupDifferences(group))}</p>
-      <div class="table-wrap production-duplicate-table"><table><thead><tr><th>Main</th><th>Production Job internal ID</th><th>SO Order No</th><th>Customer</th><th>Quotation No</th><th>Production Status</th><th>Item count</th><th>Assigned staff</th><th>Created At</th><th>Updated At</th><th>Installation link</th><th>Duplicate reason</th></tr></thead><tbody>
+      <p><strong>${t("Differences")}:</strong> ${escapeHtml(productionGroupDifferences(group))}</p>
+      <div class="table-wrap production-duplicate-table"><table><thead><tr><th>${t("Main")}</th><th>${t("Production Job internal ID")}</th><th>${t("SO Order No")}</th><th>${t("Customer")}</th><th>${t("Quotation No")}</th><th>${t("Production Status")}</th><th>${t("Item count")}</th><th>${t("Assigned staff")}</th><th>${t("Created At")}</th><th>${t("Updated At")}</th><th>${t("Installation link")}</th><th>${t("Duplicate reason")}</th></tr></thead><tbody>
         ${group.members.map((member) => productionDuplicateMemberRowHtml(member, group, selectable)).join("")}
       </tbody></table></div>
-      ${selectable ? productionDuplicateArchiveActionHtml(group) : `<p class="warning-text"><strong>Possible duplicates are never archived automatically. Manual review required.</strong></p>`}
+      ${selectable ? productionDuplicateArchiveActionHtml(group) : `<p class="warning-text"><strong>${t("Possible duplicates are never archived automatically. Manual review required.")}</strong></p>`}
     </article>`).join("")}</div>`;
 }
 
@@ -2168,7 +2174,7 @@ function productionDuplicateMemberRowHtml(member, group, selectable) {
   const job = member.job;
   const selected = productionDuplicateMainSelections.get(group.id) === member.key;
   return `<tr>
-    <td>${selectable ? `<label><input type="radio" name="production-duplicate-main-${group.id}" data-production-duplicate-main="${escapeHtml(member.key)}" data-production-duplicate-group="${group.id}" ${selected ? "checked" : ""} /> Select as Main Production Job</label>` : "Review"}</td>
+    <td>${selectable ? `<label><input type="radio" name="production-duplicate-main-${group.id}" data-production-duplicate-main="${escapeHtml(member.key)}" data-production-duplicate-group="${group.id}" ${selected ? "checked" : ""} /> ${t("Select as Main Production Job")}</label>` : t("Review")}</td>
     <td>${escapeHtml(job.id || "-")}</td><td>${escapeHtml(productionOrderReference(job) || "-")}</td><td>${escapeHtml(productionCustomerName(job) || "-")}</td>
     <td>${escapeHtml(job.quoteNumber || job.quotationNo || "-")}</td><td>${escapeHtml(statusLabel(job.status || "-") || "-")}</td><td>${Array.isArray(job.items) ? job.items.length : 0}</td>
     <td>${escapeHtml(productionAssignedStaff(job) || "-")}</td><td>${escapeHtml(job.createdAt || "-")}</td><td>${escapeHtml(job.updatedAt || "-")}</td>
@@ -2198,11 +2204,11 @@ function productionGroupDifferences(group) {
 }
 
 export function productionDuplicateArchiveActionHtml(group, selectedKey = productionDuplicateMainSelections.get(group.id)) {
-  if (!selectedKey) return `<p class="muted-text">Select one Main Production Job to reveal the archive action.</p>`;
+  if (!selectedKey) return `<p class="muted-text">${t("Select one Main Production Job to reveal the archive action.")}</p>`;
   const main = group.members.find((member) => member.key === selectedKey);
   if (!main) return "";
   const duplicates = group.members.filter((member) => member.key !== selectedKey);
-  return `<div class="duplicate-archive-action"><p><strong>Main Production Job:</strong> ${escapeHtml(main.job.id || "-")}</p><p><strong>Production Jobs to archive:</strong> ${duplicates.map((member) => escapeHtml(member.job.id || "-")).join(", ")}</p><p>The selected Main Job is not overwritten. A full JSON backup is downloaded before the local transaction.</p><button class="btn danger" type="button" data-archive-production-duplicate-group="${group.id}" ${productionDuplicateArchiveBusy ? "disabled" : ""}>${t("Archive Other Production Duplicates")}</button></div>`;
+  return `<div class="duplicate-archive-action"><p><strong>${t("Main Production Job")}:</strong> ${escapeHtml(main.job.id || "-")}</p><p><strong>${t("Production Jobs to archive")}:</strong> ${duplicates.map((member) => escapeHtml(member.job.id || "-")).join(", ")}</p><p>${t("The selected Main Job is not overwritten. A full JSON backup is downloaded before the local transaction.")}</p><button class="btn danger" type="button" data-archive-production-duplicate-group="${group.id}" ${productionDuplicateArchiveBusy ? "disabled" : ""}>${t("Archive Other Production Duplicates")}</button></div>`;
 }
 
 async function archiveProductionDuplicateGroupFromPanel(groupId, button) {
@@ -2441,11 +2447,11 @@ function renderInstallationJobs() {
   const diagnostics = installationDispatchDiagnostics();
   list.innerHTML = `
     ${canScheduleInstallation() ? `<section class="installation-diagnostics">
-      <span>Pending Arrangement<strong>${diagnostics.pendingArrangement}</strong></span>
-      <span>Ready to Send<strong>${diagnostics.readyToSend}</strong></span>
-      <span>Sent to Installer<strong>${diagnostics.sentToInstaller}</strong></span>
-      <span>Completed<strong>${diagnostics.completed}</strong></span>
-      <span>Missing assignedInstallerId<strong>${diagnostics.missingAssignedInstallerId}</strong></span>
+      <span>${t("Pending Arrangement")}<strong>${diagnostics.pendingArrangement}</strong></span>
+      <span>${t("Ready to Send")}<strong>${diagnostics.readyToSend}</strong></span>
+      <span>${t("Sent to Installer")}<strong>${diagnostics.sentToInstaller}</strong></span>
+      <span>${t("Completed")}<strong>${diagnostics.completed}</strong></span>
+      <span>${t("Missing assignedInstallerId")}<strong>${diagnostics.missingAssignedInstallerId}</strong></span>
     </section>` : ""}
     ${activeJobs.length ? activeJobs.map((job) => installationJobCardHtml(job)).join("") : `<p class="muted-text">${t("No installation jobs yet.")}</p>`}
   `;
@@ -2514,12 +2520,12 @@ function installationJobCardHtml(job) {
         <button class="btn" type="button" data-view-installation="${job.id}">${t("View Installation Job")}</button>
         <button class="btn primary" type="button" data-print-installation="${job.id}">${t("Print Installation Sheet")}</button>
         <button class="btn" type="button" data-whatsapp-installation="${job.id}">${t("WhatsApp Customer")}</button>
-        ${canScheduleInstallation() && !["sent_to_installer", "completed"].includes(stage) ? `<button class="btn primary" type="button" data-preview-installation-send="${job.id}">Send to Installer</button>` : ""}
-        ${isBossOrAdmin() && stage === "sent_to_installer" ? `<button class="btn danger" type="button" data-open-installation-recall="${job.id}">Recall from Installer</button>` : ""}
+        ${canScheduleInstallation() && !["sent_to_installer", "completed"].includes(stage) ? `<button class="btn primary" type="button" data-preview-installation-send="${job.id}">${t("Send to Installer")}</button>` : ""}
+        ${isBossOrAdmin() && stage === "sent_to_installer" ? `<button class="btn danger" type="button" data-open-installation-recall="${job.id}">${t("Recall from Installer")}</button>` : ""}
         ${canCompleteInstallationJob(job) && stage === "sent_to_installer" ? `<button class="btn" type="button" data-complete-installation="${job.id}">${t("Complete Installation")}</button>` : ""}
         ${job.completionOutcome === "touch_up" && canCompleteInstallationJob(job) ? `<button class="btn" type="button" data-mark-touchup-completed="${job.id}">${t("Mark Touch Up Completed")}</button>` : ""}
-        ${canGenerateWarrantyCard() && stage === "completed" && !existingWarranty ? `<button class="btn" type="button" data-generate-warranty="${job.id}">Generate Warranty Card</button>` : ""}
-        ${canGenerateWarrantyCard() && existingWarranty ? `<button class="btn" type="button" data-view-warranty="${existingWarranty.id}">View Existing Warranty Card</button>${stage === "completed" ? `<button class="btn" type="button" data-regenerate-warranty="${job.id}">Regenerate Warranty Card</button>` : ""}` : ""}
+        ${canGenerateWarrantyCard() && stage === "completed" && !existingWarranty ? `<button class="btn" type="button" data-generate-warranty="${job.id}">${t("Generate Warranty Card")}</button>` : ""}
+        ${canGenerateWarrantyCard() && existingWarranty ? `<button class="btn" type="button" data-view-warranty="${existingWarranty.id}">${t("View Existing Warranty Card")}</button>${stage === "completed" ? `<button class="btn" type="button" data-regenerate-warranty="${job.id}">${t("Regenerate Warranty Card")}</button>` : ""}` : ""}
       </div>
       ${installationDispatchPreviewId === job.id ? installationDispatchPreviewHtml(job) : ""}
       ${installationRecallJobId === job.id ? installationRecallPanelHtml(job) : ""}
@@ -2533,43 +2539,43 @@ function installationArrangementHtml(job, stage) {
   const locked = ["sent_to_installer", "completed"].includes(stage);
   return `<section class="installation-arrangement" data-installation-arrangement="${escapeHtml(job.id)}">
     <div class="form-grid compact">
-      <label>Installation Date<input type="date" data-arrangement-field="installationDate" value="${escapeHtml(job.installationDate || "")}" ${locked ? "disabled" : ""} /></label>
-      <label>Installation Time<input type="time" data-arrangement-field="installationTime" value="${escapeHtml(job.installationTime || "")}" ${locked ? "disabled" : ""} /></label>
-      <label>Assigned Installer<select data-arrangement-field="assignedInstallerId" ${locked ? "disabled" : ""}>${installerOptionsHtml(job.assignedInstallerId)}</select></label>
-      <label>Contact Person<input data-arrangement-field="contactPerson" value="${escapeHtml(job.contactPerson || job.customer?.name || "")}" ${locked ? "disabled" : ""} /></label>
-      <label>Phone<input data-arrangement-field="phone" value="${escapeHtml(job.phone || job.customer?.phone || "")}" ${locked ? "disabled" : ""} /></label>
-      <label class="wide">Address<textarea rows="2" data-arrangement-field="address" ${locked ? "disabled" : ""}>${escapeHtml(job.address || job.customer?.address || "")}</textarea></label>
-      <label class="wide">Installation Remarks<textarea rows="2" data-arrangement-field="installationRemarks" ${locked ? "disabled" : ""}>${escapeHtml(job.installationRemarks || job.installerRemark || "")}</textarea></label>
-      <label class="wide">Required Items / Checklist<textarea rows="2" data-arrangement-field="requiredItems" ${locked ? "disabled" : ""}>${escapeHtml(job.requiredItems || "")}</textarea></label>
+      <label>${t("Installation Date")}<input type="date" data-arrangement-field="installationDate" value="${escapeHtml(job.installationDate || "")}" ${locked ? "disabled" : ""} /></label>
+      <label>${t("Installation Time")}<input type="time" data-arrangement-field="installationTime" value="${escapeHtml(job.installationTime || "")}" ${locked ? "disabled" : ""} /></label>
+      <label>${t("Assigned Installer")}<select data-arrangement-field="assignedInstallerId" ${locked ? "disabled" : ""}>${installerOptionsHtml(job.assignedInstallerId)}</select></label>
+      <label>${t("Contact Person")}<input data-arrangement-field="contactPerson" value="${escapeHtml(job.contactPerson || job.customer?.name || "")}" ${locked ? "disabled" : ""} /></label>
+      <label>${t("Phone")}<input data-arrangement-field="phone" value="${escapeHtml(job.phone || job.customer?.phone || "")}" ${locked ? "disabled" : ""} /></label>
+      <label class="wide">${t("Address")}<textarea rows="2" data-arrangement-field="address" ${locked ? "disabled" : ""}>${escapeHtml(job.address || job.customer?.address || "")}</textarea></label>
+      <label class="wide">${t("Installation Remarks")}<textarea rows="2" data-arrangement-field="installationRemarks" ${locked ? "disabled" : ""}>${escapeHtml(job.installationRemarks || job.installerRemark || "")}</textarea></label>
+      <label class="wide">${t("Required Items / Checklist")}<textarea rows="2" data-arrangement-field="requiredItems" ${locked ? "disabled" : ""}>${escapeHtml(job.requiredItems || "")}</textarea></label>
     </div>
-    ${locked ? `<p class="muted-text">Recall the job before changing its arrangement. Editing never sends automatically.</p>` : `<button class="btn" type="button" data-save-installation-arrangement="${escapeHtml(job.id)}">Save Arrangement</button>`}
+    ${locked ? `<p class="muted-text">${t("Recall the job before changing its arrangement. Editing never sends automatically.")}</p>` : `<button class="btn" type="button" data-save-installation-arrangement="${escapeHtml(job.id)}">${t("Save Arrangement")}</button>`}
   </section>`;
 }
 
 function installationAssignedSummaryHtml(job) {
-  return `<div class="installation-assigned-summary"><span>Date / Time<strong>${escapeHtml([job.installationDate, job.installationTime].filter(Boolean).join(" ") || "-")}</strong></span><span>Assigned Installer<strong>${escapeHtml(job.assignedInstallerName || "-")}</strong></span><span>Address<strong>${escapeHtml(job.address || job.customer?.address || "-")}</strong></span><span>Phone<strong>${escapeHtml(job.phone || job.customer?.phone || "-")}</strong></span></div>`;
+  return `<div class="installation-assigned-summary"><span>${t("Date / Time")}<strong>${escapeHtml([job.installationDate, job.installationTime].filter(Boolean).join(" ") || "-")}</strong></span><span>${t("Assigned Installer")}<strong>${escapeHtml(job.assignedInstallerName || "-")}</strong></span><span>${t("Address")}<strong>${escapeHtml(job.address || job.customer?.address || "-")}</strong></span><span>${t("Phone")}<strong>${escapeHtml(job.phone || job.customer?.phone || "-")}</strong></span></div>`;
 }
 
 function installerOptionsHtml(selectedId) {
   const installers = state.users.filter((user) => user.active !== false && normalizeText(user.role) === "installer" && String(user.userId || "").trim());
-  return `<option value="">Select installer</option>${installers.map((user) => `<option value="${escapeHtml(user.userId)}" ${String(user.userId) === String(selectedId || "") ? "selected" : ""}>${escapeHtml(user.name || user.username || user.userId)}</option>`).join("")}`;
+  return `<option value="">${t("Select installer")}</option>${installers.map((user) => `<option value="${escapeHtml(user.userId)}" ${String(user.userId) === String(selectedId || "") ? "selected" : ""}>${escapeHtml(user.name || user.username || user.userId)}</option>`).join("")}`;
 }
 
 function installationDispatchPreviewHtml(job) {
   const order = findOrder(job.orderId);
   return `<section class="installation-dispatch-preview">
-    <h3>Send to Installer</h3>
+    <h3>${t("Send to Installer")}</h3>
     ${installationDispatchSummaryHtml(job, order)}
-    <div class="actions"><button class="btn primary" type="button" data-confirm-installation-send="${escapeHtml(job.id)}">Confirm Send to Installer</button><button class="btn" type="button" data-close-installation-send="${escapeHtml(job.id)}">Cancel</button></div>
+    <div class="actions"><button class="btn primary" type="button" data-confirm-installation-send="${escapeHtml(job.id)}">${t("Confirm Send to Installer")}</button><button class="btn" type="button" data-close-installation-send="${escapeHtml(job.id)}">${t("Cancel")}</button></div>
   </section>`;
 }
 
 function installationRecallPanelHtml(job) {
-  return `<section class="installation-dispatch-preview" data-installation-recall-panel="${escapeHtml(job.id)}"><h3>Recall from Installer</h3><p>Assignment and dispatch history remain stored for audit.</p><label>Recall reason<textarea rows="2" data-installation-recall-reason></textarea></label><div class="actions"><button class="btn danger" type="button" data-confirm-installation-recall="${escapeHtml(job.id)}">Confirm Recall</button><button class="btn" type="button" data-close-installation-recall="${escapeHtml(job.id)}">Cancel</button></div></section>`;
+  return `<section class="installation-dispatch-preview" data-installation-recall-panel="${escapeHtml(job.id)}"><h3>${t("Recall from Installer")}</h3><p>${t("Assignment and dispatch history remain stored for audit.")}</p><label>${t("Recall reason")}<textarea rows="2" data-installation-recall-reason></textarea></label><div class="actions"><button class="btn danger" type="button" data-confirm-installation-recall="${escapeHtml(job.id)}">${t("Confirm Recall")}</button><button class="btn" type="button" data-close-installation-recall="${escapeHtml(job.id)}">${t("Cancel")}</button></div></section>`;
 }
 
 function installationDispatchSummaryHtml(job, order) {
-  return `<div class="installation-assigned-summary"><span>Customer<strong>${escapeHtml(order?.customer?.name || job.customer?.name || "-")}</strong></span><span>SO Number<strong>${escapeHtml(getOrderDisplayNo(order || job) || "-")}</strong></span><span>Date / Time<strong>${escapeHtml([job.installationDate, job.installationTime].filter(Boolean).join(" ") || "-")}</strong></span><span>Assigned Installer<strong>${escapeHtml(job.assignedInstallerName || "-")}</strong></span><span>Address<strong>${escapeHtml(job.address || job.customer?.address || "-")}</strong></span><span>Phone<strong>${escapeHtml(job.phone || job.customer?.phone || "-")}</strong></span><span>Remarks<strong>${escapeHtml(job.installationRemarks || job.installerRemark || "-")}</strong></span></div>`;
+  return `<div class="installation-assigned-summary"><span>${t("Customer")}<strong>${escapeHtml(order?.customer?.name || job.customer?.name || "-")}</strong></span><span>${t("SO Number")}<strong>${escapeHtml(getOrderDisplayNo(order || job) || "-")}</strong></span><span>${t("Date / Time")}<strong>${escapeHtml([job.installationDate, job.installationTime].filter(Boolean).join(" ") || "-")}</strong></span><span>${t("Assigned Installer")}<strong>${escapeHtml(job.assignedInstallerName || "-")}</strong></span><span>${t("Address")}<strong>${escapeHtml(job.address || job.customer?.address || "-")}</strong></span><span>${t("Phone")}<strong>${escapeHtml(job.phone || job.customer?.phone || "-")}</strong></span><span>${t("Remarks")}<strong>${escapeHtml(job.installationRemarks || job.installerRemark || "-")}</strong></span></div>`;
 }
 
 function canCompleteInstallationJob(job) {
@@ -2604,14 +2610,14 @@ function completionFormHtml(job) {
       <div class="section-head">
         <div>
           <h3>${t("Complete Installation")}</h3>
-          <p class="muted-text">Photo, checklist, collection and customer signature are required.</p>
+          <p class="muted-text">${t("Photo, checklist, collection and customer signature are required.")}</p>
         </div>
-        <button class="btn" type="button" data-close-completion="${job.id}">Close</button>
+        <button class="btn" type="button" data-close-completion="${job.id}">${t("Close")}</button>
       </div>
       <div class="form-grid">
-        <label>${t("Installer")}<input data-completion-field="installerName" value="${job.installerName || ""}" placeholder="Installer name" /></label>
-        <label>${t("Installation Date")} / Time<input type="datetime-local" data-completion-field="completionDate" value="${job.completionDate || currentDateTimeLocal()}" /></label>
-        <label class="wide">${t("Installer Remark")}<textarea rows="2" data-completion-field="installationRemark" placeholder="Installation remark">${job.installationRemark || job.installerRemark || ""}</textarea></label>
+        <label>${t("Installer")}<input data-completion-field="installerName" value="${job.installerName || ""}" placeholder="${t("Installer name")}" /></label>
+        <label>${t("Installation Date / Time")}<input type="datetime-local" data-completion-field="completionDate" value="${job.completionDate || currentDateTimeLocal()}" /></label>
+        <label class="wide">${t("Installer Remark")}<textarea rows="2" data-completion-field="installationRemark" placeholder="${t("Installation remark")}">${job.installationRemark || job.installerRemark || ""}</textarea></label>
       </div>
 
       <div class="photo-grid">
@@ -2621,10 +2627,10 @@ function completionFormHtml(job) {
         ${mediaUploadHtml(job, "touchUpPhotos", "Touch-up Photos", "image/*")}
         ${mediaUploadHtml(job, "installationVideos", "Installation Videos", "video/*")}
       </div>
-      <label>${t("Installation Videos")} / ${t("Remark")}<textarea rows="2" data-completion-field="mediaRemarks" placeholder="Media note">${job.mediaRemarks || ""}</textarea></label>
+      <label>${t("Installation Videos")}<textarea rows="2" data-completion-field="mediaRemarks" placeholder="${t("Media note")}">${job.mediaRemarks || ""}</textarea></label>
 
       <div class="checklist-box">
-        <h3>Customer Inspection Checklist</h3>
+        <h3>${t("Customer Inspection Checklist")}</h3>
         <div class="checklist-grid">
           ${checklistLabels.map((label) => `
             <label class="checkbox-row"><input type="checkbox" data-checklist="${label}" ${checklist[label] ? "checked" : ""} /> ${label}</label>
@@ -2638,28 +2644,28 @@ function completionFormHtml(job) {
         <label>${t("Payment Method")}<select data-completion-field="paymentMethod">
           ${["Cash", "Bank Transfer", "DuitNow", "TNG", "Other"].map((method) => `<option value="${method}" ${job.paymentMethod === method ? "selected" : ""}>${method}</option>`).join("")}
         </select></label>
-        <label>Balance collected?<select data-completion-field="balanceCollected">
-          <option value="false" ${job.balanceCollected ? "" : "selected"}>No</option>
-          <option value="true" ${job.balanceCollected ? "selected" : ""}>Yes</option>
+        <label>${t("Balance collected?")}<select data-completion-field="balanceCollected">
+          <option value="false" ${job.balanceCollected ? "" : "selected"}>${t("No")}</option>
+          <option value="true" ${job.balanceCollected ? "selected" : ""}>${t("Yes")}</option>
         </select></label>
-        <label class="wide">Payment Reference / Remark<textarea rows="2" data-completion-field="paymentReference" placeholder="Transfer ref, cash note, collection remark">${job.paymentReference || ""}</textarea></label>
+        <label class="wide">${t("Payment Reference / Remark")}<textarea rows="2" data-completion-field="paymentReference" placeholder="${t("Transfer ref, cash note, collection remark")}">${job.paymentReference || ""}</textarea></label>
         <label>${t("Touch up required?")}<select data-completion-field="touchUpRequired">
-          <option value="false" ${job.touchUpRequired ? "" : "selected"}>No</option>
-          <option value="true" ${job.touchUpRequired ? "selected" : ""}>Yes</option>
+          <option value="false" ${job.touchUpRequired ? "" : "selected"}>${t("No")}</option>
+          <option value="true" ${job.touchUpRequired ? "selected" : ""}>${t("Yes")}</option>
         </select></label>
-        <label>Touch up status<select data-completion-field="touchUpStatus">
+        <label>${t("Touch up status")}<select data-completion-field="touchUpStatus">
           ${["Pending", "Completed"].map((status) => `<option value="${status}" ${job.touchUpStatus === status ? "selected" : ""}>${status}</option>`).join("")}
         </select></label>
-        <label class="wide">${t("Touch up remark")}<textarea rows="2" data-completion-field="touchUpRemark" placeholder="Touch-up issue / action needed">${job.touchUpRemark || ""}</textarea></label>
+        <label class="wide">${t("Touch up remark")}<textarea rows="2" data-completion-field="touchUpRemark" placeholder="${t("Touch-up issue / action needed")}">${job.touchUpRemark || ""}</textarea></label>
       </div>
 
       <div class="signature-box">
         <div class="section-head">
           <div>
             <h3>${t("Customer Signature")}</h3>
-            <p class="muted-text">Customer signs here with finger or mouse.</p>
+            <p class="muted-text">${t("Customer signs here with finger or mouse.")}</p>
           </div>
-          <button class="btn" type="button" data-clear-signature="${job.id}">Clear Signature</button>
+          <button class="btn" type="button" data-clear-signature="${job.id}">${t("Clear Signature")}</button>
         </div>
         <canvas class="signature-canvas" width="720" height="220" data-signature-canvas="${job.id}"></canvas>
       </div>
@@ -2678,7 +2684,7 @@ function mediaUploadHtml(job, field, label, accept) {
     <div class="photo-box">
       <label>${t(label)}<input type="file" accept="${accept}" multiple capture="environment" data-photo-field="${field}" data-installation-photo-id="${job.id}" /></label>
       <div class="media-preview-grid">
-        ${rows.length ? rows.map((item, index) => mediaPreviewHtml(item, job.id, field, index)).join("") : `<p class="muted-text">No media uploaded.</p>`}
+        ${rows.length ? rows.map((item, index) => mediaPreviewHtml(item, job.id, field, index)).join("") : `<p class="muted-text">${t("No media uploaded.")}</p>`}
       </div>
     </div>
   `;
@@ -2700,7 +2706,7 @@ function mediaPreviewHtml(item, jobId, field, index) {
   return `
     <div class="media-preview">
       ${type === "video" ? `<video src="${source}" controls></video>` : `<img src="${source}" alt="${field}" />`}
-      <button class="btn danger" type="button" data-remove-media-job="${jobId}" data-remove-media-field="${field}" data-remove-media-index="${index}">Remove</button>
+      <button class="btn danger" type="button" data-remove-media-job="${jobId}" data-remove-media-field="${field}" data-remove-media-index="${index}">${t("Remove")}</button>
     </div>
   `;
 }
@@ -2709,7 +2715,7 @@ function itemsSummary(items = []) {
   return `<div class="mini-table">${items.map((item) => `
     <div>
       <strong>${item.productName}</strong>
-      <span>${item.width || 0} x ${item.height || 0} | ${t("Quantity")} ${item.quantity || 0} | ${t("Color")}: ${item.color || "-"} | ${t("Install Type / Inside Outside")}: ${item.installType || "-"} | ${t("Installation Location")}: ${item.installationLocation || "-"} | ${t("Opening Direction")}: ${item.openingDirection || "-"} | ${t("Track Size")}: ${item.trackSize || "-"} | ${t("Handle Height")}: ${item.handleHeight || "-"} | ${t("Handle Position")}: ${item.handlePosition || "-"} | ${t("Track Type")}: ${item.trackType || item.trackOpening || "-"} | ${t("Mesh / Net Type")}: ${meshValue(item) || "-"} | ${t("Powdercoat / Powercoat")}: ${item.powdercoat ? `Yes ${money(powdercoatAmount(item))}` : "No"} | ${item.remark || "-"}</span>
+      <span>${item.width || 0} x ${item.height || 0} | ${t("Quantity")} ${item.quantity || 0} | ${t("Color")}: ${colorLabel(item.color)} | ${t("Install Type / Inside Outside")}: ${t(item.installType || "-")} | ${t("Installation Location")}: ${item.installationLocation || "-"} | ${t("Opening Direction")}: ${openingDirectionLabel(item.openingDirection)} | ${t("Track Size")}: ${item.trackSize || "-"} | ${t("Handle Height")}: ${item.handleHeight || "-"} | ${t("Track Type")}: ${t(item.trackType || item.trackOpening || "-")} | ${t("Mesh / Net Type")}: ${t(meshValue(item) || "-")} | ${t("Powdercoat / Powercoat")}: ${item.powdercoat ? `${t("Yes")} ${money(powdercoatAmount(item))}` : t("No")} | ${item.remark || "-"}</span>
     </div>
   `).join("")}</div>`;
 }
@@ -6443,13 +6449,13 @@ export function warrantyCardPreviewHtml(card = {}) {
   const items = Array.isArray(card.warrantyItems) ? card.warrantyItems : Array.isArray(card.products) ? card.products : [];
   const terms = Array.isArray(card.terms) ? card.terms : Array.isArray(card.warrantyTerms) ? card.warrantyTerms : [];
   return `<section class="warranty-card-preview" data-warranty-preview="${escapeHtml(card.id || "")}">
-    <div class="section-head"><div><p class="eyebrow">Eco Screen Warranty</p><h3>${escapeHtml(card.warrantyCardNo || card.warrantyNo || "Warranty Card")}</h3></div><button class="btn" type="button" data-close-warranty-preview="${escapeHtml(card.id || "")}">Close</button></div>
+    <div class="section-head"><div><p class="eyebrow">${t("Eco Screen Warranty")}</p><h3>${escapeHtml(card.warrantyCardNo || card.warrantyNo || t("Warranty Card"))}</h3></div><button class="btn" type="button" data-close-warranty-preview="${escapeHtml(card.id || "")}">${t("Close")}</button></div>
     <div class="warranty-company"><strong>${escapeHtml(state.companySettings.companyName || "Eco Screen")}</strong><span>0195763499</span></div>
-    <div class="installation-assigned-summary"><span>Customer<strong>${escapeHtml(card.customerName || card.customer?.name || "-")}</strong></span><span>Phone<strong>${escapeHtml(card.customerPhone || card.customer?.phone || "-")}</strong></span><span>Address<strong>${escapeHtml(card.address || card.customer?.address || "-")}</strong></span><span>Quotation<strong>${escapeHtml(card.quotationNo || card.quoteNumber || "-")}</strong></span><span>SO Number<strong>${escapeHtml(card.orderNo || "-")}</strong></span><span>Completion Date<strong>${escapeHtml(card.installationCompletedAt || "-")}</strong></span><span>Warranty Start<strong>${escapeHtml(card.warrantyStartDate || card.startDate || "-")}</strong></span><span>Warranty Expiry<strong>${escapeHtml(card.warrantyExpiryDate || "-")}</strong></span><span>Generated At<strong>${escapeHtml(card.generatedAt || card.createdAt || "-")}</strong></span><span>Generated By<strong>${escapeHtml(card.generatedBy || "-")}</strong></span></div>
-    <div class="table-wrap"><table><thead><tr><th>Installed Product</th><th>Quantity</th><th>Warranty Period</th><th>Start</th><th>Expiry</th></tr></thead><tbody>${items.map((item) => `<tr><td>${escapeHtml(item.productName || "-")}</td><td>${escapeHtml(item.quantity || "-")}</td><td>${escapeHtml(item.warrantyPeriod || "-")}</td><td>${escapeHtml(item.warrantyStartDate || card.warrantyStartDate || "-")}</td><td>${escapeHtml(item.warrantyExpiryDate || "-")}</td></tr>`).join("")}</tbody></table></div>
-    <div class="terms"><h4>Warranty Terms</h4>${terms.map((term) => `<p>${escapeHtml(term)}</p>`).join("")}</div>
-    <button class="btn primary" type="button" data-print-warranty-card="${escapeHtml(card.id || "")}">Download / Print Warranty Card</button>
-    <p class="muted-text">This inline preview remains available when a mobile browser blocks new tabs.</p>
+    <div class="installation-assigned-summary"><span>${t("Customer")}<strong>${escapeHtml(card.customerName || card.customer?.name || "-")}</strong></span><span>${t("Phone")}<strong>${escapeHtml(card.customerPhone || card.customer?.phone || "-")}</strong></span><span>${t("Address")}<strong>${escapeHtml(card.address || card.customer?.address || "-")}</strong></span><span>${t("Quotation")}<strong>${escapeHtml(card.quotationNo || card.quoteNumber || "-")}</strong></span><span>${t("SO Number")}<strong>${escapeHtml(card.orderNo || "-")}</strong></span><span>${t("Completion Date")}<strong>${escapeHtml(card.installationCompletedAt || "-")}</strong></span><span>${t("Warranty Start")}<strong>${escapeHtml(card.warrantyStartDate || card.startDate || "-")}</strong></span><span>${t("Warranty Expiry")}<strong>${escapeHtml(card.warrantyExpiryDate || "-")}</strong></span><span>${t("Generated At")}<strong>${escapeHtml(card.generatedAt || card.createdAt || "-")}</strong></span><span>${t("Generated By")}<strong>${escapeHtml(card.generatedBy || "-")}</strong></span></div>
+    <div class="table-wrap"><table><thead><tr><th>${t("Installed Product")}</th><th>${t("Quantity")}</th><th>${t("Warranty Period")}</th><th>${t("Start")}</th><th>${t("Expiry")}</th></tr></thead><tbody>${items.map((item) => `<tr><td>${escapeHtml(item.productName || "-")}</td><td>${escapeHtml(item.quantity || "-")}</td><td>${escapeHtml(item.warrantyPeriod || "-")}</td><td>${escapeHtml(item.warrantyStartDate || card.warrantyStartDate || "-")}</td><td>${escapeHtml(item.warrantyExpiryDate || "-")}</td></tr>`).join("")}</tbody></table></div>
+    <div class="terms"><h4>${t("Warranty Terms")}</h4>${terms.map((term) => `<p>${escapeHtml(term)}</p>`).join("")}</div>
+    <button class="btn primary" type="button" data-print-warranty-card="${escapeHtml(card.id || "")}">${t("Download / Print Warranty Card")}</button>
+    <p class="muted-text">${t("This inline preview remains available when a mobile browser blocks new tabs.")}</p>
   </section>`;
 }
 
@@ -6561,14 +6567,14 @@ function viewProductionJob(id) {
   }
   dialog.innerHTML = `
     <div class="section-head"><div><p class="eyebrow">${t("View Production Job")}</p><h2>${escapeHtml(orderNumber)}</h2></div><button class="btn" type="button" data-close-production-dialog>${t("Close")}</button></div>
-    ${!order && isBossOrAdmin() ? `<p class="warning-text"><strong>Linked Order record is missing.</strong> Production job ID: ${escapeHtml(job.id || "-")}</p>` : ""}
+      ${!order && isBossOrAdmin() ? `<p class="warning-text"><strong>${t("Linked Order record is missing.")}</strong> ${t("Production Job ID")}: ${escapeHtml(job.id || "-")}</p>` : ""}
     <p><strong>${t("Customer Name")}:</strong> ${escapeHtml(order?.customer?.name || order?.customerName || job.customerName || "-")}</p>
     <p><strong>${t("Quote")}:</strong> ${escapeHtml(job.quoteNumber || job.quotationNo || "-")}</p>
     <p><strong>${t("Installation Date")}:</strong> ${escapeHtml(job.installationDate || "-")}</p>
     <p><strong>${t("Production Status")}:</strong> ${statusLabel(job.status)}</p>
     <p><strong>${t("Production Remark")}:</strong> ${escapeHtml(job.remark || "-")}</p>
     ${itemsSummary(job.items || [])}
-    ${isBossOrAdmin() ? `<details class="internal-details"><summary>Internal Details</summary><p>Production Job ID: ${escapeHtml(job.id || "-")}</p><p>ESP reference: ${escapeHtml(job.productionNumber || "-")}</p></details>` : ""}
+    ${isBossOrAdmin() ? `<details class="internal-details"><summary>${t("Internal Details")}</summary><p>${t("Production Job ID")}: ${escapeHtml(job.id || "-")}</p><p>${t("ESP reference")}: ${escapeHtml(job.productionNumber || "-")}</p></details>` : ""}
   `;
   dialog.querySelector("[data-close-production-dialog]")?.addEventListener("click", () => dialog.close());
   if (typeof dialog.showModal === "function") dialog.showModal();
@@ -6598,38 +6604,38 @@ export function productionSheetPrintHtml(job = {}, order = {}, company = state.c
         <div class="production-sheet-company">
           <h1>${escapeHtml(company.companyName || "Eco Screen Sdn Bhd")}</h1>
           <p>24 Jalan Iks Bukit Tengah,<br />Taman Iks Bukit Tengah,<br />14000 Bukit Mertajam</p>
-          <p>Tel: ${escapeHtml(company.companyPhone || "0195763499")}</p>
+          <p>${t("Phone")}: ${escapeHtml(company.companyPhone || "0195763499")}</p>
         </div>
         <div class="production-sheet-title">
-          <p>打印生产单 / Production Sheet</p>
-          <h2>Order No: ${escapeHtml(orderNumber)}</h2>
+          <p>${t("Production Sheet")}</p>
+          <h2>${t("Order No")}: ${escapeHtml(orderNumber)}</h2>
         </div>
       </header>
-      <section class="production-sheet-meta" aria-label="Production details">
-        <div><span>顾客名字 / Customer Name</span><strong>${escapeHtml(customerName)}</strong></div>
-        <div><span>报价 / Quotation No</span><strong>${escapeHtml(quotationNumber)}</strong></div>
-        <div><span>安装日期 / Installation Date</span><strong>${escapeHtml(installationDate)}</strong></div>
-        <div><span>生产状态 / Production Status</span><strong>${escapeHtml(statusLabel(job.status))}</strong></div>
+      <section class="production-sheet-meta" aria-label="${t("Production details")}">
+        <div><span>${t("Customer Name")}</span><strong>${escapeHtml(customerName)}</strong></div>
+        <div><span>${t("Quotation No")}</span><strong>${escapeHtml(quotationNumber)}</strong></div>
+        <div><span>${t("Installation Date")}</span><strong>${escapeHtml(installationDate)}</strong></div>
+        <div><span>${t("Production Status")}</span><strong>${escapeHtml(statusLabel(job.status))}</strong></div>
       </section>
-      <table class="production-sheet-table" aria-label="Production items">
+      <table class="production-sheet-table" aria-label="${t("Production items")}">
         <colgroup>
           <col class="production-col-product" /><col class="production-col-location" /><col class="production-col-size" />
           <col class="production-col-quantity" /><col class="production-col-color" /><col class="production-col-method" />
           <col class="production-col-opening" /><col class="production-col-track-size" /><col class="production-col-handle-height" />
-          <col class="production-col-handle-position" /><col class="production-col-track-type" /><col class="production-col-mesh" />
+          <col class="production-col-track-type" /><col class="production-col-mesh" />
           <col class="production-col-lock" /><col class="production-col-remark" />
         </colgroup>
         <thead><tr>
-          <th>产品 / Product</th><th>安装位置 / Installation Location</th><th>Size</th><th>数量 / Quantity</th>
-          <th>颜色 / Color</th><th>安装方式 / Installation Method</th><th>开向 / Opening Direction</th>
-          <th>轨道尺寸 / Track Size</th><th>把手高度 / Handle Height</th><th>把手位置 / Handle Position</th>
-          <th>Track Type</th><th>网布类型 / Mesh Type</th><th>锁 / Lock</th><th>备注 / Remark</th>
+          <th>${t("Product")}</th><th>${t("Installation Location")}</th><th>${t("Size")}</th><th>${t("Quantity")}</th>
+          <th>${t("Color")}</th><th>${t("Installation Method")}</th><th>${t("Opening Direction")}</th>
+          <th>${t("Track Size")}</th><th>${t("Handle Height")}</th><th>${t("Track Type")}</th>
+          <th>${t("Mesh Type")}</th><th>${t("Lock")}</th><th>${t("Remark")}</th>
         </tr></thead>
-        <tbody>${items.length ? items.map((item) => productionSheetItemRow(item)).join("") : `<tr data-production-item-row><td colspan="14">No product items</td></tr>`}</tbody>
+        <tbody>${items.length ? items.map((item) => productionSheetItemRow(item)).join("") : `<tr data-production-item-row><td colspan="13">${t("No product items")}</td></tr>`}</tbody>
       </table>
       <footer class="production-sheet-footer">
-        <div class="production-sheet-remark"><span>生产备注 / Production Remark</span><strong>${escapeHtml(job.remark || "-")}</strong></div>
-        <div class="production-sheet-signatures"><span>Prepared by</span><span>Checked by</span></div>
+        <div class="production-sheet-remark"><span>${t("Production Remark")}</span><strong>${escapeHtml(job.remark || "-")}</strong></div>
+        <div class="production-sheet-signatures"><span>${t("Prepared by")}</span><span>${t("Checked by")}</span></div>
       </footer>
     </article>
   `;
@@ -6640,10 +6646,9 @@ function productionSheetItemRow(item = {}) {
   return `<tr data-production-item-row>
     <td>${escapeHtml(item.productName || "-")}</td><td>${escapeHtml(item.installationLocation || "-")}</td>
     <td>${escapeHtml(`${item.width || 0} x ${item.height || 0}`)}</td><td>${escapeHtml(item.quantity || 0)}</td>
-    <td>${escapeHtml(item.color || "-")}</td><td>${escapeHtml(item.installType || "-")}</td>
-    <td>${escapeHtml(item.openingDirection || "-")}</td><td>${escapeHtml(item.trackSize || "-")}</td>
-    <td>${escapeHtml(item.handleHeight || "-")}</td><td>${escapeHtml(item.handlePosition || "-")}</td>
-    <td>${escapeHtml(item.trackType || item.trackOpening || "-")}</td><td>${escapeHtml(meshValue(item) || "-")}</td>
+    <td>${escapeHtml(colorLabel(item.color))}</td><td>${escapeHtml(t(item.installType || "-"))}</td>
+    <td>${escapeHtml(openingDirectionLabel(item.openingDirection))}</td><td>${escapeHtml(item.trackSize || "-")}</td>
+    <td>${escapeHtml(item.handleHeight || "-")}</td><td>${escapeHtml(t(item.trackType || item.trackOpening || "-"))}</td><td>${escapeHtml(t(meshValue(item) || "-"))}</td>
     <td>${escapeHtml(lock)}</td><td>${escapeHtml(item.remark || "-")}</td>
   </tr>`;
 }
@@ -6690,10 +6695,10 @@ function installationCompletionPrintHtml(job) {
       <p><strong>${t("Installer Remark")}:</strong> ${job.installationRemark || "-"}</p>
       <p><strong>${t("Amount collected")}:</strong> ${money(job.amountCollected || 0)}</p>
       <p><strong>${t("Payment Method")}:</strong> ${job.paymentMethod || "-"}</p>
-      <p><strong>Payment Reference:</strong> ${job.paymentReference || "-"}</p>
+    <p><strong>${t("Payment Reference")}:</strong> ${job.paymentReference || "-"}</p>
     </div>
-    <table><thead><tr><th>Checklist</th><th>Status</th></tr></thead><tbody>
-      ${checklistLabels.map((label) => `<tr><td>${t(label)}</td><td>${checklist[label] ? "Done" : "Pending"}</td></tr>`).join("")}
+    <table><thead><tr><th>${t("Checklist")}</th><th>${t("Status")}</th></tr></thead><tbody>
+      ${checklistLabels.map((label) => `<tr><td>${t(label)}</td><td>${checklist[label] ? t("Done") : t("Pending")}</td></tr>`).join("")}
     </tbody></table>
     <div class="print-photo-grid">
       ${printImageBox(t("Before installation photo"), job.beforePhoto)}
@@ -6713,15 +6718,15 @@ function customerBlock(customer) {
 }
 
 function printItemsTable(items, showPrice) {
-  return `<table><thead><tr><th>${t("Product")}</th><th>${t("Installation Location")}</th><th>Size</th><th>${t("Quantity")}</th><th>${t("Color")}</th><th>${t("Install Type / Inside Outside")}</th><th>${t("Opening Direction")}</th><th>${t("Track Size")}</th><th>${t("Handle Height")}</th><th>${t("Handle Position")}</th><th>${t("Track Type")}</th><th>${t("Mesh / Net Type")}</th><th>${t("Powdercoat / Powercoat")}</th><th>${t("Remark")}</th>${showPrice ? `<th>${t("Unit Price")}</th><th>${t("Total")}</th>` : ""}</tr></thead><tbody>
-    ${items.map((item) => `<tr><td>${item.productName}</td><td>${item.installationLocation || "-"}</td><td>${item.width || 0} x ${item.height || 0}</td><td>${item.quantity || 0}</td><td>${item.color || "-"}</td><td>${item.installType || "-"}</td><td>${item.openingDirection || "-"}</td><td>${item.trackSize || "-"}</td><td>${item.handleHeight || "-"}</td><td>${item.handlePosition || "-"}</td><td>${item.trackType || item.trackOpening || "-"}</td><td>${meshValue(item) || "-"}</td><td>${item.powdercoat ? `Yes ${money(powdercoatAmount(item))}` : "No"}</td><td>${item.remark || "-"}</td>${showPrice ? `<td>${money(item.unitPrice)}</td><td>${money(lineTotal(item))}${priceAdjustmentPrintNote(item)}</td>` : ""}</tr>`).join("")}
+  return `<table><thead><tr><th>${t("Product")}</th><th>${t("Installation Location")}</th><th>${t("Size")}</th><th>${t("Quantity")}</th><th>${t("Color")}</th><th>${t("Install Type / Inside Outside")}</th><th>${t("Opening Direction")}</th><th>${t("Track Size")}</th><th>${t("Handle Height")}</th><th>${t("Track Type")}</th><th>${t("Mesh / Net Type")}</th><th>${t("Powdercoat / Powercoat")}</th><th>${t("Remark")}</th>${showPrice ? `<th>${t("Unit Price")}</th><th>${t("Total")}</th>` : ""}</tr></thead><tbody>
+    ${items.map((item) => `<tr><td>${item.productName}</td><td>${item.installationLocation || "-"}</td><td>${item.width || 0} x ${item.height || 0}</td><td>${item.quantity || 0}</td><td>${colorLabel(item.color)}</td><td>${t(item.installType || "-")}</td><td>${openingDirectionLabel(item.openingDirection)}</td><td>${item.trackSize || "-"}</td><td>${item.handleHeight || "-"}</td><td>${t(item.trackType || item.trackOpening || "-")}</td><td>${t(meshValue(item) || "-")}</td><td>${item.powdercoat ? `${t("Yes")} ${money(powdercoatAmount(item))}` : t("No")}</td><td>${item.remark || "-"}</td>${showPrice ? `<td>${money(item.unitPrice)}</td><td>${money(lineTotal(item))}${priceAdjustmentPrintNote(item)}</td>` : ""}</tr>`).join("")}
   </tbody></table>`;
 }
 
 function priceAdjustmentPrintNote(item) {
   if (!hasManualFinalPrice(item)) return "";
-  const remark = item.priceAdjustmentRemark ? `<small>Remark: ${item.priceAdjustmentRemark}</small>` : "";
-  return `<small>Adjusted from ${money(autoCalculatedPrice(item))}</small>${remark}`;
+  const remark = item.priceAdjustmentRemark ? `<small>${t("Remark")}: ${item.priceAdjustmentRemark}</small>` : "";
+  return `<small>${t("Adjusted from")} ${money(autoCalculatedPrice(item))}</small>${remark}`;
 }
 
 function totalsBlock(order) {
@@ -6731,7 +6736,7 @@ function totalsBlock(order) {
     <div><span>${t("Discount")}</span><strong>${money(order.discount)}</strong></div>
     <div><span>${t("Total")}</span><strong>${money(order.total)}</strong></div>
     <div><span>${t("Deposit")}</span><strong>${money(order.deposit)}</strong></div>
-    <div><span>Total Paid</span><strong>${money(paymentSummary.totalPaid)}</strong></div>
+    <div><span>${t("Total Paid")}</span><strong>${money(paymentSummary.totalPaid)}</strong></div>
     <div><span>${t("Balance")}</span><strong>${money(paymentSummary.balance)}</strong></div>
   </div>`;
 }
@@ -6744,8 +6749,8 @@ function openPrint(title, number, body) {
       <div>
         <h1>${company.companyName || "Eco Screen Sdn Bhd"}</h1>
         <p>${company.companyAddress || ""}</p>
-        <p>Tel: ${company.companyPhone || ""}</p>
-        ${company.companyEmail ? `<p>Email: ${company.companyEmail}</p>` : ""}
+        <p>${t("Phone")}: ${company.companyPhone || ""}</p>
+        ${company.companyEmail ? `<p>${t("Email")}: ${company.companyEmail}</p>` : ""}
       </div>
       <div><p>${title}</p><h2>${number}</h2></div>
     </div>

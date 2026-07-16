@@ -40,8 +40,8 @@ export function renderAddProductForm() {
   }
   panel.innerHTML = `
     <div class="form-grid compact">
-      <label>${t("Product Name")}<input id="newProductName" placeholder="New product name" /></label>
-      <label>${t("Category")}<input id="newProductCategory" placeholder="Window / Door / Sliding" /></label>
+      <label>${t("Product Name")}<input id="newProductName" placeholder="${t("New product name")}" /></label>
+      <label>${t("Category")}<input id="newProductCategory" placeholder="${t("Window / Door / Sliding")}" /></label>
       <label>${t("Selling Price")}<input id="newProductPrice" inputmode="decimal" placeholder="0.00" /></label>
       <label>${t("Cost Price")}<input id="newProductCost" inputmode="decimal" placeholder="0.00" /></label>
       <label>${t("Calculation Type")}<select id="newProductCalc"><option value="sqft">sqft</option><option value="fixed">fixed</option></select></label>
@@ -74,7 +74,7 @@ function updateProductFromEvent(event) {
     return { ...product, [field]: value };
   });
   persistProducts();
-  document.querySelector("#productSaveStatus").textContent = `Products saved. ${money(state.products.reduce((sum, product) => sum + Number(product.sellingPrice || 0), 0))} total price list value.`;
+  document.querySelector("#productSaveStatus").textContent = `${t("Products saved.")} ${money(state.products.reduce((sum, product) => sum + Number(product.sellingPrice || 0), 0))} ${t("total price list value.")}`;
 }
 
 function addProduct() {
