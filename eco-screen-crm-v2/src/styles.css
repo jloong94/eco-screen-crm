@@ -1270,6 +1270,11 @@ input:focus, select:focus, textarea:focus {
   }
 }
 
+@page production-sheet {
+  size: A4 portrait;
+  margin: 10mm;
+}
+
 @media print {
   body { background: white; }
   .topbar, .layout { display: none !important; }
@@ -1333,5 +1338,200 @@ input:focus, select:focus, textarea:focus {
     max-height: 180px;
     margin-top: 8px;
     object-fit: contain;
+  }
+
+  body.production-sheet-print-mode {
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+  body.production-sheet-print-mode #app {
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+  body.production-sheet-print-mode #app > :not(#workflowPrintArea),
+  body.production-sheet-print-mode > :not(#app) {
+    display: none !important;
+  }
+  body.production-sheet-print-mode #workflowPrintArea.production-sheet-print-area {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    color: #000 !important;
+    background: #fff !important;
+  }
+  .production-sheet {
+    page: production-sheet;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    min-height: 277mm;
+    margin: 0;
+    padding: 0;
+    overflow: visible;
+    color: #000;
+    background: #fff;
+    font-family: Arial, "Noto Sans SC", "Microsoft YaHei", sans-serif;
+    font-size: 9pt;
+    line-height: 1.25;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+  .production-sheet-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(68mm, .75fr);
+    gap: 8mm;
+    align-items: start;
+    padding-bottom: 3mm;
+    border-bottom: .5mm solid #000;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .production-sheet-company h1 {
+    margin: 0 0 1.5mm;
+    font-size: 15pt;
+    line-height: 1.15;
+    font-weight: 700;
+  }
+  .production-sheet-company p,
+  .production-sheet-title p {
+    margin: 0;
+    font-size: 9.5pt;
+    line-height: 1.35;
+  }
+  .production-sheet-title {
+    text-align: right;
+  }
+  .production-sheet-title p {
+    font-weight: 700;
+  }
+  .production-sheet-title h2 {
+    margin: 2mm 0 0;
+    font-size: 13pt;
+    line-height: 1.2;
+    font-weight: 700;
+  }
+  .production-sheet-meta {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-top: 3mm;
+    border-top: .25mm solid #000;
+    border-left: .25mm solid #000;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .production-sheet-meta > div {
+    display: grid;
+    grid-template-columns: minmax(36mm, .8fr) minmax(0, 1.2fr);
+    min-height: 8mm;
+    border-right: .25mm solid #000;
+    border-bottom: .25mm solid #000;
+  }
+  .production-sheet-meta span,
+  .production-sheet-meta strong {
+    display: flex;
+    align-items: center;
+    padding: 1.2mm 1.5mm;
+    font-size: 9pt;
+    overflow-wrap: anywhere;
+  }
+  .production-sheet-meta span {
+    border-right: .25mm solid #000;
+    font-weight: 700;
+  }
+  .production-sheet-table {
+    table-layout: fixed !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 4mm 0 0 !important;
+    border-collapse: collapse !important;
+    overflow: visible !important;
+  }
+  .production-sheet-table thead {
+    display: table-header-group;
+  }
+  .production-sheet-table tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .production-sheet-table th,
+  .production-sheet-table td {
+    box-sizing: border-box;
+    height: 9mm;
+    padding: 1.1mm .8mm !important;
+    border: .25mm solid #000 !important;
+    color: #000 !important;
+    background: #fff !important;
+    font-size: 8pt !important;
+    line-height: 1.2;
+    text-align: center;
+    vertical-align: middle !important;
+    white-space: normal !important;
+    overflow: visible !important;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  .production-sheet-table th {
+    font-size: 7.5pt !important;
+    font-weight: 700;
+  }
+  .production-col-product { width: 23mm; }
+  .production-col-location { width: 16mm; }
+  .production-col-size { width: 16mm; }
+  .production-col-quantity { width: 8mm; }
+  .production-col-color { width: 11mm; }
+  .production-col-method { width: 17mm; }
+  .production-col-opening { width: 14mm; }
+  .production-col-track-size { width: 11mm; }
+  .production-col-handle-height { width: 11mm; }
+  .production-col-handle-position { width: 11mm; }
+  .production-col-track-type { width: 12mm; }
+  .production-col-mesh { width: 15mm; }
+  .production-col-lock { width: 8mm; }
+  .production-col-remark { width: 17mm; }
+  .production-sheet-footer {
+    margin-top: auto;
+    padding-top: 8mm;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .production-sheet-remark {
+    display: grid;
+    grid-template-columns: 50mm minmax(0, 1fr);
+    min-height: 14mm;
+    border: .25mm solid #000;
+  }
+  .production-sheet-remark span,
+  .production-sheet-remark strong {
+    display: flex;
+    align-items: center;
+    padding: 1.5mm 2mm;
+    font-size: 9pt;
+    overflow-wrap: anywhere;
+  }
+  .production-sheet-remark span {
+    border-right: .25mm solid #000;
+    font-weight: 700;
+  }
+  .production-sheet-signatures {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 20mm;
+    margin-top: 14mm;
+  }
+  .production-sheet-signatures span {
+    padding-top: 2mm;
+    border-top: .25mm solid #000;
+    font-size: 9pt;
   }
 }
