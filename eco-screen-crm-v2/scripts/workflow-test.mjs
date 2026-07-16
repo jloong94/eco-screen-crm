@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+
 class MemoryStorage {
   constructor() {
     this.values = new Map();
@@ -46,6 +48,7 @@ const {
   markInstallationStatus,
   markProductionStatus,
   productionJobMatchesSearch,
+  productionSheetPrintHtml,
   productionJobsForCurrentView,
   productionJobsForDisplay,
   productionDuplicateArchiveActionHtml,
@@ -1746,6 +1749,83 @@ assert(workflowNavigationState().production.search === ""
   && productionJobsForCurrentView().length === 12,
 "AA5: entering Production must clear text search, disable archived-only mode and restore the full unique active list");
 
+const productionPrintOrder = {
+  id: "order-production-print-exact",
+  orderNo: "SO2607999",
+  orderNumber: "SO2607999",
+  quoteNumber: "ESQ-2026-PRINT",
+  quotationNo: "ESQ-2026-PRINT",
+  customer: { name: "Print & Customer", phone: "0123456789" },
+  installationDate: "2026-07-30",
+  items: []
+};
+const productionPrintItems = Array.from({ length: 3 }, (_, index) => ({
+  productName: index === 0 ? "Sliding Security Mesh Door with an intentionally long printable product description" : `Production Product ${index + 1}`,
+  installationLocation: index === 0 ? "Living room opening beside the main entrance with long wrapping text" : `Room ${index + 1}`,
+  width: 1234 + index,
+  height: 2345 + index,
+  quantity: index + 1,
+  color: "Custom Grey",
+  installType: "Outside install",
+  openingDirection: "Sliding Right",
+  trackSize: "3650",
+  handleHeight: "1100",
+  handlePosition: "Right",
+  trackType: "Double Track",
+  meshType: "1.0 Stainless Steel Net",
+  lockType: index === 0 ? "Key Lock" : "-",
+  remark: index === 0 ? "Long remark must wrap safely without overlap & must not become HTML <script>" : `Remark ${index + 1}`
+}));
+const productionPrintJob = {
+  id: "production-print-exact",
+  orderId: productionPrintOrder.id,
+  quoteNumber: productionPrintOrder.quoteNumber,
+  installationDate: productionPrintOrder.installationDate,
+  status: "in_production",
+  remark: "Check all dimensions before production.",
+  items: productionPrintItems
+};
+const productionPrintHtml = productionSheetPrintHtml(productionPrintJob, productionPrintOrder, {
+  companyName: "Eco Screen Sdn Bhd",
+  companyPhone: "0195763499"
+});
+assert(productionPrintHtml.includes('class="production-sheet"')
+  && productionPrintHtml.includes('data-production-job-id="production-print-exact"')
+  && productionPrintHtml.includes('data-order-id="order-production-print-exact"'),
+"AB1: Production Sheet must be a dedicated print container tied to exact Production Job and Order stable IDs");
+assert(productionPrintHtml.includes("Order No: SO2607999")
+  && productionPrintHtml.includes("Print &amp; Customer")
+  && productionPrintHtml.includes("ESQ-2026-PRINT")
+  && productionPrintHtml.includes("2026-07-30")
+  && productionPrintHtml.includes("In Production"),
+"AB1: Production Sheet must print the exact SO, customer, quotation, installation date and production status");
+assert((productionPrintHtml.match(/data-production-item-row/g) || []).length === 3
+  && productionPrintHtml.includes("产品 / Product")
+  && productionPrintHtml.includes("安装位置 / Installation Location")
+  && productionPrintHtml.includes("锁 / Lock")
+  && productionPrintHtml.includes("Key Lock"),
+"AB2: Production Sheet must render every stored product row and all required bilingual production columns");
+assert(productionPrintHtml.includes("Long remark must wrap safely without overlap &amp; must not become HTML &lt;script&gt;")
+  && productionPrintHtml.includes("生产备注 / Production Remark")
+  && productionPrintHtml.includes("Prepared by")
+  && productionPrintHtml.includes("Checked by")
+  && !productionPrintHtml.includes("moduleNavigation")
+  && !productionPrintHtml.includes("Sync Now")
+  && !productionPrintHtml.includes("<button"),
+"AB2: printable content must safely wrap long text, retain the footer and exclude CRM controls");
+const productionPrintCss = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
+assert(productionPrintCss.includes("@page production-sheet")
+  && productionPrintCss.includes("size: A4 portrait")
+  && productionPrintCss.includes("margin: 10mm")
+  && productionPrintCss.includes("body.production-sheet-print-mode #app > :not(#workflowPrintArea)"),
+"AB3: Production printing must use a named A4 portrait page and isolate the dedicated sheet from the CRM application");
+assert(productionPrintCss.includes("table-layout: fixed !important")
+  && productionPrintCss.includes("overflow-wrap: anywhere")
+  && productionPrintCss.includes("page-break-inside: avoid")
+  && productionPrintCss.includes(".production-col-remark { width: 17mm; }")
+  && productionPrintCss.includes(".production-sheet-footer"),
+"AB3: Production print CSS must fill the printable width, wrap long cells, keep rows intact and retain the signature footer");
+
 console.log([
   "Editable unit price and manual final price: passed",
   "Monthly SO numbering including legacy formats and >999: passed",
@@ -1778,4 +1858,5 @@ console.log([
   ,"Warranty validation, exact links, unique numbering, reuse, regeneration and mobile preview: passed"
   ,"Unique active Dashboard counts, Orders navigation reset and category filters: passed"
   ,"Unique active Production visibility, status aliases and navigation reset: passed"
+  ,"Dedicated A4 Production Sheet isolation, exact IDs, fixed table and print footer: passed"
 ].join("\n"));

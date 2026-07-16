@@ -6576,19 +6576,92 @@ function viewProductionJob(id) {
 }
 
 function printProduction(id) {
-  const job = state.productionJobs.find((row) => row.id === id);
+  const exactJobId = String(id || "");
+  const job = state.productionJobs.find((row) => String(row.id || "") === exactJobId);
   if (!job) return;
   const order = linkedOrderForProduction(job);
-  const orderNumber = productionOrderNumber(job);
-  openPrint(t("Print Production Sheet"), `Order No: ${orderNumber}`, `
-    <p><strong>${t("Customer Name")}:</strong> ${order?.customer?.name || order?.customerName || job.customerName || "-"}</p>
-    <p><strong>${t("Quote")}:</strong> ${job.quoteNumber || job.quotationNo || "-"}</p>
-    <p><strong>${t("Installation Date")}:</strong> ${job.installationDate || "-"}</p>
-    <p><strong>${t("Production Status")}:</strong> ${statusLabel(job.status)}</p>
-    ${printItemsTable(job.items, false)}
-    <p><strong>${t("Production Remark")}:</strong> ${job.remark || "-"}</p>
-    <div class="print-sign"><span>Prepared by</span><span>Checked by</span></div>
-  `);
+  if (!order || String(order.id || "") !== String(job.orderId || "")) {
+    return showWorkflowMessage("The exact active Order linked to this Production Job was not found. Printing is blocked.", "error");
+  }
+  openProductionSheetPrint(job, order);
+}
+
+export function productionSheetPrintHtml(job = {}, order = {}, company = state.companySettings) {
+  const items = Array.isArray(job.items) && job.items.length ? job.items : Array.isArray(order.items) ? order.items : [];
+  const orderNumber = getOrderDisplayNo(order) || "-";
+  const quotationNumber = job.quoteNumber || job.quotationNo || order.quoteNumber || order.quotationNo || "-";
+  const customerName = order.customer?.name || order.customerName || job.customerName || "-";
+  const installationDate = job.installationDate || order.installationDate || "-";
+  return `
+    <article class="production-sheet" data-production-job-id="${escapeHtml(job.id || "")}" data-order-id="${escapeHtml(order.id || "")}">
+      <header class="production-sheet-header">
+        <div class="production-sheet-company">
+          <h1>${escapeHtml(company.companyName || "Eco Screen Sdn Bhd")}</h1>
+          <p>24 Jalan Iks Bukit Tengah,<br />Taman Iks Bukit Tengah,<br />14000 Bukit Mertajam</p>
+          <p>Tel: ${escapeHtml(company.companyPhone || "0195763499")}</p>
+        </div>
+        <div class="production-sheet-title">
+          <p>打印生产单 / Production Sheet</p>
+          <h2>Order No: ${escapeHtml(orderNumber)}</h2>
+        </div>
+      </header>
+      <section class="production-sheet-meta" aria-label="Production details">
+        <div><span>顾客名字 / Customer Name</span><strong>${escapeHtml(customerName)}</strong></div>
+        <div><span>报价 / Quotation No</span><strong>${escapeHtml(quotationNumber)}</strong></div>
+        <div><span>安装日期 / Installation Date</span><strong>${escapeHtml(installationDate)}</strong></div>
+        <div><span>生产状态 / Production Status</span><strong>${escapeHtml(statusLabel(job.status))}</strong></div>
+      </section>
+      <table class="production-sheet-table" aria-label="Production items">
+        <colgroup>
+          <col class="production-col-product" /><col class="production-col-location" /><col class="production-col-size" />
+          <col class="production-col-quantity" /><col class="production-col-color" /><col class="production-col-method" />
+          <col class="production-col-opening" /><col class="production-col-track-size" /><col class="production-col-handle-height" />
+          <col class="production-col-handle-position" /><col class="production-col-track-type" /><col class="production-col-mesh" />
+          <col class="production-col-lock" /><col class="production-col-remark" />
+        </colgroup>
+        <thead><tr>
+          <th>产品 / Product</th><th>安装位置 / Installation Location</th><th>Size</th><th>数量 / Quantity</th>
+          <th>颜色 / Color</th><th>安装方式 / Installation Method</th><th>开向 / Opening Direction</th>
+          <th>轨道尺寸 / Track Size</th><th>把手高度 / Handle Height</th><th>把手位置 / Handle Position</th>
+          <th>Track Type</th><th>网布类型 / Mesh Type</th><th>锁 / Lock</th><th>备注 / Remark</th>
+        </tr></thead>
+        <tbody>${items.length ? items.map((item) => productionSheetItemRow(item)).join("") : `<tr data-production-item-row><td colspan="14">No product items</td></tr>`}</tbody>
+      </table>
+      <footer class="production-sheet-footer">
+        <div class="production-sheet-remark"><span>生产备注 / Production Remark</span><strong>${escapeHtml(job.remark || "-")}</strong></div>
+        <div class="production-sheet-signatures"><span>Prepared by</span><span>Checked by</span></div>
+      </footer>
+    </article>
+  `;
+}
+
+function productionSheetItemRow(item = {}) {
+  const lock = item.lock || item.lockType || item.lockOption || item.lockRemark || "-";
+  return `<tr data-production-item-row>
+    <td>${escapeHtml(item.productName || "-")}</td><td>${escapeHtml(item.installationLocation || "-")}</td>
+    <td>${escapeHtml(`${item.width || 0} x ${item.height || 0}`)}</td><td>${escapeHtml(item.quantity || 0)}</td>
+    <td>${escapeHtml(item.color || "-")}</td><td>${escapeHtml(item.installType || "-")}</td>
+    <td>${escapeHtml(item.openingDirection || "-")}</td><td>${escapeHtml(item.trackSize || "-")}</td>
+    <td>${escapeHtml(item.handleHeight || "-")}</td><td>${escapeHtml(item.handlePosition || "-")}</td>
+    <td>${escapeHtml(item.trackType || item.trackOpening || "-")}</td><td>${escapeHtml(meshValue(item) || "-")}</td>
+    <td>${escapeHtml(lock)}</td><td>${escapeHtml(item.remark || "-")}</td>
+  </tr>`;
+}
+
+function openProductionSheetPrint(job, order) {
+  const area = document.querySelector("#workflowPrintArea");
+  if (!area) return showWorkflowMessage("Production Sheet print area is unavailable.", "error");
+  area.className = "print-area workflow-print-area production-sheet-print-area";
+  area.innerHTML = productionSheetPrintHtml(job, order);
+  document.body.classList.add("workflow-print-mode", "production-sheet-print-mode");
+  const cleanup = () => {
+    document.body.classList.remove("workflow-print-mode", "production-sheet-print-mode");
+    area.className = "print-area workflow-print-area";
+    window.removeEventListener?.("afterprint", cleanup);
+  };
+  window.addEventListener?.("afterprint", cleanup, { once: true });
+  window.print();
+  setTimeout(cleanup, 2000);
 }
 
 function printInstallation(id) {
