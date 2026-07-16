@@ -36,7 +36,7 @@ function appHtml() {
         <div>
           <p>${t("Eco Screen CRM V2")}</p>
           <h1>${t(currentPageTitle())}</h1>
-          <span class="version-label">Eco Screen CRM V2 - Mobile Production</span>
+          <span class="version-label">${t("Eco Screen CRM V2 - Mobile Production")}</span>
           <span class="version-label">${escapeHtml(state.companySettings.companyPhone)}</span>
         </div>
       </div>
@@ -49,13 +49,13 @@ function appHtml() {
         </label>
         ${cloudStatusHtml()}
         ${cloudActionButtonsHtml()}
-        <span class="pill">${t("Current User")}: ${state.currentUser.name} / ${state.currentUser.role}</span>
+        <span class="pill">${t("Current User")}: ${state.currentUser.name} / ${t(state.currentUser.role)}</span>
         <button class="btn" id="logoutButton" type="button">${t("Logout")}</button>
         <input id="backupImportFile" type="file" accept="application/json" hidden />
       </div>
     </header>
 
-    <nav id="moduleNavigation" class="module-tabs" aria-label="Module navigation">
+    <nav id="moduleNavigation" class="module-tabs" aria-label="${t("Module navigation")}">
       ${renderNavigation()}
     </nav>
 
@@ -68,7 +68,8 @@ function appHtml() {
         <div>
           <h1>${escapeHtml(state.companySettings.companyName)}</h1>
           <p>${escapeHtml(state.companySettings.companyAddress)}</p>
-          <p>Tel: ${escapeHtml(state.companySettings.companyPhone)}</p>
+          <p>${t("Phone")}: ${escapeHtml(state.companySettings.companyPhone)}</p>
+          <p>${t("Website")}: www.ecosecurityscreens.com</p>
         </div>
         <div>
           <p>${t("Quotation")}</p>
@@ -79,15 +80,15 @@ function appHtml() {
       <table>
         <thead>
           <tr>
-            <th>#</th><th>${t("Product")}</th><th>Size</th><th>${t("Quantity")}</th><th>${t("Color")}</th><th>${t("Handle Position")}</th><th>${t("Mesh / Net Type")}</th><th>${t("Remark")}</th><th class="right">${t("Unit Price")}</th><th class="right">${t("Total")}</th>
+            <th>#</th><th>${t("Product")}</th><th>${t("Size")}</th><th>${t("Quantity")}</th><th>${t("Color")}</th><th>${t("Mesh / Net Type")}</th><th>${t("Remark")}</th><th class="right">${t("Unit Price")}</th><th class="right">${t("Total")}</th>
           </tr>
         </thead>
         <tbody id="printItems"></tbody>
       </table>
       <div id="printTotals" class="print-totals"></div>
       <div class="terms">
-        <p>Prices quoted are valid for two (2) weeks from the quotation date.</p>
-        <p>50% deposit is required upon confirmation. Deposit paid is not refundable.</p>
+        <p>${t("Prices quoted are valid for a period of two (2) weeks from the quotation date.")}</p>
+        <p>${t("50% deposit is required upon confirmation, balance of payment upon completion.")}</p>
       </div>
     </section>
     <section id="workflowPrintArea" class="print-area workflow-print-area"></section>
@@ -152,6 +153,7 @@ function quotationPageHtml() {
           <div>
             <p class="eyebrow">${t("Sales")}</p>
             <h2>${t("Quotation")}</h2>
+            <p class="muted-text">${t("Website")}: www.ecosecurityscreens.com</p>
           </div>
           <div class="actions">
             <button class="btn" id="newQuoteButton" type="button">${t("New Quote")}</button>
@@ -165,9 +167,9 @@ function quotationPageHtml() {
           <div class="form-grid">
             <label>${t("Quotation Number")}<input id="quoteNumber" /></label>
             <label>${t("Quotation Status")}<select id="quoteStatus"></select></label>
-            <label>${t("Customer Name")}<input id="customerName" placeholder="TEST CUSTOMER" /></label>
+            <label>${t("Customer Name")}<input id="customerName" placeholder="${t("Customer name example")}" /></label>
             <label>${t("Phone")}<input id="customerPhone" placeholder="0123456789" /></label>
-            <label>${t("Area")}<input id="customerArea" placeholder="Bukit Tengah" /></label>
+            <label>${t("Area")}<input id="customerArea" placeholder="${t("Area example")}" /></label>
             <label>${t("Appointment Date")}<input id="appointmentDate" type="date" /></label>
             <label class="wide">${t("Address")}<textarea id="customerAddress" rows="3"></textarea></label>
             <label class="wide">${t("Customer Remark")}<textarea id="customerRemark" rows="2"></textarea></label>
@@ -359,26 +361,29 @@ function syncCloudOnFirstLogin() {
 function cloudStatusHtml() {
   const configurationIssue = cloudConfigurationIssue();
   const baseStatus = isCloudConfigured() ? state.cloud.status : "Local Mode";
+  const missingConfiguration = String(configurationIssue || "")
+    .replace(/^Missing Vercel environment variables?:\s*/i, "")
+    .replace(/\.$/, "");
   const status = configurationIssue
-    ? `Local Mode: ${configurationIssue}`
+    ? `${t("Local Mode")}: ${t("Missing Vercel environment variables")}: ${missingConfiguration}`
     : state.cloud.connected
-      ? baseStatus
+      ? t(baseStatus)
       : baseStatus === "Cloud Sync Failed"
-        ? `Cloud Sync Failed: ${state.cloud.lastError || "Unknown error"}`
+        ? `${t("Cloud Sync Failed")}: ${state.cloud.lastError || t("Unknown error")}`
         : baseStatus === "Checking cloud..."
-          ? "Syncing..."
-          : baseStatus;
-  const lastSync = state.cloud.lastSyncAt ? new Date(state.cloud.lastSyncAt).toLocaleString("en-MY") : "-";
+          ? t("Syncing...")
+          : t(baseStatus);
+  const lastSync = state.cloud.lastSyncAt ? new Date(state.cloud.lastSyncAt).toLocaleString(state.language === "zh" ? "zh-CN" : "en-MY") : "-";
   const statusClass = state.cloud.connected ? "success" : status.startsWith("Cloud Sync Failed") ? "danger" : "";
-  return `<span class="pill ${statusClass}" title="${escapeHtml(state.cloud.lastError || "")}">${escapeHtml(status)} | Last Sync: ${escapeHtml(lastSync)}</span>`;
+  return `<span class="pill ${statusClass}" title="${escapeHtml(state.cloud.lastError || "")}">${escapeHtml(status)} | ${t("Last Sync")}: ${escapeHtml(lastSync)}</span>`;
 }
 
 function cloudActionButtonsHtml() {
   if (!isBossOrAdmin()) return "";
   return `
-    <button class="btn" id="syncNowButton" type="button">Sync Now</button>
-    <button class="btn" id="exportBackupButton" type="button">Export Backup / 导出备份</button>
-    <button class="btn" id="importBackupButton" type="button">Import Backup</button>
+    <button class="btn" id="syncNowButton" type="button">${t("Sync Now")}</button>
+    <button class="btn" id="exportBackupButton" type="button">${t("Export Backup")}</button>
+    <button class="btn" id="importBackupButton" type="button">${t("Import Backup")}</button>
   `;
 }
 
@@ -392,14 +397,14 @@ function cloudDebugPanelHtml() {
     <section class="panel cloud-debug-panel">
       <div class="panel-head">
         <div>
-          <p class="eyebrow">Cloud Debug</p>
-          <h2>Sync Safety Check</h2>
+          <p class="eyebrow">${t("Cloud Debug")}</p>
+          <h2>${t("Sync Safety Check")}</h2>
         </div>
       </div>
-      <p class="muted-text">Last successful sync: ${escapeHtml(state.cloud.lastSyncAt ? new Date(state.cloud.lastSyncAt).toLocaleString("en-MY") : "-")}</p>
-      <p class="muted-text">Last cloud sync error: ${escapeHtml(state.cloud.lastError || "-")}</p>
-      <p class="muted-text">Collections synced: ${escapeHtml(cloudCollections.join(", "))}</p>
-      <div class="table-wrap"><table><thead><tr><th>Collection</th><th>Local</th><th>Cloud</th></tr></thead><tbody>${collectionRows}</tbody></table></div>
+      <p class="muted-text">${t("Last successful sync")}: ${escapeHtml(state.cloud.lastSyncAt ? new Date(state.cloud.lastSyncAt).toLocaleString(state.language === "zh" ? "zh-CN" : "en-MY") : "-")}</p>
+      <p class="muted-text">${t("Last cloud sync error")}: ${escapeHtml(state.cloud.lastError || "-")}</p>
+      <p class="muted-text">${t("Collections synced")}: ${escapeHtml(cloudCollections.join(", "))}</p>
+      <div class="table-wrap"><table><thead><tr><th>${t("Collection")}</th><th>${t("Local")}</th><th>${t("Cloud")}</th></tr></thead><tbody>${collectionRows}</tbody></table></div>
     </section>
   `;
 }
@@ -513,21 +518,21 @@ function companySettingsHtml() {
     <section class="panel company-settings-panel">
       <div class="panel-head">
         <div>
-          <p class="eyebrow">Company Settings</p>
-          <h2>Company Settings</h2>
+          <p class="eyebrow">${t("Company Settings")}</p>
+          <h2>${t("Company Settings")}</h2>
         </div>
       </div>
       <div class="form-grid">
-        <label>Company Name<input data-company-field="companyName" value="${escapeHtml(settings.companyName)}" /></label>
-        <label>Company Phone<input data-company-field="companyPhone" value="${escapeHtml(settings.companyPhone)}" /></label>
-        <label class="wide">Company Address<textarea rows="2" data-company-field="companyAddress">${escapeHtml(settings.companyAddress)}</textarea></label>
-        <label>Company Email<input data-company-field="companyEmail" value="${escapeHtml(settings.companyEmail)}" /></label>
-        <label>Bank Name<input data-company-field="bankName" value="${escapeHtml(settings.bankName)}" /></label>
-        <label>Bank Account Name<input data-company-field="bankAccountName" value="${escapeHtml(settings.bankAccountName)}" /></label>
-        <label>Bank Account Number<input data-company-field="bankAccountNumber" value="${escapeHtml(settings.bankAccountNumber)}" /></label>
+        <label>${t("Company Name")}<input data-company-field="companyName" value="${escapeHtml(settings.companyName)}" /></label>
+        <label>${t("Company Phone")}<input data-company-field="companyPhone" value="${escapeHtml(settings.companyPhone)}" /></label>
+        <label class="wide">${t("Company Address")}<textarea rows="2" data-company-field="companyAddress">${escapeHtml(settings.companyAddress)}</textarea></label>
+        <label>${t("Company Email")}<input data-company-field="companyEmail" value="${escapeHtml(settings.companyEmail)}" /></label>
+        <label>${t("Bank Name")}<input data-company-field="bankName" value="${escapeHtml(settings.bankName)}" /></label>
+        <label>${t("Bank Account Name")}<input data-company-field="bankAccountName" value="${escapeHtml(settings.bankAccountName)}" /></label>
+        <label>${t("Bank Account Number")}<input data-company-field="bankAccountNumber" value="${escapeHtml(settings.bankAccountNumber)}" /></label>
       </div>
       <div class="actions">
-        <button class="btn primary" id="saveCompanySettingsButton" type="button">Save Company Settings</button>
+        <button class="btn primary" id="saveCompanySettingsButton" type="button">${t("Save Company Settings")}</button>
         <span class="muted-text" id="companySettingsStatus"></span>
       </div>
     </section>
@@ -552,16 +557,16 @@ function orderExportToolsHtml() {
     <section class="panel order-export-panel">
       <div class="panel-head">
         <div>
-          <p class="eyebrow">Backup / Export</p>
-          <h2>Export Old V2 Orders</h2>
+          <p class="eyebrow">${t("Backup / Export")}</p>
+          <h2>${t("Export Old V2 Orders")}</h2>
         </div>
       </div>
-      <p class="muted-text">Read-only export. This only downloads data and will not delete, reset, migrate, import or change anything.</p>
+      <p class="muted-text">${t("Read-only export. This only downloads data and will not delete, reset, migrate, import or change anything.")}</p>
       <div class="actions">
-        <button class="btn" type="button" data-export-v2="orders-json">Export All Orders JSON</button>
-        <button class="btn" type="button" data-export-v2="orders-csv">Export All Orders CSV</button>
-        <button class="btn" type="button" data-export-v2="quotations-json">Export All Quotations JSON</button>
-        <button class="btn" type="button" data-export-v2="quotations-csv">Export All Quotations CSV</button>
+        <button class="btn" type="button" data-export-v2="orders-json">${t("Export All Orders JSON")}</button>
+        <button class="btn" type="button" data-export-v2="orders-csv">${t("Export All Orders CSV")}</button>
+        <button class="btn" type="button" data-export-v2="quotations-json">${t("Export All Quotations JSON")}</button>
+        <button class="btn" type="button" data-export-v2="quotations-csv">${t("Export All Quotations CSV")}</button>
         <span class="muted-text" id="orderExportStatus"></span>
       </div>
     </section>
@@ -838,45 +843,42 @@ function orderResetToolsHtml() {
     <section class="panel danger-panel">
       <div class="panel-head">
         <div>
-          <p class="eyebrow">Admin Tools</p>
-          <h2>Emergency Rebuild Orders From Quotations</h2>
+          <p class="eyebrow">${t("Admin Tools")}</p>
+          <h2>${t("Emergency Rebuild Orders From Quotations")}</h2>
         </div>
       </div>
       <p class="muted-text">
-        This tool backs up all CRM data, clears workflow records, and rebuilds one Order from each Quotation that has items.
-        Old converted flags are ignored. Production, Installation and Warranty records stay empty until you send orders later.
+        ${t("This tool backs up all CRM data, clears workflow records, and rebuilds one Order from each Quotation that has items. Old converted flags are ignored. Production, Installation and Warranty records stay empty until you send orders later.")}
       </p>
       <div class="form-grid compact">
-        <label class="wide">Confirmation Text
-          <input id="rebuildOrdersConfirmation" placeholder="Type REBUILD ORDERS" autocomplete="off" />
+        <label class="wide">${t("Confirmation Text")}
+          <input id="rebuildOrdersConfirmation" placeholder="${t("Type REBUILD ORDERS")}" autocomplete="off" />
         </label>
       </div>
       <div class="actions">
-        <button class="btn" id="backupBeforeRebuildOrdersButton" type="button">Backup First</button>
-        <button class="btn danger" id="rebuildOrdersFromQuotationsButton" type="button">Rebuild Orders From Quotations</button>
+        <button class="btn" id="backupBeforeRebuildOrdersButton" type="button">${t("Backup First")}</button>
+        <button class="btn danger" id="rebuildOrdersFromQuotationsButton" type="button">${t("Rebuild Orders From Quotations")}</button>
         <span class="muted-text" id="rebuildOrdersStatus"></span>
       </div>
     </section>
     <section class="panel danger-panel">
       <div class="panel-head">
         <div>
-          <p class="eyebrow">Admin Tools</p>
-          <h2>Reset Orders and Reconversion Data</h2>
+          <p class="eyebrow">${t("Admin Tools")}</p>
+          <h2>${t("Reset Orders and Reconversion Data")}</h2>
         </div>
       </div>
       <p class="muted-text">
-        This will delete Orders, Production Jobs, Installation Jobs and Warranty Cards.
-        Quotations will be kept. Customers will be kept. Products will be kept.
-        Company Settings will be kept. This action is for fixing order conversion records.
+        ${t("This will delete Orders, Production Jobs, Installation Jobs and Warranty Cards. Quotations will be kept. Customers will be kept. Products will be kept. Company Settings will be kept. This action is for fixing order conversion records.")}
       </p>
       <div class="form-grid compact">
-        <label class="wide">Confirmation Text
-          <input id="resetOrdersConfirmation" placeholder="Type RESET ORDERS" autocomplete="off" />
+        <label class="wide">${t("Confirmation Text")}
+          <input id="resetOrdersConfirmation" placeholder="${t("Type RESET ORDERS")}" autocomplete="off" />
         </label>
       </div>
       <div class="actions">
-        <button class="btn" id="backupBeforeOrderResetButton" type="button">Backup Data First</button>
-        <button class="btn danger" id="resetOrdersOnlyButton" type="button">Reset Orders Only</button>
+        <button class="btn" id="backupBeforeOrderResetButton" type="button">${t("Backup Data First")}</button>
+        <button class="btn danger" id="resetOrdersOnlyButton" type="button">${t("Reset Orders Only")}</button>
         <span class="muted-text" id="orderResetStatus"></span>
       </div>
     </section>
@@ -1236,21 +1238,21 @@ function monthlySummaryHtml() {
     <section class="panel monthly-summary-panel">
       <div class="panel-head">
         <div>
-          <p class="eyebrow">${uiLabel("Monthly Summary", "每月总结")}</p>
-          <h2>${uiLabel("Monthly Summary", "每月总结")}</h2>
+          <p class="eyebrow">${t("Monthly Summary")}</p>
+          <h2>${t("Monthly Summary")}</h2>
         </div>
         <div class="actions">
-          <button class="btn" type="button" data-month-preset="this">${uiLabel("This Month", "这个月")}</button>
-          <button class="btn" type="button" data-month-preset="last">${uiLabel("Last Month", "上个月")}</button>
-          <label>${uiLabel("Select Month", "选择月份")}<input id="monthlySummaryMonth" type="month" value="${monthlySummaryMonth}" /></label>
+          <button class="btn" type="button" data-month-preset="this">${t("This Month")}</button>
+          <button class="btn" type="button" data-month-preset="last">${t("Last Month")}</button>
+          <label>${t("Select Month")}<input id="monthlySummaryMonth" type="month" value="${monthlySummaryMonth}" /></label>
         </div>
       </div>
       <div class="dashboard-grid">
-        <div class="metric-card"><span>${uiLabel("New Orders Total", "新单总额")}</span><strong>${money(summary.totalSales)}</strong><small>${summary.newOrdersCount} ${uiLabel("new orders", "新单")}</small></div>
-        <div class="metric-card"><span>${uiLabel("Total Collected", "已收总额")}</span><strong>${money(summary.totalCollected)}</strong><small>${uiLabel("Deposit", "订金")}: ${money(summary.totalDeposit)}</small></div>
-        <div class="metric-card"><span>${uiLabel("Outstanding Balance", "未收余额")}</span><strong>${money(summary.outstanding)}</strong><small>${summary.activeOrdersCount} ${uiLabel("active orders", "进行中订单")}</small></div>
-        <div class="metric-card"><span>${uiLabel("Pending Collection", "等待收款")}</span><strong>${money(summary.pendingCollection)}</strong><small>${summary.pendingCollectionCount} ${uiLabel("pending", "等待")}</small></div>
-        <div class="metric-card"><span>${uiLabel("Completed Orders", "已完成订单")}</span><strong>${money(summary.completedAmount)}</strong><small>${summary.completedCount} ${uiLabel("completed", "已完成")}</small></div>
+        <div class="metric-card"><span>${t("New Orders Total")}</span><strong>${money(summary.totalSales)}</strong><small>${summary.newOrdersCount} ${t("new orders")}</small></div>
+        <div class="metric-card"><span>${t("Total Collected")}</span><strong>${money(summary.totalCollected)}</strong><small>${t("Deposit")}: ${money(summary.totalDeposit)}</small></div>
+        <div class="metric-card"><span>${t("Outstanding Balance")}</span><strong>${money(summary.outstanding)}</strong><small>${summary.activeOrdersCount} ${t("active orders")}</small></div>
+        <div class="metric-card"><span>${t("Pending Collection")}</span><strong>${money(summary.pendingCollection)}</strong><small>${summary.pendingCollectionCount} ${t("pending")}</small></div>
+        <div class="metric-card"><span>${t("Completed Orders")}</span><strong>${money(summary.completedAmount)}</strong><small>${summary.completedCount} ${t("completed")}</small></div>
       </div>
     </section>
   `;
@@ -1307,10 +1309,6 @@ function escapeHtml(value) {
     "\"": "&quot;",
     "'": "&#039;"
   })[char]);
-}
-
-function uiLabel(en, zh) {
-  return state.language === "zh" ? zh : en;
 }
 
 renderShell();

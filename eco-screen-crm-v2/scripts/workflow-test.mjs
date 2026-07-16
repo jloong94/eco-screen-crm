@@ -37,6 +37,7 @@ const {
   activeProductionJobForOrder,
   buildSafeOrderOwnershipComparison,
   convertQuoteToOrder,
+  createOrderFromQuote,
   createInstallationJobFromOrder,
   duplicateArchiveActionHtml,
   findExistingOrderForQuote,
@@ -88,7 +89,17 @@ const {
   updateQuotationStatus,
   warrantyCardPreviewHtml
 } = await import("../src/workflow.js");
-const { quotationsForTab } = await import("../src/quotations.js");
+const { quoteDocumentHtml, quotationsForTab } = await import("../src/quotations.js");
+const {
+  COLOR_VALUES,
+  OPENING_DIRECTION_VALUES,
+  colorLabel,
+  missingChineseTranslations,
+  normalizeColor,
+  normalizeOpeningDirection,
+  openingDirectionLabel,
+  statusLabel
+} = await import("../src/i18n.js");
 const {
   isActiveOrderRecord,
   isActiveWorkflowRecord,
@@ -1749,6 +1760,47 @@ assert(workflowNavigationState().production.search === ""
   && productionJobsForCurrentView().length === 12,
 "AA5: entering Production must clear text search, disable archived-only mode and restore the full unique active list");
 
+assert(JSON.stringify(OPENING_DIRECTION_VALUES) === JSON.stringify(["close_left", "close_right", "close_down"]),
+  "AB1: Opening Direction must expose only the three stable canonical values");
+assert(JSON.stringify(COLOR_VALUES) === JSON.stringify(["white", "grey"]),
+  "AB1: Color must expose only white and grey as stable canonical values");
+assert(normalizeOpeningDirection("Left") === "close_left"
+  && normalizeOpeningDirection("Right Close") === "close_right"
+  && normalizeOpeningDirection("Bottom") === "close_down"
+  && normalizeOpeningDirection("左") === "close_left"
+  && normalizeOpeningDirection("右") === "close_right"
+  && normalizeOpeningDirection("下") === "close_down",
+"AB1: known legacy Opening Direction aliases must normalize safely without rewriting records");
+assert(normalizeColor("White") === "white"
+  && normalizeColor("GRAY") === "grey"
+  && normalizeColor("白色") === "white"
+  && normalizeColor("灰") === "grey",
+"AB1: known legacy Color aliases must normalize safely");
+assert(normalizeColor("Bronze") === "Bronze" && normalizeOpeningDirection("Diagonal") === "Diagonal",
+  "AB1: unknown legacy selections must remain preserved rather than being discarded");
+const newCanonicalItem = makeQuoteItem();
+assert(newCanonicalItem.color === "white" && newCanonicalItem.openingDirection === "close_left" && !("handlePosition" in newCanonicalItem),
+  "AB1: new Quotation items must use canonical defaults and must not create Handle Position");
+
+state.language = "en";
+assert(openingDirectionLabel("close_left") === "Close Left"
+  && openingDirectionLabel("close_right") === "Close Right"
+  && openingDirectionLabel("close_down") === "Close Down"
+  && colorLabel("white") === "White"
+  && colorLabel("grey") === "Grey",
+"AB1: English canonical labels must be consistent");
+state.language = "zh";
+assert(openingDirectionLabel("close_left") === "左关"
+  && openingDirectionLabel("close_right") === "右关"
+  && openingDirectionLabel("close_down") === "下关"
+  && colorLabel("white") === "白色"
+  && colorLabel("grey") === "灰色"
+  && statusLabel("follow_up") === "跟进",
+"AB1: Chinese canonical labels must be consistent");
+assert(openingDirectionLabel("Diagonal") === "旧值: Diagonal" && colorLabel("Bronze") === "旧值: Bronze",
+  "AB1: unknown legacy values must remain visible with a localized legacy marker");
+state.language = "en";
+
 const productionPrintOrder = {
   id: "order-production-print-exact",
   orderNo: "SO2607999",
@@ -1800,15 +1852,18 @@ assert(productionPrintHtml.includes("Order No: SO2607999")
   && productionPrintHtml.includes("In Production"),
 "AB1: Production Sheet must print the exact SO, customer, quotation, installation date and production status");
 assert((productionPrintHtml.match(/data-production-item-row/g) || []).length === 3
-  && productionPrintHtml.includes("产品 / Product")
-  && productionPrintHtml.includes("安装位置 / Installation Location")
-  && productionPrintHtml.includes("锁 / Lock")
+  && productionPrintHtml.includes(">Product</th>")
+  && productionPrintHtml.includes(">Installation Location</th>")
+  && productionPrintHtml.includes(">Lock</th>")
   && productionPrintHtml.includes("Key Lock"),
-"AB2: Production Sheet must render every stored product row and all required bilingual production columns");
+"AB2: English Production Sheet must render every stored product row using English-only headings");
 assert(productionPrintHtml.includes("Long remark must wrap safely without overlap &amp; must not become HTML &lt;script&gt;")
-  && productionPrintHtml.includes("生产备注 / Production Remark")
+  && productionPrintHtml.includes("Production Remark")
   && productionPrintHtml.includes("Prepared by")
   && productionPrintHtml.includes("Checked by")
+  && !productionPrintHtml.includes("Handle Position")
+  && !productionPrintHtml.includes("把手位置")
+  && !productionPrintHtml.includes(" / Product")
   && !productionPrintHtml.includes("moduleNavigation")
   && !productionPrintHtml.includes("Sync Now")
   && !productionPrintHtml.includes("<button"),
@@ -1822,9 +1877,92 @@ assert(productionPrintCss.includes("@page production-sheet")
 assert(productionPrintCss.includes("table-layout: fixed !important")
   && productionPrintCss.includes("overflow-wrap: anywhere")
   && productionPrintCss.includes("page-break-inside: avoid")
-  && productionPrintCss.includes(".production-col-remark { width: 17mm; }")
+  && productionPrintCss.includes(".production-col-remark { width: 21mm; }")
+  && !productionPrintCss.includes(".production-col-handle-position")
   && productionPrintCss.includes(".production-sheet-footer"),
 "AB3: Production print CSS must fill the printable width, wrap long cells, keep rows intact and retain the signature footer");
+
+state.language = "zh";
+const chineseProductionPrintHtml = productionSheetPrintHtml(productionPrintJob, productionPrintOrder, {
+  companyName: "Eco Screen Sdn Bhd",
+  companyPhone: "0195763499"
+});
+assert(chineseProductionPrintHtml.includes(">生产单<")
+  && chineseProductionPrintHtml.includes(">产品</th>")
+  && chineseProductionPrintHtml.includes(">安装位置</th>")
+  && chineseProductionPrintHtml.includes(">左关</td>") === false
+  && chineseProductionPrintHtml.includes(">旧值: Sliding Right</td>")
+  && chineseProductionPrintHtml.includes("制单人")
+  && chineseProductionPrintHtml.includes("审核人")
+  && !chineseProductionPrintHtml.includes("Production Sheet")
+  && !chineseProductionPrintHtml.includes("Customer Name")
+  && !chineseProductionPrintHtml.includes("Prepared by"),
+"AB4: Chinese Production Sheet must use Chinese-only interface headings while preserving unknown legacy item values");
+
+const languageQuote = makeQuote();
+const languageQuoteItem = makeQuoteItem();
+Object.assign(languageQuoteItem, {
+  productName: "Manual Product Name",
+  width: "1000",
+  height: "1200",
+  quantity: "1",
+  unitPrice: 100,
+  color: "grey",
+  openingDirection: "close_down",
+  handlePosition: "Right",
+  installationLocation: "Customer Entered Location"
+});
+languageQuote.quoteNumber = "ESQ-LANGUAGE-TEST";
+languageQuote.customer = { name: "Customer Entered Name", phone: "0123456789", area: "Customer Entered Area", address: "Customer Entered Address", remark: "" };
+languageQuote.items = [languageQuoteItem];
+languageQuote.status = "quoted";
+state.language = "en";
+const englishQuotePrintHtml = quoteDocumentHtml(languageQuote);
+const convertedLanguageOrder = createOrderFromQuote(languageQuote, {
+  id: "order-language-preservation-test",
+  orderNo: "SO-LANGUAGE-TEST"
+});
+assert(englishQuotePrintHtml.includes("Website: www.ecosecurityscreens.com")
+  && englishQuotePrintHtml.includes("Close Down")
+  && englishQuotePrintHtml.includes("Grey")
+  && !englishQuotePrintHtml.includes("Handle Position")
+  && languageQuoteItem.handlePosition === "Right"
+  && convertedLanguageOrder.items[0].handlePosition === "Right",
+"AB5: English Quotation output must include the website and canonical labels while preserving hidden legacy Handle Position data");
+state.language = "zh";
+const chineseQuotePrintHtml = quoteDocumentHtml(languageQuote);
+assert(chineseQuotePrintHtml.includes("网站: www.ecosecurityscreens.com")
+  && chineseQuotePrintHtml.includes("下关")
+  && chineseQuotePrintHtml.includes("灰色")
+  && chineseQuotePrintHtml.includes("条款与条件")
+  && !chineseQuotePrintHtml.includes("BILL TO")
+  && !chineseQuotePrintHtml.includes("JOB DETAILS")
+  && !chineseQuotePrintHtml.includes("Terms &amp; Conditions")
+  && !chineseQuotePrintHtml.includes("Handle Position"),
+"AB5: Chinese Quotation output must use Chinese-only interface headings and omit Handle Position");
+
+const quotationSource = await readFile(new URL("../src/quotations.js", import.meta.url), "utf8");
+assert(quotationSource.includes("canonicalSelectOptions(COLOR_VALUES")
+  && quotationSource.includes("canonicalSelectOptions(OPENING_DIRECTION_VALUES")
+  && !quotationSource.includes('data-field="handlePosition"')
+  && !quotationSource.includes('fieldSelect(t("Handle Position")'),
+"AB6: active Quotation forms must use canonical dropdowns and must not render Handle Position");
+const translationSourceUrls = [
+  "../src/ads.js",
+  "../src/auth.js",
+  "../src/main.js",
+  "../src/products.js",
+  "../src/quotations.js",
+  "../src/workflow.js"
+];
+const visibleTranslationKeys = [];
+for (const sourceUrl of translationSourceUrls) {
+  const source = await readFile(new URL(sourceUrl, import.meta.url), "utf8");
+  for (const match of source.matchAll(/(?<![A-Za-z0-9_.])t\("([^"]+)"\)/g)) visibleTranslationKeys.push(match[1]);
+}
+assert(missingChineseTranslations(visibleTranslationKeys).length === 0,
+  `AB6: every literal visible t() key must have a Chinese translation: ${missingChineseTranslations(visibleTranslationKeys).join(", ")}`);
+state.language = "en";
 
 console.log([
   "Editable unit price and manual final price: passed",

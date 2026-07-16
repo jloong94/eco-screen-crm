@@ -28,7 +28,17 @@ import {
   renderWorkflowModules,
   updateQuotationStatus
 } from "./workflow.js";
-import { normalizeStatus, statusLabel, t } from "./i18n.js";
+import {
+  COLOR_VALUES,
+  OPENING_DIRECTION_VALUES,
+  colorLabel,
+  normalizeColor,
+  normalizeOpeningDirection,
+  normalizeStatus,
+  openingDirectionLabel,
+  statusLabel,
+  t
+} from "./i18n.js";
 import { isBossOrAdmin } from "./permissions.js";
 
 const quotationTabs = ["quoted", "follow_up", "won", "lost"];
@@ -146,6 +156,15 @@ function selectOptions(options, selectedValue) {
   return options.map((option) => `<option value="${option}" ${option === selectedValue ? "selected" : ""}>${statusLabel(option)}</option>`).join("");
 }
 
+function canonicalSelectOptions(options, currentValue, normalizer, labeler) {
+  const raw = String(currentValue ?? "").trim();
+  const normalized = normalizer(raw);
+  const legacyOption = raw && !options.includes(normalized)
+    ? `<option value="${escapeHtml(raw)}" selected>${escapeHtml(labeler(raw))}</option>`
+    : "";
+  return `${legacyOption}${options.map((option) => `<option value="${option}" ${option === normalized ? "selected" : ""}>${escapeHtml(labeler(option))}</option>`).join("")}`;
+}
+
 function trackTypeOptions(item) {
   const options = ["Single Track", "Double Track", "Triple Track"];
   const selectedValue = item.trackType || item.trackOpening || "Single Track";
@@ -201,11 +220,10 @@ function itemCardHtml(item, index) {
         ${fieldInput(t("Width mm"), item.id, "width", item.width, "1000", "numeric")}
         ${fieldInput(t("Height mm"), item.id, "height", item.height, "1200", "numeric")}
         ${fieldInput(t("Quantity"), item.id, "quantity", item.quantity, "1", "numeric")}
-        ${fieldInput(t("Color"), item.id, "color", item.color, "White")}
+        ${fieldSelect(t("Color"), item.id, "color", canonicalSelectOptions(COLOR_VALUES, item.color || "white", normalizeColor, colorLabel))}
         ${fieldSelect(t("Install Type / Inside Outside"), item.id, "installType", selectOptions(["Inside install", "Outside install", "Not sure / To confirm"], item.installType || "Not sure / To confirm"))}
-        ${fieldInput(t("Installation Location"), item.id, "installationLocation", item.installationLocation, "Living")}
-        ${fieldSelect(t("Opening Direction"), item.id, "openingDirection", selectOptions(["Left", "Right", "Center", "Sliding Left", "Sliding Right", "Not sure"], item.openingDirection || "Not sure"))}
-        ${fieldSelect(t("Handle Position"), item.id, "handlePosition", selectOptions(["Left", "Right"], item.handlePosition || "Left"))}
+        ${fieldInput(t("Installation Location"), item.id, "installationLocation", item.installationLocation, t("Living"))}
+        ${fieldSelect(t("Opening Direction"), item.id, "openingDirection", canonicalSelectOptions(OPENING_DIRECTION_VALUES, item.openingDirection || "close_left", normalizeOpeningDirection, openingDirectionLabel))}
         ${fieldSelect(t("Track Type"), item.id, "trackType", trackTypeOptions(item))}
         ${fieldInput(t("Track Size"), item.id, "trackSize", item.trackSize, "25mm")}
         ${fieldInput(t("Handle Height"), item.id, "handleHeight", item.handleHeight, "1000mm")}
@@ -213,25 +231,25 @@ function itemCardHtml(item, index) {
         ${fieldInput(t("Unit Price"), item.id, "unitPrice", item.unitPrice, "", "decimal")}
         <label>${t("Powdercoat / Powercoat")}
           <select data-item-id="${item.id}" data-field="powdercoat">
-            <option value="false" ${item.powdercoat ? "" : "selected"}>No</option>
-            <option value="true" ${item.powdercoat ? "selected" : ""}>Yes</option>
+            <option value="false" ${item.powdercoat ? "" : "selected"}>${t("No")}</option>
+            <option value="true" ${item.powdercoat ? "selected" : ""}>${t("Yes")}</option>
           </select>
         </label>
         <label>${t("Manual Final Price")}
-          <input inputmode="decimal" data-item-id="${item.id}" data-field="manualFinalPrice" value="${escapeHtml(item.manualFinalPrice ?? "")}" placeholder="Optional final RM" />
+          <input inputmode="decimal" data-item-id="${item.id}" data-field="manualFinalPrice" value="${escapeHtml(item.manualFinalPrice ?? "")}" placeholder="${t("Optional final RM")}" />
         </label>
         <label class="wide">${t("Adjustment Remark")}
-          <input data-item-id="${item.id}" data-field="priceAdjustmentRemark" value="${escapeHtml(item.priceAdjustmentRemark || "")}" placeholder="Reason for price adjustment" />
+          <input data-item-id="${item.id}" data-field="priceAdjustmentRemark" value="${escapeHtml(item.priceAdjustmentRemark || "")}" placeholder="${t("Reason for price adjustment")}" />
         </label>
         <label class="wide">${t("Remark")}
-          <textarea rows="2" data-item-id="${item.id}" data-field="remark" placeholder="Site note, special request">${escapeHtml(item.remark || "")}</textarea>
+          <textarea rows="2" data-item-id="${item.id}" data-field="remark" placeholder="${t("Site note, special request")}">${escapeHtml(item.remark || "")}</textarea>
         </label>
         <div class="line-metrics">
-          <span>ft2 / Area</span>
+          <span>${t("ft2 / Area")}</span>
           <strong data-line-id="${item.id}" data-line-field="area">${chargeableSqft(item).toFixed(2)}</strong>
           <span>${t("Base Total")}</span>
           <strong data-line-id="${item.id}" data-line-field="base">${money(baseLineTotal(item))}</strong>
-          <span>Powdercoat 8%</span>
+          <span>${t("Powdercoat 8%")}</span>
           <strong data-line-id="${item.id}" data-line-field="powdercoat">${money(powdercoatAmount(item))}</strong>
           <span>${t("Auto Calculated Price")}</span>
           <strong data-line-id="${item.id}" data-line-field="auto">${money(autoCalculatedPrice(item))}</strong>
@@ -278,6 +296,10 @@ function updateItemFromEvent(event) {
   if (field === "powdercoat") {
     item.powdercoat = event.target.value === "true";
     item.powdercoatRate = Number(item.powdercoatRate || 0.08);
+  } else if (field === "color") {
+    item.color = normalizeColor(event.target.value);
+  } else if (field === "openingDirection") {
+    item.openingDirection = normalizeOpeningDirection(event.target.value);
   } else {
     item[field] = ["width", "height", "quantity", "unitPrice", "manualFinalPrice"].includes(field)
       ? event.target.value.replace(/[^\d.]/g, "")
@@ -366,7 +388,7 @@ export function renderQuotationList() {
   const cloudIsLoading = state.cloud.status === "Checking cloud...";
   const rows = quotationsForTab(activeQuotationTab);
   list.innerHTML = `
-    <div class="filter-tabs" aria-label="Quotation status">
+    <div class="filter-tabs" aria-label="${t("Quotation status")}">
       ${quotationTabs.map((status) => `<button class="filter-tab ${activeQuotationTab === status ? "active" : ""}" type="button" data-quotation-tab="${status}">${statusLabel(status)} (${quotationsForTab(status).length})</button>`).join("")}
     </div>
     ${rows.length
@@ -510,7 +532,7 @@ function printableDocument(title, bodyHtml) {
   return `<!doctype html><html lang="${state.language === "zh" ? "zh" : "en"}"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>${escapeHtml(title)}</title><style>${quotePrintStyles()}</style></head><body>${bodyHtml}</body></html>`;
 }
 
-function quoteDocumentHtml(quote) {
+export function quoteDocumentHtml(quote) {
   const totals = quoteTotals(quote.items, quote.discount, quote.deposit);
   const company = state.companySettings;
   const discountRow = Number(quote.discount || 0) > 0
@@ -520,27 +542,28 @@ function quoteDocumentHtml(quote) {
     <main class="quotation-page">
       <header class="quote-header">
         <section class="company-block">
-          <div class="logo-row"><div class="es-logo">ES</div><div><h1>${escapeHtml(company.companyName)}</h1><p class="specialist">Screen and Security Mesh Specialist</p></div></div>
+          <div class="logo-row"><div class="es-logo">ES</div><div><h1>${escapeHtml(company.companyName)}</h1><p class="specialist">${t("Screen and Security Mesh Specialist")}</p></div></div>
           <p>${escapeHtml(company.companyAddress)}</p>
-          <p>Tel: ${escapeHtml(company.companyPhone)}</p>
-          ${company.companyEmail ? `<p>Email: ${escapeHtml(company.companyEmail)}</p>` : ""}
-          <p class="description">Supply and installation quotation for insect screen, roller screen, stainless steel net and security mesh products.</p>
+          <p>${t("Phone")}: ${escapeHtml(company.companyPhone)}</p>
+          <p class="company-website">${t("Website")}: www.ecosecurityscreens.com</p>
+          ${company.companyEmail ? `<p>${t("Email")}: ${escapeHtml(company.companyEmail)}</p>` : ""}
+          <p class="description">${t("Supply and installation quotation for insect screen, roller screen, stainless steel net and security mesh products.")}</p>
         </section>
         <aside class="quote-card">
           <p>${t("Quotation").toUpperCase()}</p>
           <h2>${escapeHtml(getQuotationDisplayNo(quote) || "-")}</h2>
-          <div><span>Date</span><strong>${formatDate(quote.updatedAt || quote.createdAt || new Date().toISOString())}</strong></div>
+          <div><span>${t("Quotation Date")}</span><strong>${formatDate(quote.updatedAt || quote.createdAt || new Date().toISOString())}</strong></div>
           <div><span>${t("Status")}</span><strong>${statusLabel(quote.status || "Quoted")}</strong></div>
         </aside>
       </header>
       <div class="divider"></div>
       <section class="customer-grid">
-        <div class="info-box"><p class="section-label">BILL TO</p><h3>${escapeHtml(quote.customer.name || "-")}</h3><p>${escapeHtml(quote.customer.phone || "-")}</p><p>${escapeHtml(quote.customer.address || "-")}</p></div>
-        <div class="info-box"><p class="section-label">JOB DETAILS</p><p><strong>${t("Area")}:</strong> ${escapeHtml(quote.customer.area || "-")}</p><p><strong>${t("Appointment Date")}:</strong> ${escapeHtml(quote.appointmentDate || "-")}</p><p><strong>${t("Status")}:</strong> ${statusLabel(quote.status || "quoted")}</p></div>
+        <div class="info-box"><p class="section-label">${t("Bill To").toUpperCase()}</p><h3>${escapeHtml(quote.customer.name || "-")}</h3><p>${escapeHtml(quote.customer.phone || "-")}</p><p>${escapeHtml(quote.customer.address || "-")}</p></div>
+        <div class="info-box"><p class="section-label">${t("Job Details").toUpperCase()}</p><p><strong>${t("Area")}:</strong> ${escapeHtml(quote.customer.area || "-")}</p><p><strong>${t("Appointment Date")}:</strong> ${escapeHtml(quote.appointmentDate || "-")}</p><p><strong>${t("Status")}:</strong> ${statusLabel(quote.status || "quoted")}</p></div>
       </section>
-      <table class="items-table"><thead><tr><th>Description</th><th>${t("Product")}</th><th class="right">Size</th><th class="right">Sqft</th><th class="right">Rate</th><th class="right">${t("Quantity")}</th><th class="right">${t("Total")}</th></tr></thead><tbody>${quoteItemRowsHtml(quote.items)}</tbody></table>
+      <table class="items-table"><thead><tr><th>${t("Description")}</th><th>${t("Product")}</th><th class="right">${t("Size")}</th><th class="right">${t("Sqft")}</th><th class="right">${t("Rate")}</th><th class="right">${t("Quantity")}</th><th class="right">${t("Total")}</th></tr></thead><tbody>${quoteItemRowsHtml(quote.items)}</tbody></table>
       <section class="bottom-grid">
-        <div class="terms-box"><h3>Terms & Conditions</h3>${quoteTermsHtml(company)}</div>
+        <div class="terms-box"><h3>${t("Terms & Conditions")}</h3>${quoteTermsHtml(company)}</div>
         <div class="totals-box">
           <div class="total-row"><span>${t("Subtotal")}</span><strong>${money(totals.subtotal)}</strong></div>
           ${discountRow}
@@ -563,33 +586,32 @@ function quoteItemRowsHtml(items) {
 function priceAdjustmentNoteHtml(item) {
   if (!hasManualFinalPrice(item)) return "";
   const remark = item.priceAdjustmentRemark
-    ? `<small>Remark: ${escapeHtml(item.priceAdjustmentRemark)}</small>`
+    ? `<small>${t("Remark")}: ${escapeHtml(item.priceAdjustmentRemark)}</small>`
     : "";
-  return `<small>Adjusted from ${money(autoCalculatedPrice(item))}</small>${remark}`;
+  return `<small>${t("Adjusted from")} ${money(autoCalculatedPrice(item))}</small>${remark}`;
 }
 
 function quoteItemDetailLinesHtml(item) {
   const details = [
-    [t("Color"), item.color],
+    [t("Color"), colorLabel(item.color)],
     [t("Install Type / Inside Outside"), item.installType],
     [t("Installation Location"), item.installationLocation],
-    [t("Opening Direction"), item.openingDirection],
+    [t("Opening Direction"), openingDirectionLabel(item.openingDirection)],
     [t("Track Size"), item.trackSize],
     [t("Handle Height"), item.handleHeight],
-    [t("Handle Position"), item.handlePosition],
     [t("Track Type"), item.trackType || item.trackOpening],
     [t("Mesh / Net Type"), meshValue(item)],
-    [t("Powdercoat / Powercoat"), item.powdercoat ? `Yes (${money(powdercoatAmount(item))})` : ""]
+    [t("Powdercoat / Powercoat"), item.powdercoat ? `${t("Yes")} (${money(powdercoatAmount(item))})` : ""]
   ];
   return details.filter(([, value]) => value).map(([label, value]) => `<small>${label}: ${escapeHtml(value)}</small>`).join("") || `<small>${t("Color")}: -</small>`;
 }
 
 function quoteTermsHtml(company = state.companySettings) {
   return `
-    <p>i) Prices quoted are valid for a period of two (2) weeks from the quotation date.</p>
-    <p>ii) 50% deposit is required upon confirmation, balance of payment upon completion.</p>
-    <p>iii) Deposit paid is non-refundable.</p>
-    <p>iv) All cheques should not be crossed and make payable to:</p>
+    <p>i) ${t("Prices quoted are valid for a period of two (2) weeks from the quotation date.")}</p>
+    <p>ii) ${t("50% deposit is required upon confirmation, balance of payment upon completion.")}</p>
+    <p>iii) ${t("Deposit paid is non-refundable.")}</p>
+    <p>iv) ${t("All cheques should not be crossed and make payable to:")}</p>
     <p class="bank-details">${escapeHtml(company.bankAccountName)}<br>${escapeHtml(company.bankName)}<br>${escapeHtml(company.bankAccountNumber)}</p>
   `;
 }
@@ -633,8 +655,9 @@ function quotePrintStyles() {
 
 function formatDate(value) {
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return new Date().toLocaleDateString("en-MY");
-  return date.toLocaleDateString("en-MY", { year: "numeric", month: "short", day: "2-digit" });
+  const locale = state.language === "zh" ? "zh-CN" : "en-MY";
+  if (Number.isNaN(date.getTime())) return new Date().toLocaleDateString(locale);
+  return date.toLocaleDateString(locale, { year: "numeric", month: "short", day: "2-digit" });
 }
 
 function escapeHtml(value) {

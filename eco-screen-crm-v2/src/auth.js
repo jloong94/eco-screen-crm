@@ -54,10 +54,10 @@ export function renderUserManagement() {
   return `
     <section class="staff-form">
       <div class="form-grid compact">
-        <label>${t("Name")}<input id="staffName" placeholder="Staff name" /></label>
+        <label>${t("Name")}<input id="staffName" placeholder="${t("Staff name")}" /></label>
         <label>${t("Username")}<input id="staffUsername" placeholder="username" /></label>
         <label>${t("PIN / Password")}<input id="staffPin" type="password" placeholder="1234" /></label>
-        <label>${t("Role")}<select id="staffRole">${roles.map((role) => `<option value="${role}">${role}</option>`).join("")}</select></label>
+        <label>${t("Role")}<select id="staffRole">${roles.map((role) => `<option value="${role}">${t(role)}</option>`).join("")}</select></label>
       </div>
       <button class="btn primary" id="addStaffButton" type="button">${t("Add Staff")}</button>
       <p id="staffSaveStatus" class="muted-text"></p>
@@ -74,7 +74,7 @@ function staffCardHtml(user) {
       <div class="card-head">
         <div>
           <strong>${escapeHtml(user.name)}</strong>
-          <p class="muted-text">${escapeHtml(user.username)} | ${escapeHtml(user.role)}</p>
+          <p class="muted-text">${escapeHtml(user.username)} | ${escapeHtml(t(user.role))}</p>
         </div>
         <span class="pill ${user.active === false ? "muted" : ""}">${user.active === false ? t("Inactive") : t("Active")}</span>
       </div>
@@ -82,10 +82,10 @@ function staffCardHtml(user) {
         <label>${t("Name")}<input data-user-id="${user.userId}" data-user-field="name" value="${escapeHtml(user.name)}" /></label>
         <label>${t("Username")}<input data-user-id="${user.userId}" data-user-field="username" value="${escapeHtml(user.username)}" /></label>
         <label>${t("Role")}<select data-user-id="${user.userId}" data-user-field="role">
-          ${roles.map((role) => `<option value="${role}" ${user.role === role ? "selected" : ""}>${role}</option>`).join("")}
+          ${roles.map((role) => `<option value="${role}" ${user.role === role ? "selected" : ""}>${t(role)}</option>`).join("")}
         </select></label>
-        <label>${t("PIN / Password")}<input type="password" data-user-id="${user.userId}" data-user-field="pin" placeholder="Leave blank to keep current PIN" /></label>
-        <label>Status<select data-user-id="${user.userId}" data-user-field="active">
+        <label>${t("PIN / Password")}<input type="password" data-user-id="${user.userId}" data-user-field="pin" placeholder="${t("Leave blank to keep current PIN")}" /></label>
+        <label>${t("Status")}<select data-user-id="${user.userId}" data-user-field="active">
           <option value="true" ${user.active !== false ? "selected" : ""}>${t("Active")}</option>
           <option value="false" ${user.active === false ? "selected" : ""}>${t("Inactive")}</option>
         </select></label>
@@ -138,11 +138,11 @@ function addStaff(renderShell) {
   const pin = document.querySelector("#staffPin").value.trim();
   const role = document.querySelector("#staffRole").value;
   if (!name || !username || !pin) {
-    document.querySelector("#staffSaveStatus").textContent = "Please fill name, username and PIN.";
+    document.querySelector("#staffSaveStatus").textContent = t("Please fill name, username and PIN.");
     return;
   }
   if (state.users.some((user) => user.username.toLowerCase() === username.toLowerCase())) {
-    document.querySelector("#staffSaveStatus").textContent = "Username already exists.";
+    document.querySelector("#staffSaveStatus").textContent = t("Username already exists.");
     return;
   }
   state.users = [{ userId: uid("user"), name, username, pin, role, active: true }, ...state.users];

@@ -1485,20 +1485,19 @@ input:focus, select:focus, textarea:focus {
     font-size: 7.5pt !important;
     font-weight: 700;
   }
-  .production-col-product { width: 23mm; }
-  .production-col-location { width: 16mm; }
+  .production-col-product { width: 26mm; }
+  .production-col-location { width: 18mm; }
   .production-col-size { width: 16mm; }
   .production-col-quantity { width: 8mm; }
   .production-col-color { width: 11mm; }
-  .production-col-method { width: 17mm; }
+  .production-col-method { width: 19mm; }
   .production-col-opening { width: 14mm; }
   .production-col-track-size { width: 11mm; }
   .production-col-handle-height { width: 11mm; }
-  .production-col-handle-position { width: 11mm; }
   .production-col-track-type { width: 12mm; }
   .production-col-mesh { width: 15mm; }
   .production-col-lock { width: 8mm; }
-  .production-col-remark { width: 17mm; }
+  .production-col-remark { width: 21mm; }
   .production-sheet-footer {
     margin-top: auto;
     padding-top: 8mm;
