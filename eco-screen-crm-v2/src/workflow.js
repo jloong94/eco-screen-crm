@@ -36,7 +36,14 @@ import {
   isBossOrAdmin,
   role
 } from "./permissions.js";
-import { isActiveOrderRecord, isActiveWorkflowRecord, scanWorkflowIntegrity as scanWorkflowIntegrityRecords } from "./workflowIntegrity.js";
+import {
+  isActiveOrderRecord,
+  isActiveWorkflowRecord,
+  normalizeWorkflowStatus,
+  scanWorkflowIntegrity as scanWorkflowIntegrityRecords,
+  uniqueActiveOrders,
+  uniqueActiveProductionJobs
+} from "./workflowIntegrity.js";
 
 const orderStatuses = [
   "Confirmed",
@@ -112,17 +119,45 @@ let paymentReversalPanel = null;
 let installationDispatchPreviewId = "";
 let installationRecallJobId = "";
 let warrantyPreviewCardId = "";
-let orderSearch = {
-  orderNumber: "",
-  customerName: "",
-  phone: "",
-  filter: "all",
-  status: "",
-  installationDate: "",
-  sort: "updated",
-  page: 1,
-  highlightId: ""
-};
+function defaultOrderSearch() {
+  return {
+    orderNumber: "",
+    customerName: "",
+    phone: "",
+    filter: "all",
+    status: "",
+    installationDate: "",
+    sort: "updated",
+    page: 1,
+    highlightId: ""
+  };
+}
+
+let orderSearch = defaultOrderSearch();
+
+export function resetWorkflowNavigationState(page) {
+  if (page === "orders") orderSearch = defaultOrderSearch();
+  if (page === "production") {
+    productionSearch = "";
+    showArchivedProductionDuplicates = false;
+  }
+}
+
+export function setOrderNavigationFilter(filter) {
+  orderSearch = { ...orderSearch, filter: String(filter || "all"), status: "", page: 1, highlightId: "" };
+}
+
+export function setProductionNavigationState({ search = productionSearch, showArchived = showArchivedProductionDuplicates } = {}) {
+  productionSearch = String(search || "");
+  showArchivedProductionDuplicates = Boolean(showArchived);
+}
+
+export function workflowNavigationState() {
+  return {
+    orders: { ...orderSearch },
+    production: { search: productionSearch, showArchived: showArchivedProductionDuplicates }
+  };
+}
 
 export async function convertQuoteToOrder(quoteId) {
   const lockKey = String(quoteId ?? "").trim();
@@ -408,12 +443,12 @@ function upsertWorkflowJobsForOrder(order, productionJobs, installationJobs) {
 }
 
 export function isArchivedProductionJob(job = {}) {
-  return job.isArchived === true || ["duplicate_archived", "cancelled_archived"].includes(String(job.status || "").toLowerCase());
+  return !isActiveWorkflowRecord(job);
 }
 
 export function activeProductionJobForOrder(order = {}, productionJobs = state.productionJobs) {
   if (!order.id) return null;
-  return productionJobs.find((job) => !isArchivedProductionJob(job) && String(job.orderId || "") === String(order.id)) || null;
+  return uniqueActiveProductionJobs(productionJobs).find((job) => String(job.orderId || "") === String(order.id)) || null;
 }
 
 function updateWarrantyOrderNumbers(order, warrantyCards) {
@@ -713,7 +748,7 @@ export function renderOrders() {
 function renderOrderList() {
   const list = document.querySelector("#orderList");
   if (!list) return;
-  const orders = sortedOrders(filteredOrders());
+  const orders = sortedOrders(ordersForDisplay());
   const totalPages = Math.max(1, Math.ceil(orders.length / 20));
   orderSearch.page = Math.min(Math.max(1, Number(orderSearch.page || 1)), totalPages);
   const pageRows = orders.slice((orderSearch.page - 1) * 20, orderSearch.page * 20);
@@ -736,7 +771,7 @@ function renderOrderProgressBoard() {
     board.innerHTML = "";
     return;
   }
-  const filtered = state.orders.filter((order) => isActiveOrderRecord(order) && matchesOrderSearch(order) && matchesBoardDateFilter(order));
+  const filtered = uniqueActiveOrders(state.orders).filter((order) => matchesOrderSearch(order) && matchesBoardDateFilter(order));
   board.innerHTML = `
     <section class="progress-board">
       <div class="section-head">
@@ -1371,8 +1406,11 @@ function productSummary(items = []) {
   return items.map((item) => `${item.productName} x ${item.quantity || 0}`).join(", ") || "-";
 }
 
-function filteredOrders() {
-  return state.orders.filter((order) => matchesOrderFilter(order) && matchesOrderSearch(order));
+export function ordersForDisplay(orders = state.orders) {
+  const source = orderSearch.filter === "duplicate-archived" || orderSearch.status === "duplicate-archived"
+    ? orders
+    : uniqueActiveOrders(orders);
+  return source.filter((order) => matchesOrderFilter(order) && matchesOrderSearch(order));
 }
 
 function matchesOrderSearch(order) {
@@ -1394,7 +1432,7 @@ function matchesOrderFilter(order) {
 }
 
 function matchesOrderNavigationFilter(order, filter) {
-  if (filter === "duplicate-archived") return isBossOrAdmin() && String(order.status || "").toLowerCase() === "duplicate_archived";
+  if (filter === "duplicate-archived") return isBossOrAdmin() && normalizeWorkflowStatus(order.status) === "duplicate_archived";
   if (!isActiveOrderRecord(order)) return false;
   if (filter === "all") return true;
   if (filter === "pending") return getOrderProgressCategory(order) === "new";
@@ -1759,20 +1797,21 @@ function getOrderBalance(order) {
   return getRemainingBalance(order, installationJob);
 }
 
-function normalizeProductionStatus(value, sentToProduction = false) {
+export function normalizeProductionStatus(value) {
+  const normalized = normalizeWorkflowStatus(value);
   const map = {
-    "Not Sent": "not_produced",
-    "Pending": "not_produced",
-    "Pending Production": "not_produced",
+    not_sent: "not_produced",
+    pending: "not_produced",
+    pending_production: "not_produced",
     not_started: "not_produced",
-    "In Production": "in_production",
-    "Production Completed": "completed",
-    Completed: "completed",
+    ready: "not_produced",
     not_produced: "not_produced",
+    sent_to_production: "in_production",
     in_production: "in_production",
+    production_completed: "completed",
     completed: "completed"
   };
-  return map[value] || "not_produced";
+  return map[normalized] || "not_produced";
 }
 
 function normalizeInstallationStatus(value) {
@@ -1821,10 +1860,12 @@ function getOrderProgressCategory(order) {
   const productionStatus = getOrderProductionStatus(order, productionJob);
   const installationStatus = getOrderInstallationStatus(order, installationJob);
   const balance = getRemainingBalance(order, installationJob);
-  const sentToProduction = order.sentToProduction === true || ["Sent to Production", "In Production", "Production Completed"].includes(order.status);
-  if (order.status === "duplicate_archived") return "duplicate-archived";
-  if (order.isArchived || order.status === "Cancelled") return "archived";
-  if (installationStatus === "touch_up" || order.status === "Touch Up") return "touch-up";
+  const orderStatus = normalizeWorkflowStatus(order.status);
+  const sentToProduction = order.sentToProduction === true || ["sent_to_production", "in_production", "production_completed"].includes(orderStatus);
+  if (orderStatus === "duplicate_archived") return "duplicate-archived";
+  if (!isActiveOrderRecord(order)) return "archived";
+  if (installationStatus === "touch_up" || orderStatus === "touch_up") return "touch-up";
+  if (["completed", "serviced"].includes(orderStatus)) return "completed";
   if (installationStatus === "installed" && balance <= 0) return "completed";
   if (installationStatus === "pending_collection" || (["installed", "pending_collection"].includes(installationStatus) && balance > 0)) return "pending-collection";
   if (productionStatus === "completed" && !["installed", "pending_collection", "touch_up"].includes(installationStatus)) return "waiting-installation";
@@ -1865,7 +1906,7 @@ function renderProductionJobs() {
   renderProductionTools();
   const list = document.querySelector("#productionList");
   if (!list) return;
-  const jobs = productionJobsForDisplay().filter((job) => productionJobMatchesSearch(job));
+  const jobs = productionJobsForCurrentView();
   list.innerHTML = jobs.length ? jobs.map((job) => {
     const order = linkedOrderForProduction(job);
     const orderNumber = productionOrderNumber(job);
@@ -1917,7 +1958,11 @@ function renderProductionTools() {
 
 export function productionJobsForDisplay(jobs = state.productionJobs, showArchived = showArchivedProductionDuplicates) {
   if (showArchived && isBossOrAdmin()) return jobs.filter((job) => isArchivedProductionJob(job));
-  return jobs.filter((job) => !isArchivedProductionJob(job));
+  return uniqueActiveProductionJobs(jobs);
+}
+
+export function productionJobsForCurrentView() {
+  return productionJobsForDisplay().filter((job) => productionJobMatchesSearch(job));
 }
 
 export function linkedOrderForProduction(job = {}) {
@@ -3084,12 +3129,12 @@ function handleOrderToolsClick(event) {
   const archiveGroupId = event.target.dataset.archiveDuplicateGroup;
   const duplicateOrderId = event.target.dataset.duplicateOpenOrder;
   if (filter) {
-    orderSearch = { ...orderSearch, filter, status: "", page: 1, highlightId: "" };
+    setOrderNavigationFilter(filter);
     renderOrders();
   }
   if (tool === "search") renderOrders();
   if (tool === "clear") {
-    orderSearch = { orderNumber: "", customerName: "", phone: "", filter: "all", status: "", installationDate: "", sort: "updated", page: 1, highlightId: "" };
+    resetWorkflowNavigationState("orders");
     renderOrders();
   }
   if (tool === "find") quickFindOrder();
@@ -5587,7 +5632,7 @@ function syncJobInstallationDate(orderId, installationDate) {
 
 function handleProductionSearch(event) {
   if (!event.target.matches("[data-production-search]")) return;
-  productionSearch = event.target.value;
+  setProductionNavigationState({ search: event.target.value });
   renderProductionJobs();
   const input = document.querySelector?.("[data-production-search]");
   input?.focus();
@@ -5596,7 +5641,7 @@ function handleProductionSearch(event) {
 
 function handleProductionSearchClick(event) {
   if (event.target.matches("[data-production-search-clear]")) {
-    productionSearch = "";
+    setProductionNavigationState({ search: "" });
     renderProductionJobs();
     return;
   }
@@ -5619,7 +5664,7 @@ function handleProductionSearchClick(event) {
   }
   if (tool === "archived") {
     if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
-    showArchivedProductionDuplicates = !showArchivedProductionDuplicates;
+    setProductionNavigationState({ showArchived: !showArchivedProductionDuplicates });
     renderProductionJobs();
   }
   if (archiveGroupId) archiveProductionDuplicateGroupFromPanel(archiveGroupId, event.target);

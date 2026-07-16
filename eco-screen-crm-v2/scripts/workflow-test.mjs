@@ -46,6 +46,7 @@ const {
   markInstallationStatus,
   markProductionStatus,
   productionJobMatchesSearch,
+  productionJobsForCurrentView,
   productionJobsForDisplay,
   productionDuplicateArchiveActionHtml,
   productionOrderNumber,
@@ -58,6 +59,12 @@ const {
   repairOrderOwnership,
   returnOrderToFollowUp,
   reverseOrderPayment,
+  resetWorkflowNavigationState,
+  setOrderNavigationFilter,
+  setProductionNavigationState,
+  workflowNavigationState,
+  ordersForDisplay,
+  normalizeProductionStatus,
   getOrderPaymentSummary,
   generateWarrantyCard,
   installationDispatchDiagnostics,
@@ -79,7 +86,13 @@ const {
   warrantyCardPreviewHtml
 } = await import("../src/workflow.js");
 const { quotationsForTab } = await import("../src/quotations.js");
-const { isActiveOrderRecord, isActiveWorkflowRecord } = await import("../src/workflowIntegrity.js");
+const {
+  isActiveOrderRecord,
+  isActiveWorkflowRecord,
+  normalizeWorkflowStatus,
+  uniqueActiveOrders,
+  uniqueActiveProductionJobs
+} = await import("../src/workflowIntegrity.js");
 const { isBossOrAdmin } = await import("../src/permissions.js");
 
 function assert(condition, message) {
@@ -1626,6 +1639,113 @@ assert(regeneratedWarranty.ok && regeneratedWarranty.regenerated && state.warran
 const nextWarrantyNo = nextWarrantyCardNumber(new Date());
 assert(/^WC-\d{4}-\d{4}$/.test(nextWarrantyNo) && nextWarrantyNo !== originalWarrantyNo, "Z8: new Warranty Card numbers must be readable and unique");
 
+state.currentUser = { userId: "boss-count-test", username: "boss-count-test", name: "Boss Count Test", role: "Boss", active: true };
+state.role = "Boss";
+state.installationJobs = [];
+const countActiveOrders = Array.from({ length: 15 }, (_, index) => ({
+  id: `count-order-${index + 1}`,
+  orderNo: `SO-COUNT-${index + 1}`,
+  orderNumber: `SO-COUNT-${index + 1}`,
+  status: index < 8 ? (index % 2 ? " Pending " : "Confirmed") : (["Sent to Production", " sent-to-production ", "IN PRODUCTION"][index % 3]),
+  sentToProduction: index >= 8,
+  customer: { name: `Count Customer ${index + 1}`, phone: `01000000${index + 1}` },
+  total: 1000,
+  deposit: 100,
+  items: [{ productName: "Count Product", quantity: 1 }],
+  createdAt: `2026-07-${String(index + 1).padStart(2, "0")}T00:00:00.000Z`,
+  updatedAt: `2026-07-${String(index + 1).padStart(2, "0")}T01:00:00.000Z`
+}));
+const countArchivedOrders = Array.from({ length: 11 }, (_, index) => ({
+  id: `archived-count-order-${index + 1}`,
+  orderNo: `SO-ARCHIVED-${index + 1}`,
+  status: index % 3 === 0 ? "cancelled_archived" : index % 3 === 1 ? " Duplicate-Archived " : "CANCELED",
+  isArchived: index % 3 !== 2,
+  updatedAt: `2026-06-${String(index + 1).padStart(2, "0")}T00:00:00.000Z`
+}));
+state.orders = [...countActiveOrders, ...countArchivedOrders];
+state.productionJobs = countActiveOrders.slice(8).map((order, index) => ({
+  id: `count-order-production-${index + 1}`,
+  orderId: order.id,
+  status: ["In Production", "in-production", "sent_to_production"][index % 3],
+  updatedAt: `2026-07-${String(index + 9).padStart(2, "0")}T02:00:00.000Z`
+}));
+assert(state.orders.length === 26 && uniqueActiveOrders(state.orders).length === 15,
+  "AA1: 15 active plus 11 archived Orders must produce an active Dashboard count of 15, not the raw stored count of 26");
+assert(!isActiveOrderRecord({ id: "archive-alias", status: " CANCELLED-ARCHIVED " })
+  && normalizeWorkflowStatus(" Sent-to Production ") === "sent_to_production",
+"AA1: workflow status normalization must ignore trim, capitalization, spaces and hyphens");
+const duplicateActiveOrder = { ...countActiveOrders[0], customer: { name: "Older duplicate payload" }, updatedAt: "2026-01-01T00:00:00.000Z" };
+assert(uniqueActiveOrders([...state.orders, duplicateActiveOrder]).length === 15
+  && uniqueActiveOrders([...state.orders, duplicateActiveOrder]).find((order) => order.id === countActiveOrders[0].id).customer.name === "Count Customer 1",
+"AA1: stable-ID duplicates must collapse to the latest active Order without double-counting");
+
+setOrderNavigationFilter("pending");
+assert(ordersForDisplay().length === 8 && workflowNavigationState().orders.filter === "pending", "AA2: the retained Pending category must narrow the Orders list before navigation reset");
+resetWorkflowNavigationState("orders");
+assert(ordersForDisplay().length === 15
+  && workflowNavigationState().orders.filter === "all"
+  && workflowNavigationState().orders.orderNumber === ""
+  && workflowNavigationState().orders.customerName === ""
+  && workflowNavigationState().orders.phone === ""
+  && workflowNavigationState().orders.status === ""
+  && workflowNavigationState().orders.installationDate === ""
+  && workflowNavigationState().orders.page === 1,
+"AA2: entering Orders must clear retained searches/status/date, select All and reset pagination");
+setOrderNavigationFilter("production");
+assert(ordersForDisplay().length === 7, "AA2: Orders category buttons must continue to filter after the navigation reset");
+resetWorkflowNavigationState("orders");
+
+const completedCountOrder = {
+  ...countActiveOrders[0],
+  id: "count-order-completed",
+  orderNo: "SO-COUNT-COMPLETED",
+  orderNumber: "SO-COUNT-COMPLETED",
+  status: " completed ",
+  updatedAt: "2026-07-30T00:00:00.000Z"
+};
+state.orders = [...countActiveOrders, completedCountOrder, ...countArchivedOrders];
+setOrderNavigationFilter("completed");
+assert(ordersForDisplay().some((order) => order.id === completedCountOrder.id)
+  && uniqueActiveOrders(state.orders).some((order) => order.id === completedCountOrder.id),
+"AA3: completed Orders must remain active and available in the separate Completed category");
+
+state.orders = countActiveOrders;
+const productionAliases = ["not_produced", "Not Produced", "pending", "Pending Production", "ready", "not-started", "in_production", "In Production", "Sent to Production", "sent-to-production", "completed", " Production Completed "];
+const countActiveProduction = productionAliases.map((status, index) => ({
+  id: `count-production-${index + 1}`,
+  orderId: countActiveOrders[index % countActiveOrders.length].id,
+  status,
+  customerName: `Production Customer ${index + 1}`,
+  updatedAt: `2026-07-${String(index + 1).padStart(2, "0")}T03:00:00.000Z`
+}));
+const countArchivedProduction = [
+  { id: "count-production-archived-1", status: "duplicate_archived", isArchived: true },
+  { id: "count-production-archived-2", status: " Cancelled-Archived " },
+  { id: "count-production-archived-3", status: "CANCELED", isArchived: true }
+];
+state.productionJobs = [...countActiveProduction, ...countArchivedProduction];
+assert(state.productionJobs.length === 15
+  && uniqueActiveProductionJobs(state.productionJobs).length === 12
+  && productionJobsForDisplay(state.productionJobs, false).length === 12,
+"AA4: the normal Production list must show all 12 unique active jobs and hide all 3 archived/cancelled jobs");
+assert(normalizeProductionStatus(" In-Production ") === "in_production"
+  && normalizeProductionStatus(" Sent to Production ") === "in_production"
+  && normalizeProductionStatus("READY") === "not_produced"
+  && normalizeProductionStatus(" completed ") === "completed"
+  && uniqueActiveProductionJobs(state.productionJobs).some((job) => normalizeProductionStatus(job.status) === "completed"),
+"AA4: Production aliases must normalize for labels/categories without hiding active or completed jobs");
+const olderProductionDuplicate = { ...countActiveProduction[0], status: "pending", updatedAt: "2026-01-01T00:00:00.000Z" };
+assert(uniqueActiveProductionJobs([...state.productionJobs, olderProductionDuplicate]).length === 12,
+  "AA4: duplicate Production stable IDs must not increase the active list count");
+setProductionNavigationState({ search: "no-production-record-matches-this", showArchived: true });
+assert(workflowNavigationState().production.search && workflowNavigationState().production.showArchived,
+  "AA5: retained Production search and archived-only mode must be represented before navigation reset");
+resetWorkflowNavigationState("production");
+assert(workflowNavigationState().production.search === ""
+  && workflowNavigationState().production.showArchived === false
+  && productionJobsForCurrentView().length === 12,
+"AA5: entering Production must clear text search, disable archived-only mode and restore the full unique active list");
+
 console.log([
   "Editable unit price and manual final price: passed",
   "Monthly SO numbering including legacy formats and >999: passed",
@@ -1656,4 +1776,6 @@ console.log([
   ,"Normalized legacy payment ledger, historical payment entry, reversal and stale-cloud protection: passed"
   ,"Installation pending/ready/send/recall/completed exact-ID dispatch control: passed"
   ,"Warranty validation, exact links, unique numbering, reuse, regeneration and mobile preview: passed"
+  ,"Unique active Dashboard counts, Orders navigation reset and category filters: passed"
+  ,"Unique active Production visibility, status aliases and navigation reset: passed"
 ].join("\n"));

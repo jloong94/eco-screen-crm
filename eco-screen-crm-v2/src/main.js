@@ -18,7 +18,8 @@ import {
   updateCloudStatus
 } from "./state.js";
 import { itemWithCalculatedTotals, money, quoteTotals, toNumber } from "./calculations.js";
-import { attachWorkflowEvents, getQuotationDisplayNo, nextSalesOrderNumber, renderWorkflowModules } from "./workflow.js";
+import { attachWorkflowEvents, getQuotationDisplayNo, nextSalesOrderNumber, renderWorkflowModules, resetWorkflowNavigationState } from "./workflow.js";
+import { uniqueActiveOrders } from "./workflowIntegrity.js";
 import { t } from "./i18n.js";
 import { canAccessPage, defaultPageForRole, isBossOrAdmin, pageDefinitions, role } from "./permissions.js";
 import { cloudCollections, cloudConfigurationIssue, isCloudConfigured, safeSyncWithCloud, syncFromCloud, syncToCloud } from "./cloudSync.js";
@@ -120,6 +121,7 @@ function isCurrentPage(page) {
 }
 
 function dashboardPageHtml() {
+  const activeOrders = uniqueActiveOrders(state.orders);
   return `
     <section class="panel page-panel" data-page-panel="dashboard">
       <div class="panel-head">
@@ -130,7 +132,7 @@ function dashboardPageHtml() {
       </div>
       <div class="dashboard-grid">
         <div class="metric-card"><span>${t("Quotations")}</span><strong>${state.quotations.length}</strong></div>
-        <div class="metric-card"><span>${t("Orders")}</span><strong>${state.orders.length}</strong></div>
+        <div class="metric-card"><span>${t("Orders")}</span><strong>${activeOrders.length}</strong></div>
         <div class="metric-card"><span>${t("Production Jobs")}</span><strong>${state.productionJobs.length}</strong></div>
         <div class="metric-card"><span>${t("Installation Jobs")}</span><strong>${state.installationJobs.length}</strong></div>
       </div>
@@ -1258,6 +1260,7 @@ function attachNavigationEvents() {
   document.querySelectorAll("#moduleNavigation [data-page]").forEach((button) => button.addEventListener("click", (event) => {
     const page = event.currentTarget.dataset.page;
     if (!page || !canAccessPage(role(), page)) return;
+    if (event.isTrusted !== false) resetWorkflowNavigationState(page);
     setPage(page);
     renderShell();
   }));

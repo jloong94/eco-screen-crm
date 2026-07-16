@@ -1,19 +1,65 @@
 const integrityCollections = ["quotations", "orders", "productionJobs", "installationJobs", "products"];
+
+const archivedWorkflowStatuses = new Set([
+  "archived",
+  "cancelled",
+  "canceled",
+  "cancelled_archived",
+  "canceled_archived",
+  "cancelled_archive",
+  "canceled_archive",
+  "archived_cancelled",
+  "archived_canceled",
+  "duplicate_archived"
+]);
+
+export function normalizeWorkflowStatus(value) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_")
+    .replace(/_+/g, "_");
+}
+
+function isArchivedWorkflowStatus(status) {
+  return archivedWorkflowStatuses.has(normalizeWorkflowStatus(status));
+}
+
 export function isActiveOrderRecord(order = {}) {
-  const status = String(order.status || "").trim().toLowerCase();
+  const status = normalizeWorkflowStatus(order.status);
   return order.isArchived !== true
-    && status !== "duplicate_archived"
-    && status !== "cancelled_archived"
-    && status !== "cancelled"
+    && !isArchivedWorkflowStatus(status)
     && status !== "follow_up";
 }
 
 export function isActiveWorkflowRecord(record = {}) {
-  const status = String(record.status || "").trim().toLowerCase();
+  const status = normalizeWorkflowStatus(record.status);
   return record.isArchived !== true
-    && status !== "duplicate_archived"
-    && status !== "cancelled_archived"
-    && status !== "cancelled";
+    && !isArchivedWorkflowStatus(status);
+}
+
+function recordTimestamp(record = {}) {
+  const parsed = Date.parse(record.updatedAt || record.updated_at || record.createdAt || record.created_at || "");
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function uniqueLatestByStableId(records = []) {
+  const unique = new Map();
+  records.forEach((record) => {
+    const stableId = String(record?.id || "").trim();
+    if (!stableId) return;
+    const current = unique.get(stableId);
+    if (!current || recordTimestamp(record) >= recordTimestamp(current)) unique.set(stableId, record);
+  });
+  return [...unique.values()];
+}
+
+export function uniqueActiveOrders(orders = []) {
+  return uniqueLatestByStableId(Array.isArray(orders) ? orders : []).filter(isActiveOrderRecord);
+}
+
+export function uniqueActiveProductionJobs(productionJobs = []) {
+  return uniqueLatestByStableId(Array.isArray(productionJobs) ? productionJobs : []).filter(isActiveWorkflowRecord);
 }
 
 export function scanWorkflowIntegrity(snapshot = {}) {
