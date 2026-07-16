@@ -92,13 +92,9 @@ const orderFilters = [
   { id: "duplicate-archived", label: "Archived duplicates" }
 ];
 const progressCategories = [
-  { id: "new", title: "New Orders / Haven't Produced", shortTitle: "New Orders" },
-  { id: "in-production", title: "In Production", shortTitle: "In Production" },
-  { id: "waiting-installation", title: "Production Done / Waiting Installation", shortTitle: "Waiting Installation" },
-  { id: "pending-collection", title: "Installed / Pending Collection", shortTitle: "Pending Collection" },
-  { id: "completed", title: "Completed / Serviced", shortTitle: "Completed / Serviced" },
-  { id: "touch-up", title: "Touch Up", shortTitle: "Touch Up" },
-  { id: "archived", title: "Cancelled / Archived", shortTitle: "Cancelled / Archived" }
+  { id: "waiting-to-send", title: "Waiting to Send", shortTitle: "Waiting to Send" },
+  { id: "sent-to-production", title: "Sent to Production", shortTitle: "Sent to Production" },
+  { id: "completed", title: "Completed / Serviced", shortTitle: "Completed / Serviced" }
 ];
 
 let activeCompletionJobId = null;
@@ -118,6 +114,8 @@ let showArchivedProductionDuplicates = false;
 const productionDuplicateMainSelections = new Map();
 let workflowIntegrityVisible = false;
 let workflowIntegrityResult = null;
+let productionDispatchIntegrityVisible = false;
+let productionDispatchIntegrityResult = null;
 let coveredOrderRecovery = null;
 let returnToFollowUpPanel = null;
 let paymentPanel = null;
@@ -788,7 +786,7 @@ function renderOrderProgressBoard() {
       </div>
       <div class="progress-summary-grid">
         ${progressCategories.map((category) => {
-          const rows = filtered.filter((order) => getOrderProgressCategory(order) === category.id);
+          const rows = filtered.filter((order) => getOrderDispatchState(order) === category.id);
           return `<button class="metric-card progress-summary-card ${orderSearch.filter === category.id ? "active" : ""}" type="button" data-order-filter="${category.id}"><span>${t(category.shortTitle)}</span><strong>${rows.length}</strong></button>`;
         }).join("")}
       </div>
@@ -818,6 +816,7 @@ function renderOrderTools() {
         <button class="btn" type="button" data-order-tool="find">${t("Find Order")}</button>
         ${isBossOrAdmin() ? `<button class="btn" type="button" data-order-tool="duplicates">${t("Duplicate Order Check")}</button>` : ""}
       ${isBossOrAdmin() ? `<button class="btn" type="button" data-order-tool="workflow-integrity">${t("Workflow Integrity Check")}</button>` : ""}
+      ${isBossOrAdmin() ? `<button class="btn" type="button" data-order-tool="production-dispatch-integrity">${t("Repair Production Dispatch Integrity")}</button>` : ""}
       ${isBossOrAdmin() ? `<button class="btn" type="button" data-order-tool="recover-covered-order">${t("Recover Covered Order")}</button>` : ""}
       </div>
       <div class="filter-tabs">
@@ -825,6 +824,7 @@ function renderOrderTools() {
       </div>
       ${duplicateOrderPanelHtml()}
       ${workflowIntegrityPanelHtml()}
+      ${productionDispatchIntegrityPanelHtml()}
       ${coveredOrderRecoveryPanelHtml()}
     </section>
   `;
@@ -1441,10 +1441,10 @@ function matchesOrderNavigationFilter(order, filter) {
   if (filter === "duplicate-archived") return isBossOrAdmin() && normalizeWorkflowStatus(order.status) === "duplicate_archived";
   if (!isActiveOrderRecord(order)) return false;
   if (filter === "all") return true;
-  if (filter === "pending") return getOrderProgressCategory(order) === "new";
-  if (filter === "production") return ["in-production", "waiting-installation"].includes(getOrderProgressCategory(order));
-  if (filter === "installation") return ["waiting-installation", "pending-collection", "touch-up"].includes(getOrderProgressCategory(order));
-  if (filter === "completed") return getOrderProgressCategory(order) === "completed";
+  if (filter === "pending" || filter === "waiting-to-send") return getOrderDispatchState(order) === "waiting-to-send";
+  if (filter === "production" || filter === "sent-to-production") return getOrderDispatchState(order) === "sent-to-production";
+  if (filter === "installation") return ["waiting-installation", "pending-collection", "touch-up"].includes(getOrderWorkflowStage(order));
+  if (filter === "completed") return getOrderDispatchState(order) === "completed";
   if (["today-installation", "week-installation", "overdue-installation"].includes(filter)) return matchesBoardDateFilter(order);
   return getOrderProgressCategory(order) === filter;
 }
@@ -1820,6 +1820,162 @@ export function normalizeProductionStatus(value) {
   return map[normalized] || "not_produced";
 }
 
+export function scanProductionDispatchIntegrity(snapshot = state) {
+  const orders = uniqueActiveOrders(snapshot.orders || []);
+  const jobs = uniqueActiveProductionJobs(snapshot.productionJobs || []);
+  const activeOrderIds = new Set(orders.map((order) => String(order.id || "")));
+  const entries = orders.map((order) => {
+    const orderId = String(order.id || "");
+    const exactJobs = jobs.filter((job) => String(job.orderId || "") === orderId);
+    const dispatchState = getOrderDispatchState(order);
+    if (exactJobs.length > 1) return productionDispatchIntegrityEntry(order, null, exactJobs, "Multiple active Production Jobs", [], false);
+    if (!exactJobs.length) {
+      const classification = dispatchState === "sent-to-production"
+        ? "Order says sent but no active Production Job exists"
+        : "Correct";
+      return productionDispatchIntegrityEntry(order, null, exactJobs, classification, [], false);
+    }
+
+    const job = exactJobs[0];
+    const completed = dispatchState === "completed";
+    const expected = {
+      productionJobId: String(job.id || ""),
+      productionStatus: normalizeProductionStatus(job.status)
+    };
+    if (!completed) {
+      expected.status = "Sent to Production";
+      expected.sentToProduction = true;
+    }
+    const changes = Object.entries(expected)
+      .filter(([field, after]) => field === "status"
+        ? normalizeWorkflowStatus(order[field]) !== normalizeWorkflowStatus(after)
+        : JSON.stringify(order[field]) !== JSON.stringify(after))
+      .map(([field, after]) => ({ field, before: order[field] ?? null, after }));
+    const onlyForwardLinkMissing = changes.length === 1 && changes[0].field === "productionJobId";
+    const classification = !changes.length
+      ? "Correct"
+      : onlyForwardLinkMissing
+        ? "Missing forward productionJobId"
+        : "Production Job exists but Order dispatch fields are stale";
+    return productionDispatchIntegrityEntry(order, job, exactJobs, classification, changes, changes.length > 0);
+  });
+
+  jobs.forEach((job) => {
+    const orderId = String(job.orderId || "");
+    if (orderId && activeOrderIds.has(orderId)) return;
+    entries.push({
+      key: `production:${String(job.id || "missing")}`,
+      orderId,
+      orderNo: job.orderNo || job.orderNumber || "",
+      customer: job.customerName || "",
+      orderStatus: "",
+      sentToProduction: false,
+      productionJobId: String(job.id || ""),
+      productionJobStatus: String(job.status || ""),
+      exactProductionJobIds: [String(job.id || "")],
+      classification: "Wrong or missing Order relationship",
+      changes: [],
+      repairable: false
+    });
+  });
+
+  const classifications = [
+    "Correct",
+    "Missing forward productionJobId",
+    "Production Job exists but Order dispatch fields are stale",
+    "Order says sent but no active Production Job exists",
+    "Multiple active Production Jobs",
+    "Wrong or missing Order relationship"
+  ];
+  return {
+    entries,
+    counts: Object.fromEntries(classifications.map((classification) => [classification, entries.filter((entry) => entry.classification === classification).length])),
+    repairableCount: entries.filter((entry) => entry.repairable).length
+  };
+}
+
+function productionDispatchIntegrityEntry(order, job, exactJobs, classification, changes, repairable) {
+  return {
+    key: `order:${String(order.id || "missing")}`,
+    orderId: String(order.id || ""),
+    orderNo: getOrderDisplayNo(order),
+    customer: order.customer?.name || order.customerName || "",
+    orderStatus: String(order.status || ""),
+    sentToProduction: order.sentToProduction === true,
+    productionJobId: String(order.productionJobId || ""),
+    productionJobStatus: String(job?.status || ""),
+    exactProductionJobIds: exactJobs.map((row) => String(row.id || "")),
+    classification,
+    changes,
+    repairable
+  };
+}
+
+function productionDispatchIntegrityPanelHtml() {
+  if (!isBossOrAdmin() || !productionDispatchIntegrityVisible) return "";
+  const scan = productionDispatchIntegrityResult || scanProductionDispatchIntegrity();
+  const summaryLabels = Object.keys(scan.counts);
+  return `
+    <section class="duplicate-order-panel production-dispatch-integrity-panel">
+      <div class="section-head">
+        <div>
+          <h3>${t("Repair Production Dispatch Integrity")}</h3>
+          <p class="muted-text">${t("Preview only. Select only Orders that Boss/Admin confirms were sent to Production.")}</p>
+        </div>
+        <div class="actions">
+          <button class="btn" type="button" data-order-tool="production-dispatch-integrity-refresh">${t("Scan Again")}</button>
+          <button class="btn" type="button" data-order-tool="production-dispatch-integrity-close">${t("Close")}</button>
+        </div>
+      </div>
+      <div class="duplicate-summary">
+        ${summaryLabels.map((label) => `<span>${t(label)}: <strong>${scan.counts[label]}</strong></span>`).join("")}
+      </div>
+      <div class="table-wrap">
+        <table class="workflow-integrity-table">
+          <thead><tr><th>${t("Select")}</th><th>${t("SO Order No")}</th><th>${t("Customer")}</th><th>${t("Order stable ID")}</th><th>${t("Production Job ID")}</th><th>${t("Current Order status")}</th><th>${t("Current sent flag")}</th><th>${t("Current productionJobId")}</th><th>${t("Production Job status")}</th><th>${t("Classification")}</th><th>${t("Exact before / after fields")}</th></tr></thead>
+          <tbody>${scan.entries.map((entry) => productionDispatchIntegrityRowHtml(entry)).join("")}</tbody>
+        </table>
+      </div>
+      <p class="muted-text">${t("No Production Job is created, deleted or archived by this repair. Zero-match and multiple-match records remain unchanged.")}</p>
+      <p class="muted-text">${t("Confirmation phrase")}: REPAIR PRODUCTION DISPATCH</p>
+      <button class="btn primary" type="button" data-order-tool="production-dispatch-integrity-apply" ${scan.repairableCount ? "" : "disabled"}>${t("Repair Selected Dispatch Records")}</button>
+    </section>
+  `;
+}
+
+function productionDispatchIntegrityRowHtml(entry) {
+  const changes = entry.changes.length
+    ? entry.changes.map((change) => `<div><strong>${escapeHtml(change.field)}</strong>: ${escapeHtml(JSON.stringify(change.before))} &rarr; ${escapeHtml(JSON.stringify(change.after))}</div>`).join("")
+    : "-";
+  return `<tr>
+    <td>${entry.repairable ? `<label><input type="checkbox" data-production-dispatch-integrity-order="${escapeHtml(entry.orderId)}" /> ${t("Confirm sent")}</label>` : "-"}</td>
+    <td>${escapeHtml(entry.orderNo || "-")}</td><td>${escapeHtml(entry.customer || "-")}</td><td>${escapeHtml(entry.orderId || "-")}</td>
+    <td>${escapeHtml(entry.exactProductionJobIds.join(", ") || entry.productionJobId || "-")}</td><td>${escapeHtml(entry.orderStatus || "-")}</td>
+    <td>${entry.sentToProduction ? t("Yes") : t("No")}</td><td>${escapeHtml(entry.productionJobId || "-")}</td><td>${escapeHtml(entry.productionJobStatus || "-")}</td>
+    <td>${t(entry.classification)}</td><td>${changes}</td>
+  </tr>`;
+}
+
+export function getOrderDispatchState(order = {}) {
+  if (!isActiveOrderRecord(order)) return "archived";
+  const orderStatus = normalizeWorkflowStatus(order.status);
+  if (["completed", "serviced"].includes(orderStatus)) return "completed";
+  const sentStatuses = new Set([
+    "sent_to_production",
+    "in_production",
+    "production_completed",
+    "sent_to_installer",
+    "installation_scheduled",
+    "installing",
+    "installation_completed",
+    "pending_collection",
+    "touch_up"
+  ]);
+  return order.sentToProduction === true || sentStatuses.has(orderStatus)
+    ? "sent-to-production"
+    : "waiting-to-send";
+}
+
 function normalizeInstallationStatus(value) {
   const map = {
     pending_arrangement: "not_scheduled",
@@ -1860,7 +2016,7 @@ function getRemainingBalance(order, installationJob = getOrderInstallationJob(or
   return Math.max(0, baseBalance - collected);
 }
 
-function getOrderProgressCategory(order) {
+function getOrderWorkflowStage(order) {
   const productionJob = getOrderProductionJob(order);
   const installationJob = getOrderInstallationJob(order);
   const productionStatus = getOrderProductionStatus(order, productionJob);
@@ -1879,6 +2035,10 @@ function getOrderProgressCategory(order) {
   return "new";
 }
 
+function getOrderProgressCategory(order) {
+  return getOrderDispatchState(order);
+}
+
 function matchesBoardDateFilter(order) {
   const installationJob = getOrderInstallationJob(order);
   const dateValue = installationJob?.installationDate || order.installationDate;
@@ -1893,7 +2053,7 @@ function matchesBoardDateFilter(order) {
     weekEnd.setDate(today.getDate() + 7);
     return date >= today && date <= weekEnd;
   }
-  if (orderSearch.filter === "overdue-installation") return date < today && !["completed", "archived"].includes(getOrderProgressCategory(order));
+  if (orderSearch.filter === "overdue-installation") return date < today && !["completed", "archived"].includes(getOrderDispatchState(order));
   return true;
 }
 
@@ -1906,6 +2066,15 @@ function formatShortDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "-";
   return date.toLocaleDateString(state.language === "zh" ? "zh-CN" : "en-MY", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+export function productionWorkStageCounts(jobs = state.productionJobs) {
+  const counts = { not_produced: 0, in_production: 0, completed: 0 };
+  uniqueActiveProductionJobs(jobs).forEach((job) => {
+    const stage = normalizeProductionStatus(job.status);
+    counts[stage] += 1;
+  });
+  return counts;
 }
 
 function renderProductionJobs() {
@@ -1947,8 +2116,12 @@ function renderProductionJobs() {
 function renderProductionTools() {
   const tools = document.querySelector("#productionTools");
   if (!tools) return;
+  const stageCounts = productionWorkStageCounts();
   tools.innerHTML = `
     <section class="order-tools production-tools">
+      <div class="progress-summary-grid production-stage-summary" aria-label="${t("Production Work Stages")}">
+        ${productionStatuses.map((status) => `<div class="metric-card"><span>${statusLabel(status)}</span><strong>${stageCounts[status]}</strong></div>`).join("")}
+      </div>
       <label>${t("Search SO Order No, Customer, Phone or Quotation No")}
         <input data-production-search value="${escapeHtml(productionSearch)}" placeholder="${t("SO2607006, customer, phone or quotation")}" />
       </label>
@@ -3157,6 +3330,19 @@ function handleOrderToolsClick(event) {
     renderOrderTools();
   }
   if (tool === "workflow-integrity-repair") repairSelectedWorkflowIntegrityIssue(event.target);
+  if (tool === "production-dispatch-integrity" || tool === "production-dispatch-integrity-refresh") {
+    if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+    productionDispatchIntegrityVisible = true;
+    productionDispatchIntegrityResult = scanProductionDispatchIntegrity();
+    renderOrderTools();
+    showWorkflowMessage("Production dispatch integrity preview updated. No records changed.", "success");
+  }
+  if (tool === "production-dispatch-integrity-close") {
+    productionDispatchIntegrityVisible = false;
+    productionDispatchIntegrityResult = null;
+    renderOrderTools();
+  }
+  if (tool === "production-dispatch-integrity-apply") repairProductionDispatchIntegrityFromPanel(event.target);
   if (tool === "recover-covered-order") openCoveredOrderRecovery();
   if (tool === "recover-covered-order-home") {
     coveredOrderRecovery = { mode: "search" };
@@ -3329,6 +3515,134 @@ async function repairSelectedWorkflowIntegrityIssue(button) {
   if (!result?.ok) return;
   workflowIntegrityResult = scanWorkflowIntegrity();
   renderWorkflowModules();
+}
+
+async function repairProductionDispatchIntegrityFromPanel(button) {
+  const selectedOrderIds = [...(document.querySelectorAll?.("[data-production-dispatch-integrity-order]:checked") || [])]
+    .map((input) => String(input.dataset.productionDispatchIntegrityOrder || ""))
+    .filter(Boolean);
+  button.disabled = true;
+  const originalLabel = button.textContent;
+  button.textContent = t("Repairing...");
+  const result = await repairProductionDispatchIntegrity({ orderIds: selectedOrderIds });
+  if (button.isConnected) {
+    button.disabled = false;
+    button.textContent = originalLabel;
+  }
+  if (!result.ok) return;
+  productionDispatchIntegrityResult = scanProductionDispatchIntegrity();
+  renderWorkflowModules();
+}
+
+export async function repairProductionDispatchIntegrity(selection = {}, options = {}) {
+  if (!isBossOrAdmin()) return failWorkflowIntegrityRepair("Permission denied: your role cannot perform this action.");
+  const requestedIds = [...new Set((Array.isArray(selection.orderIds) ? selection.orderIds : [])
+    .map((id) => String(id || "").trim())
+    .filter(Boolean))];
+  if (!requestedIds.length) return failWorkflowIntegrityRepair("Select at least one exact Order confirmed as sent to Production.");
+
+  const scan = scanProductionDispatchIntegrity();
+  const selectedEntries = requestedIds.map((orderId) => scan.entries.find((entry) => entry.orderId === orderId));
+  if (selectedEntries.some((entry) => !entry || !entry.repairable || entry.exactProductionJobIds.length !== 1)) {
+    return failWorkflowIntegrityRepair("Every selected Order must have exactly one active Production Job and a previewed repair. Ambiguous or unrepairable records were not changed.");
+  }
+  const plan = {
+    orderIds: requestedIds,
+    entries: selectedEntries.map((entry) => structuredCloneSafe(entry))
+  };
+
+  if (options.downloadBackup !== false && !downloadProductionDispatchIntegrityBackup(plan)) {
+    return failWorkflowIntegrityRepair("Full JSON backup download failed. No Production dispatch records were changed.");
+  }
+  if (options.confirm !== false) {
+    const confirmation = window.prompt([
+      "Repair Production Dispatch Integrity",
+      "Selected exact Orders and before/after fields:",
+      JSON.stringify(plan.entries.map((entry) => ({
+        orderId: entry.orderId,
+        productionJobId: entry.exactProductionJobIds[0],
+        changes: entry.changes
+      })), null, 2),
+      "Type REPAIR PRODUCTION DISPATCH to confirm. No Production Job will be created, deleted or archived."
+    ].join("\n"));
+    if (confirmation !== "REPAIR PRODUCTION DISPATCH") return { ok: false, cancelled: true, message: "Production dispatch integrity repair cancelled." };
+  }
+
+  const previousState = snapshotOrderWorkflowState();
+  const beforeProductionCount = state.productionJobs.length;
+  const now = new Date().toISOString();
+  let localCommitted = false;
+  try {
+    const entryByOrderId = new Map(selectedEntries.map((entry) => [entry.orderId, entry]));
+    state.orders = state.orders.map((order) => {
+      const entry = entryByOrderId.get(String(order.id || ""));
+      if (!entry) return order;
+      const job = state.productionJobs.find((candidate) => isActiveWorkflowRecord(candidate)
+        && String(candidate.id || "") === entry.exactProductionJobIds[0]
+        && String(candidate.orderId || "") === String(order.id || ""));
+      if (!job) throw new Error(`Exact active Production Job is no longer available for Order ${order.id}.`);
+      const updated = { ...order };
+      entry.changes.forEach((change) => {
+        updated[change.field] = change.after;
+      });
+      updated.updatedAt = now;
+      return updated;
+    });
+    if (state.productionJobs.length !== beforeProductionCount) throw new Error("Production Job count changed unexpectedly.");
+
+    const localSave = persistOrderConversionLocally();
+    if (!localSave.ok) {
+      restoreConversionState(previousState);
+      return failWorkflowIntegrityRepair(`Failed to save Production dispatch repair locally: ${localSave.reason}`);
+    }
+    localCommitted = true;
+    productionDispatchIntegrityResult = scanProductionDispatchIntegrity();
+    renderWorkflowModules();
+    showWorkflowMessage("Production dispatch integrity repaired locally. Syncing cloud...", "info");
+    const cloudSync = await syncOrderConversionCollections();
+    if (!cloudSync.ok && !cloudSync.localOnly) {
+      const message = `Production dispatch integrity repair saved locally but cloud sync failed: ${cloudSync.reason}`;
+      showWorkflowMessage(message, "warning");
+      return { ok: true, cloudOk: false, repairedOrderIds: requestedIds, message };
+    }
+    const message = "Selected Production dispatch records repaired.";
+    showWorkflowMessage(message, "success");
+    return { ok: true, cloudOk: !cloudSync.localOnly, localOnly: cloudSync.localOnly, repairedOrderIds: requestedIds, message };
+  } catch (error) {
+    if (!localCommitted) {
+      restoreConversionState(previousState);
+      return failWorkflowIntegrityRepair(`Production dispatch integrity repair failed before local commit: ${error.message || "Unknown error"}`);
+    }
+    const message = `Production dispatch integrity repair saved locally but cloud sync failed: ${error.message || "Unknown cloud error"}`;
+    showWorkflowMessage(message, "warning");
+    return { ok: true, cloudOk: false, repairedOrderIds: requestedIds, message };
+  }
+}
+
+function downloadProductionDispatchIntegrityBackup(plan) {
+  try {
+    if (typeof document?.createElement !== "function" || typeof URL?.createObjectURL !== "function") return false;
+    const payload = {
+      type: "eco-screen-crm-v2-full-backup-before-production-dispatch-integrity-repair",
+      timestamp: new Date().toISOString(),
+      selection: plan.orderIds,
+      exactFieldChanges: plan.entries,
+      state: structuredCloneSafe(stateSnapshot())
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `eco-screen-crm-v2-full-backup-before-production-dispatch-repair-${backupTimestamp()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    return true;
+  } catch (error) {
+    console.error("Production dispatch integrity backup failed", error);
+    return false;
+  }
 }
 
 export async function repairWorkflowIntegrityIssue(issueId, values = {}, options = {}) {
@@ -5544,8 +5858,15 @@ export async function sendOrderToProduction(orderId) {
   if (!canSendOrder()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
   const order = findOrder(orderId);
   if (!order) return showWorkflowMessage("Order not found.", "error");
-  const existing = activeProductionJobForOrder(order);
-  const wasAlreadySent = order.sentToProduction === true || ["Sent to Production", "Production Completed"].includes(order.status);
+  const exactActiveJobs = uniqueActiveProductionJobs(state.productionJobs)
+    .filter((job) => String(job.orderId || "") === String(order.id || ""));
+  if (exactActiveJobs.length > 1) {
+    const message = "Send to Production blocked: multiple active Production Jobs use this exact Order stable ID. Repair the duplicate group first.";
+    showWorkflowMessage(message, "error");
+    return { ok: false, blocked: true, message, productionJobIds: exactActiveJobs.map((job) => job.id) };
+  }
+  const existing = exactActiveJobs[0] || null;
+  const wasAlreadySent = getOrderDispatchState(order) === "sent-to-production";
   const previousState = snapshotOrderWorkflowState();
   const now = new Date().toISOString();
   const orderNo = getOrderDisplayNo(order);
@@ -5556,7 +5877,7 @@ export async function sendOrderToProduction(orderId) {
       orderNo,
       orderNumber: orderNo,
       installationDate: order.installationDate || existing.installationDate || "",
-      status: normalizeProductionStatus(existing.status, true),
+      status: existing.status || "not_produced",
       updatedAt: now
     }
     : { ...createProductionJobFromOrder(order), status: "not_produced", updatedAt: now };
@@ -5570,6 +5891,7 @@ export async function sendOrderToProduction(orderId) {
     sentToProduction: true,
     productionStatus,
     productionJobId: productionJob.id,
+    sentToProductionAt: now,
     updatedAt: now
   } : row);
 
