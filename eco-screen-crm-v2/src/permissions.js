@@ -79,7 +79,7 @@ export function canEditInstallation() {
 }
 
 export function canScheduleInstallation() {
-  return isBossOrAdmin() || ["Secretary", "Installer"].includes(role());
+  return isBossOrAdmin() || String(role() ?? "").trim().toLowerCase() === "secretary";
 }
 
 export function canCompleteInstallation() {

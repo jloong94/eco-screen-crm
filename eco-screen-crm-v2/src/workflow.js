@@ -2,7 +2,6 @@ import {
   activeProducts,
   nextInstallationNumber,
   nextProductionNumber,
-  nextWarrantyNumber,
   persistOrderConversionLocally,
   persistQuotations,
   persistInstallationJobs,
@@ -54,7 +53,6 @@ const orderStatuses = [
   "Cancelled"
 ];
 const productionStatuses = ["not_produced", "in_production", "completed"];
-const installationStatuses = ["not_scheduled", "scheduled", "installed", "pending_collection", "touch_up"];
 const returnToFollowUpReasons = ["Customer did not confirm", "Customer postponed", "Mistakenly converted", "Duplicate Order", "Other"];
 const paymentTypes = ["Deposit", "Progress Payment", "Final Payment"];
 const paymentMethods = ["Bank Transfer", "Cash", "Card", "Other"];
@@ -111,6 +109,9 @@ let coveredOrderRecovery = null;
 let returnToFollowUpPanel = null;
 let paymentPanel = null;
 let paymentReversalPanel = null;
+let installationDispatchPreviewId = "";
+let installationRecallJobId = "";
+let warrantyPreviewCardId = "";
 let orderSearch = {
   orderNumber: "",
   customerName: "",
@@ -444,7 +445,15 @@ export function createInstallationJobFromOrder(order) {
     quotationNo: order.quoteNumber || order.quotationNo || "",
     customer: { ...order.customer },
     items: order.items.map((item) => itemWithCalculatedTotals(item)),
-    installationDate: order.installationDate,
+    installationDate: order.installationDate || "",
+    installationTime: "",
+    assignedInstallerId: "",
+    assignedInstallerName: "",
+    address: order.customer?.address || "",
+    contactPerson: order.customer?.name || "",
+    phone: order.customer?.phone || "",
+    installationRemarks: "",
+    requiredItems: "",
     balance: order.balance,
     balanceToCollect: order.balance,
     amountCollected: "",
@@ -471,7 +480,8 @@ export function createInstallationJobFromOrder(order) {
     completionStatus: "Open",
     warrantyNo: "",
     installerRemark: "",
-    status: order.installationDate ? "scheduled" : "not_scheduled",
+    status: "pending_arrangement",
+    dispatchStatus: "pending",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
@@ -1066,7 +1076,8 @@ function orderActionsHtml(order) {
     <div class="actions">
       <button class="btn" type="button" data-view-order="${order.id}">${t("View Order")}</button>
       <button class="btn primary" type="button" data-print-order="${order.id}">${t("Print Order")}</button>
-      ${canSendOrder() ? `<button class="btn" type="button" data-send-production="${order.id}">${t("Send to Production")}</button><button class="btn" type="button" data-send-installer="${order.id}">${t("Send to Installer")}</button>` : ""}
+      ${canSendOrder() ? `<button class="btn" type="button" data-send-production="${order.id}">${t("Send to Production")}</button>` : ""}
+      ${canScheduleInstallation() ? `<button class="btn" type="button" data-send-installer="${order.id}">Arrange Installation</button>` : ""}
       <button class="btn" type="button" data-whatsapp-order="${order.id}">${t("WhatsApp Customer")}</button>
       <button class="btn" type="button" data-highlight-order="${order.id}">${t("Search / Open Customer")}</button>
       ${canEditOrder() ? `<button class="btn" type="button" data-edit-order-items="${order.id}">${editingOrderId === order.id ? t("Close Item Editor") : t("Edit Order Items")}</button>` : ""}
@@ -1766,6 +1777,10 @@ function normalizeProductionStatus(value, sentToProduction = false) {
 
 function normalizeInstallationStatus(value) {
   const map = {
+    pending_arrangement: "not_scheduled",
+    ready_to_send: "scheduled",
+    sent_to_installer: "scheduled",
+    completed: "installed",
     Pending: "not_scheduled",
     "Not Scheduled": "not_scheduled",
     Scheduled: "scheduled",
@@ -2377,39 +2392,150 @@ function failProductionDuplicateAction(message) {
 function renderInstallationJobs() {
   const list = document.querySelector("#installationList");
   if (!list) return;
+  const activeJobs = installationJobsForUser();
+  const diagnostics = installationDispatchDiagnostics();
+  list.innerHTML = `
+    ${canScheduleInstallation() ? `<section class="installation-diagnostics">
+      <span>Pending Arrangement<strong>${diagnostics.pendingArrangement}</strong></span>
+      <span>Ready to Send<strong>${diagnostics.readyToSend}</strong></span>
+      <span>Sent to Installer<strong>${diagnostics.sentToInstaller}</strong></span>
+      <span>Completed<strong>${diagnostics.completed}</strong></span>
+      <span>Missing assignedInstallerId<strong>${diagnostics.missingAssignedInstallerId}</strong></span>
+    </section>` : ""}
+    ${activeJobs.length ? activeJobs.map((job) => installationJobCardHtml(job)).join("") : `<p class="muted-text">${t("No installation jobs yet.")}</p>`}
+  `;
+  if (activeCompletionJobId) setupSignatureCanvas(activeCompletionJobId);
+}
+
+export function installationJobsForUser(user = state.currentUser) {
+  const userRole = normalizeText(user?.role || state.role);
   const activeJobs = state.installationJobs.filter(isActiveWorkflowRecord);
-  list.innerHTML = activeJobs.length ? activeJobs.map((job) => `
-    <article class="card">
+  if (["boss", "admin", "secretary"].includes(userRole)) return activeJobs;
+  if (userRole !== "installer") return [];
+  const exactInstallerId = String(user?.userId || "").trim();
+  if (!exactInstallerId) return [];
+  return activeJobs.filter((job) => ["sent_to_installer", "completed"].includes(installationDispatchStage(job))
+    && String(job.assignedInstallerId || "").trim() === exactInstallerId);
+}
+
+export function installationDispatchDiagnostics() {
+  const counts = { pendingArrangement: 0, readyToSend: 0, sentToInstaller: 0, completed: 0, missingAssignedInstallerId: 0 };
+  state.installationJobs.filter(isActiveWorkflowRecord).forEach((job) => {
+    const stage = installationDispatchStage(job);
+    if (stage === "pending_arrangement") counts.pendingArrangement += 1;
+    if (stage === "ready_to_send") counts.readyToSend += 1;
+    if (stage === "sent_to_installer") counts.sentToInstaller += 1;
+    if (stage === "completed") counts.completed += 1;
+    if (!String(job.assignedInstallerId || "").trim()) counts.missingAssignedInstallerId += 1;
+  });
+  return counts;
+}
+
+function installationDispatchStage(job = {}) {
+  const status = String(job.status || "").trim().toLowerCase();
+  if (status === "completed" || (job.completionStatus === "Completed" && ["installed", "pending_collection", "touch_up"].includes(status))) return "completed";
+  if (status === "sent_to_installer") return "sent_to_installer";
+  if (status === "ready_to_send") return "ready_to_send";
+  if (status === "pending_arrangement") return "pending_arrangement";
+  if (job.installationDate && job.assignedInstallerId) return "ready_to_send";
+  return "pending_arrangement";
+}
+
+function installationDispatchLabel(job) {
+  return ({ pending_arrangement: "Pending Arrangement", ready_to_send: "Ready to Send", sent_to_installer: "Sent to Installer", completed: "Completed" })[installationDispatchStage(job)];
+}
+
+function installationJobCardHtml(job) {
+  const stage = installationDispatchStage(job);
+  const existingWarranty = existingWarrantyForInstallation(job.id);
+  const warrantyPreview = warrantyPreviewCardId
+    ? state.warrantyCards.find((card) => String(card.id || "") === warrantyPreviewCardId && String(card.installationId || "") === String(job.id || ""))
+    : null;
+  return `
+    <article class="card" data-installation-card="${escapeHtml(job.id)}">
       <div class="card-head">
         <div>
-          <strong>${job.installationNumber}</strong>
-          <p class="muted-text">${t("Order")}: ${job.orderNo || job.orderNumber} | ${job.customer.name || "-"}</p>
+          <strong>${escapeHtml(job.installationNumber || job.id)}</strong>
+          <p class="muted-text">${t("Order")}: ${escapeHtml(job.orderNo || job.orderNumber || "-")} | ${escapeHtml(job.customer?.name || job.contactPerson || "-")}</p>
           <p class="muted-text">${t("Quote")}: ${job.quoteNumber || job.quotationNo || "-"}</p>
-          <p class="muted-text">${job.customer.phone || "-"} | ${job.customer.address || "-"}</p>
+          <p class="muted-text">${escapeHtml(job.phone || job.customer?.phone || "-")} | ${escapeHtml(job.address || job.customer?.address || "-")}</p>
         </div>
-        <span class="pill">${money(getRemainingBalance(findOrder(job.orderId) || {}, job))} ${t("Remaining Balance")}</span>
+        <div><span class="pill">${escapeHtml(installationDispatchLabel(job))}</span><span class="pill">${money(getRemainingBalance(findOrder(job.orderId) || {}, job))} ${t("Remaining Balance")}</span></div>
       </div>
-      <div class="form-grid compact">
-        <label>${t("Installation Date")}<input type="date" data-installation-id="${job.id}" data-installation-field="installationDate" value="${job.installationDate || ""}" ${canScheduleInstallation() ? "" : "readonly"} /></label>
-        <label>${t("Status")}<select data-installation-id="${job.id}" data-installation-field="status" ${canScheduleInstallation() ? "" : "disabled"}>${installationStatuses.map((status) => `<option value="${status}" ${normalizeInstallationStatus(job.status) === status ? "selected" : ""}>${statusLabel(status)}</option>`).join("")}</select></label>
-        <label class="wide">${t("Installer Remark")}<textarea rows="2" data-installation-id="${job.id}" data-installation-field="installerRemark" ${canScheduleInstallation() ? "" : "readonly"}>${job.installerRemark || ""}</textarea></label>
-      </div>
+      ${canScheduleInstallation() ? installationArrangementHtml(job, stage) : installationAssignedSummaryHtml(job)}
       ${itemsSummary(job.items)}
       ${completionSummaryHtml(job)}
       <div class="actions">
         <button class="btn" type="button" data-view-installation="${job.id}">${t("View Installation Job")}</button>
         <button class="btn primary" type="button" data-print-installation="${job.id}">${t("Print Installation Sheet")}</button>
         <button class="btn" type="button" data-whatsapp-installation="${job.id}">${t("WhatsApp Customer")}</button>
-        ${canScheduleInstallation() ? `<button class="btn" type="button" data-mark-installation-status="${job.id}" data-status="scheduled">${t("Mark Scheduled")}</button>` : ""}
-        ${job.status === "touch_up" && canCompleteInstallation() ? `<button class="btn" type="button" data-mark-touchup-completed="${job.id}">${t("Mark Touch Up Completed")}</button>` : ""}
-        ${canCompleteInstallation() ? `<button class="btn" type="button" data-complete-installation="${job.id}">${t("Complete Installation")}</button><button class="btn" type="button" data-generate-warranty="${job.id}">${t("Generate Warranty Card")}</button>` : ""}
-        <button class="btn" type="button" data-print-warranty="${job.id}">${t("Print Warranty Card")}</button>
-        <button class="btn" type="button" data-print-warranty="${job.id}">${t("PDF Warranty Card")}</button>
+        ${canScheduleInstallation() && !["sent_to_installer", "completed"].includes(stage) ? `<button class="btn primary" type="button" data-preview-installation-send="${job.id}">Send to Installer</button>` : ""}
+        ${isBossOrAdmin() && stage === "sent_to_installer" ? `<button class="btn danger" type="button" data-open-installation-recall="${job.id}">Recall from Installer</button>` : ""}
+        ${canCompleteInstallationJob(job) && stage === "sent_to_installer" ? `<button class="btn" type="button" data-complete-installation="${job.id}">${t("Complete Installation")}</button>` : ""}
+        ${job.completionOutcome === "touch_up" && canCompleteInstallationJob(job) ? `<button class="btn" type="button" data-mark-touchup-completed="${job.id}">${t("Mark Touch Up Completed")}</button>` : ""}
+        ${canGenerateWarrantyCard() && stage === "completed" && !existingWarranty ? `<button class="btn" type="button" data-generate-warranty="${job.id}">Generate Warranty Card</button>` : ""}
+        ${canGenerateWarrantyCard() && existingWarranty ? `<button class="btn" type="button" data-view-warranty="${existingWarranty.id}">View Existing Warranty Card</button>${stage === "completed" ? `<button class="btn" type="button" data-regenerate-warranty="${job.id}">Regenerate Warranty Card</button>` : ""}` : ""}
       </div>
+      ${installationDispatchPreviewId === job.id ? installationDispatchPreviewHtml(job) : ""}
+      ${installationRecallJobId === job.id ? installationRecallPanelHtml(job) : ""}
       ${activeCompletionJobId === job.id ? completionFormHtml(job) : ""}
+      ${warrantyPreview ? warrantyCardPreviewHtml(warrantyPreview) : ""}
     </article>
-  `).join("") : `<p class="muted-text">${t("No installation jobs yet.")}</p>`;
-  if (activeCompletionJobId) setupSignatureCanvas(activeCompletionJobId);
+  `;
+}
+
+function installationArrangementHtml(job, stage) {
+  const locked = ["sent_to_installer", "completed"].includes(stage);
+  return `<section class="installation-arrangement" data-installation-arrangement="${escapeHtml(job.id)}">
+    <div class="form-grid compact">
+      <label>Installation Date<input type="date" data-arrangement-field="installationDate" value="${escapeHtml(job.installationDate || "")}" ${locked ? "disabled" : ""} /></label>
+      <label>Installation Time<input type="time" data-arrangement-field="installationTime" value="${escapeHtml(job.installationTime || "")}" ${locked ? "disabled" : ""} /></label>
+      <label>Assigned Installer<select data-arrangement-field="assignedInstallerId" ${locked ? "disabled" : ""}>${installerOptionsHtml(job.assignedInstallerId)}</select></label>
+      <label>Contact Person<input data-arrangement-field="contactPerson" value="${escapeHtml(job.contactPerson || job.customer?.name || "")}" ${locked ? "disabled" : ""} /></label>
+      <label>Phone<input data-arrangement-field="phone" value="${escapeHtml(job.phone || job.customer?.phone || "")}" ${locked ? "disabled" : ""} /></label>
+      <label class="wide">Address<textarea rows="2" data-arrangement-field="address" ${locked ? "disabled" : ""}>${escapeHtml(job.address || job.customer?.address || "")}</textarea></label>
+      <label class="wide">Installation Remarks<textarea rows="2" data-arrangement-field="installationRemarks" ${locked ? "disabled" : ""}>${escapeHtml(job.installationRemarks || job.installerRemark || "")}</textarea></label>
+      <label class="wide">Required Items / Checklist<textarea rows="2" data-arrangement-field="requiredItems" ${locked ? "disabled" : ""}>${escapeHtml(job.requiredItems || "")}</textarea></label>
+    </div>
+    ${locked ? `<p class="muted-text">Recall the job before changing its arrangement. Editing never sends automatically.</p>` : `<button class="btn" type="button" data-save-installation-arrangement="${escapeHtml(job.id)}">Save Arrangement</button>`}
+  </section>`;
+}
+
+function installationAssignedSummaryHtml(job) {
+  return `<div class="installation-assigned-summary"><span>Date / Time<strong>${escapeHtml([job.installationDate, job.installationTime].filter(Boolean).join(" ") || "-")}</strong></span><span>Assigned Installer<strong>${escapeHtml(job.assignedInstallerName || "-")}</strong></span><span>Address<strong>${escapeHtml(job.address || job.customer?.address || "-")}</strong></span><span>Phone<strong>${escapeHtml(job.phone || job.customer?.phone || "-")}</strong></span></div>`;
+}
+
+function installerOptionsHtml(selectedId) {
+  const installers = state.users.filter((user) => user.active !== false && normalizeText(user.role) === "installer" && String(user.userId || "").trim());
+  return `<option value="">Select installer</option>${installers.map((user) => `<option value="${escapeHtml(user.userId)}" ${String(user.userId) === String(selectedId || "") ? "selected" : ""}>${escapeHtml(user.name || user.username || user.userId)}</option>`).join("")}`;
+}
+
+function installationDispatchPreviewHtml(job) {
+  const order = findOrder(job.orderId);
+  return `<section class="installation-dispatch-preview">
+    <h3>Send to Installer</h3>
+    ${installationDispatchSummaryHtml(job, order)}
+    <div class="actions"><button class="btn primary" type="button" data-confirm-installation-send="${escapeHtml(job.id)}">Confirm Send to Installer</button><button class="btn" type="button" data-close-installation-send="${escapeHtml(job.id)}">Cancel</button></div>
+  </section>`;
+}
+
+function installationRecallPanelHtml(job) {
+  return `<section class="installation-dispatch-preview" data-installation-recall-panel="${escapeHtml(job.id)}"><h3>Recall from Installer</h3><p>Assignment and dispatch history remain stored for audit.</p><label>Recall reason<textarea rows="2" data-installation-recall-reason></textarea></label><div class="actions"><button class="btn danger" type="button" data-confirm-installation-recall="${escapeHtml(job.id)}">Confirm Recall</button><button class="btn" type="button" data-close-installation-recall="${escapeHtml(job.id)}">Cancel</button></div></section>`;
+}
+
+function installationDispatchSummaryHtml(job, order) {
+  return `<div class="installation-assigned-summary"><span>Customer<strong>${escapeHtml(order?.customer?.name || job.customer?.name || "-")}</strong></span><span>SO Number<strong>${escapeHtml(getOrderDisplayNo(order || job) || "-")}</strong></span><span>Date / Time<strong>${escapeHtml([job.installationDate, job.installationTime].filter(Boolean).join(" ") || "-")}</strong></span><span>Assigned Installer<strong>${escapeHtml(job.assignedInstallerName || "-")}</strong></span><span>Address<strong>${escapeHtml(job.address || job.customer?.address || "-")}</strong></span><span>Phone<strong>${escapeHtml(job.phone || job.customer?.phone || "-")}</strong></span><span>Remarks<strong>${escapeHtml(job.installationRemarks || job.installerRemark || "-")}</strong></span></div>`;
+}
+
+function canCompleteInstallationJob(job) {
+  if (isBossOrAdmin()) return true;
+  return normalizeText(role()) === "installer"
+    && String(state.currentUser?.userId || "") === String(job.assignedInstallerId || "")
+    && ["sent_to_installer", "completed"].includes(String(job.status || "").toLowerCase());
+}
+
+function canGenerateWarrantyCard() {
+  return isBossOrAdmin() || normalizeText(role()) === "secretary";
 }
 
 function completionSummaryHtml(job) {
@@ -5421,39 +5547,38 @@ export async function sendOrderToProduction(orderId) {
   }
 }
 
-function sendOrderToInstaller(orderId) {
-  if (!canSendOrder()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+async function sendOrderToInstaller(orderId) {
+  if (!canScheduleInstallation()) return failInstallationAction("Permission denied: only Boss, Admin or Secretary can arrange Installation.");
   const order = findOrder(orderId);
-  if (!order) return showWorkflowMessage("Order not found.", "error");
-  const existing = state.installationJobs.find((job) => job.orderId === order.id);
-  const wasAlreadySent = ["Sent to Installer", "Installation Scheduled", "Installing", "Installation Completed", "Pending Collection", "Completed"].includes(order.status);
-  order.status = "Sent to Installer";
-  order.installationStatus = order.installationDate ? "scheduled" : "not_scheduled";
-  order.updatedAt = new Date().toISOString();
-
+  if (!order || !isActiveOrderRecord(order)) return failInstallationAction("The exact active Order was not found.");
+  const existing = state.installationJobs.find((job) => isActiveWorkflowRecord(job) && String(job.orderId || "") === String(order.id));
   if (existing) {
-    existing.installationDate = order.installationDate || existing.installationDate || "";
-    existing.balance = order.balance;
-    existing.status = order.installationStatus;
-    existing.updatedAt = new Date().toISOString();
-    persistOrders();
-    persistInstallationJobs();
-    renderWorkflowModules();
-    showWorkflowMessage(wasAlreadySent ? "Installation job already exists" : "Order sent to Installer", wasAlreadySent ? "warning" : "success");
-    return;
+    showWorkflowMessage("Installation job already exists. Open Installation to arrange and explicitly Send to Installer.", "info");
+    return { ok: true, existing: true, installationJob: existing };
   }
-
-  state.installationJobs = [createInstallationJobFromOrder(order), ...state.installationJobs];
-  persistOrders();
-  persistInstallationJobs();
-  renderWorkflowModules();
-  showWorkflowMessage("Order sent to Installer", "success");
+  const installationJob = createInstallationJobFromOrder(order);
+  const changes = [];
+  recordFieldChanges(changes, "installationJobs", {}, installationJob);
+  const plan = installationMutationPlan("prepare-installation", installationJob.id, changes, { installationJobs: [installationJob, ...state.installationJobs] });
+  const result = await commitOrderActionPlan(plan, {
+    local: "Installation job created locally. Syncing cloud...",
+    success: "Installation job created as Pending Arrangement. It is hidden from Installer users.",
+    cloudFailure: "Installation preparation saved locally but cloud sync failed"
+  });
+  return { ...result, installationJob };
 }
 
 function syncJobInstallationDate(orderId, installationDate) {
   state.productionJobs = state.productionJobs.map((job) => !isArchivedProductionJob(job) && job.orderId === orderId ? { ...job, installationDate, updatedAt: new Date().toISOString() } : job);
-  state.installationJobs = state.installationJobs.map((job) => job.orderId === orderId ? { ...job, installationDate, status: normalizeInstallationStatus(job.status) === "not_scheduled" && installationDate ? "scheduled" : job.status, updatedAt: new Date().toISOString() } : job);
-  state.orders = state.orders.map((order) => order.id === orderId ? { ...order, installationStatus: order.installationStatus === "not_scheduled" && installationDate ? "scheduled" : order.installationStatus, updatedAt: new Date().toISOString() } : order);
+  state.installationJobs = state.installationJobs.map((job) => {
+    if (job.orderId !== orderId) return job;
+    const stage = installationDispatchStage(job);
+    const status = ["sent_to_installer", "completed"].includes(stage)
+      ? job.status
+      : installationDate && job.assignedInstallerId ? "ready_to_send" : "pending_arrangement";
+    return { ...job, installationDate, status, updatedAt: new Date().toISOString() };
+  });
+  state.orders = state.orders.map((order) => order.id === orderId ? { ...order, installationStatus: installationDate ? "ready_to_send" : "pending_arrangement", updatedAt: new Date().toISOString() } : order);
   persistProductionJobs();
   persistInstallationJobs();
   renderProductionJobs();
@@ -5589,7 +5714,17 @@ function handleInstallationClick(event) {
   const clearSignatureId = event.target.dataset.clearSignature;
   const removeMediaJobId = event.target.dataset.removeMediaJob;
   const warrantyId = event.target.dataset.generateWarranty;
-  const printWarrantyId = event.target.dataset.printWarranty;
+  const viewWarrantyId = event.target.dataset.viewWarranty;
+  const regenerateWarrantyId = event.target.dataset.regenerateWarranty;
+  const printWarrantyCardId = event.target.dataset.printWarrantyCard;
+  const closeWarrantyPreviewId = event.target.dataset.closeWarrantyPreview;
+  const saveArrangementId = event.target.dataset.saveInstallationArrangement;
+  const previewSendId = event.target.dataset.previewInstallationSend;
+  const confirmSendId = event.target.dataset.confirmInstallationSend;
+  const closeSendId = event.target.dataset.closeInstallationSend;
+  const openRecallId = event.target.dataset.openInstallationRecall;
+  const confirmRecallId = event.target.dataset.confirmInstallationRecall;
+  const closeRecallId = event.target.dataset.closeInstallationRecall;
   if (printId) printInstallation(printId);
   if (viewId) printInstallation(viewId);
   if (whatsappId) whatsappInstallationCustomer(whatsappId);
@@ -5600,8 +5735,238 @@ function handleInstallationClick(event) {
   if (saveId) saveInstallationCompletion(saveId);
   if (clearSignatureId) clearSignature(clearSignatureId);
   if (removeMediaJobId) removeInstallationMedia(removeMediaJobId, event.target.dataset.removeMediaField, event.target.dataset.removeMediaIndex);
+  if (saveArrangementId) saveInstallationArrangementFromPanel(saveArrangementId, event.target);
+  if (previewSendId) previewInstallationDispatch(previewSendId);
+  if (confirmSendId) confirmInstallationDispatch(confirmSendId, event.target);
+  if (closeSendId) closeInstallationDispatchPreview();
+  if (openRecallId) openInstallationRecall(openRecallId);
+  if (confirmRecallId) confirmInstallationRecall(confirmRecallId, event.target);
+  if (closeRecallId) closeInstallationRecall();
   if (warrantyId) generateWarrantyCard(warrantyId);
-  if (printWarrantyId) printWarrantyCard(printWarrantyId);
+  if (viewWarrantyId) viewExistingWarrantyCard(viewWarrantyId);
+  if (regenerateWarrantyId) generateWarrantyCard(regenerateWarrantyId, { regenerate: true });
+  if (printWarrantyCardId) printWarrantyCardById(printWarrantyCardId);
+  if (closeWarrantyPreviewId) closeWarrantyPreview();
+}
+
+function saveInstallationArrangementFromPanel(jobId, button) {
+  const panel = button.closest("[data-installation-arrangement]");
+  if (!panel) return failInstallationAction("Installation arrangement form is unavailable.");
+  const read = (field) => panel.querySelector(`[data-arrangement-field="${field}"]`)?.value || "";
+  saveInstallationArrangement(jobId, {
+    installationDate: read("installationDate"),
+    installationTime: read("installationTime"),
+    assignedInstallerId: read("assignedInstallerId"),
+    contactPerson: read("contactPerson"),
+    phone: read("phone"),
+    address: read("address"),
+    installationRemarks: read("installationRemarks"),
+    requiredItems: read("requiredItems")
+  });
+}
+
+export async function saveInstallationArrangement(jobId, values = {}) {
+  if (!canScheduleInstallation()) return failInstallationAction("Permission denied: only Boss, Admin or Secretary can arrange Installation.");
+  const exactJobId = String(jobId || "").trim();
+  const job = state.installationJobs.find((row) => String(row.id || "") === exactJobId);
+  if (!exactJobId || !job || !isActiveWorkflowRecord(job)) return failInstallationAction("The exact active Installation stable ID was not found.");
+  const stage = installationDispatchStage(job);
+  if (["sent_to_installer", "completed"].includes(stage)) return failInstallationAction("Recall the Installation before changing an active dispatch. Completed records are read-only.");
+  const assignedInstallerId = String(values.assignedInstallerId || "").trim();
+  const installer = assignedInstallerId ? exactInstallerUser(assignedInstallerId) : null;
+  if (assignedInstallerId && !installer) return failInstallationAction("The exact selected Installer staff/user ID was not found or is inactive.");
+  const installationDate = String(values.installationDate || "").trim();
+  const nextStatus = installationDate && assignedInstallerId ? "ready_to_send" : "pending_arrangement";
+  const now = new Date().toISOString();
+  const updatedJob = {
+    ...job,
+    installationDate,
+    installationTime: String(values.installationTime || "").trim(),
+    assignedInstallerId,
+    assignedInstallerName: installer ? installer.name || installer.username || installer.userId : "",
+    address: String(values.address || "").trim(),
+    contactPerson: String(values.contactPerson || "").trim(),
+    phone: String(values.phone || "").trim(),
+    installationRemarks: String(values.installationRemarks || "").trim(),
+    requiredItems: String(values.requiredItems || "").trim(),
+    status: nextStatus,
+    dispatchStatus: nextStatus === "ready_to_send" ? "ready" : "pending",
+    arrangementUpdatedAt: now,
+    arrangementUpdatedBy: currentActor(),
+    updatedAt: now
+  };
+  const changes = [];
+  recordFieldChanges(changes, "installationJobs", job, updatedJob);
+  const order = state.orders.find((row) => String(row.id || "") === String(job.orderId || "") && isActiveOrderRecord(row));
+  if (!order) return failInstallationAction("The exact related active Order could not be identified.");
+  const updatedOrder = { ...order, installationDate, installationStatus: nextStatus, updatedAt: now };
+  recordFieldChanges(changes, "orders", order, updatedOrder);
+  const plan = installationMutationPlan("installation-arrangement", exactJobId, changes, {
+    installationJobs: state.installationJobs.map((row) => String(row.id || "") === exactJobId ? updatedJob : row),
+    orders: state.orders.map((row) => String(row.id || "") === String(order.id) ? updatedOrder : row)
+  });
+  const result = await commitOrderActionPlan(plan, {
+    local: "Installation arrangement saved locally. Syncing cloud...",
+    success: nextStatus === "ready_to_send" ? "Installation is Ready to Send. It is still hidden from Installer users." : "Installation saved as Pending Arrangement.",
+    cloudFailure: "Installation arrangement saved locally but cloud sync failed"
+  });
+  return { ...result, jobId: exactJobId, status: nextStatus };
+}
+
+function previewInstallationDispatch(jobId) {
+  const validation = validateInstallationDispatch(jobId);
+  if (!validation.ok) return failInstallationAction(validation.message);
+  installationDispatchPreviewId = String(jobId);
+  installationRecallJobId = "";
+  renderInstallationJobs();
+}
+
+function closeInstallationDispatchPreview() {
+  installationDispatchPreviewId = "";
+  renderInstallationJobs();
+}
+
+async function confirmInstallationDispatch(jobId, button) {
+  if (installationDispatchPreviewId !== String(jobId)) return failInstallationAction("Review the Send to Installer summary first.");
+  setOrderActionBusy(button, "Sending...");
+  const result = await sendInstallationToInstaller(jobId);
+  if (result.ok) installationDispatchPreviewId = "";
+  renderInstallationJobs();
+}
+
+export async function sendInstallationToInstaller(jobId) {
+  if (!canScheduleInstallation()) return failInstallationAction("Permission denied: only Boss, Admin or Secretary can send Installation.");
+  const validation = validateInstallationDispatch(jobId);
+  if (!validation.ok) return failInstallationAction(validation.message);
+  const { job, order, installer } = validation;
+  const now = new Date().toISOString();
+  const actor = currentActor();
+  const dispatchEvent = { action: "sent", at: now, by: actor, installerId: installer.userId, installerName: installer.name || installer.username || installer.userId };
+  const updatedJob = {
+    ...job,
+    status: "sent_to_installer",
+    dispatchStatus: "sent",
+    assignedInstallerId: installer.userId,
+    assignedInstallerName: installer.name || installer.username || installer.userId,
+    sentAt: now,
+    sentBy: actor,
+    dispatchHistory: [...(Array.isArray(job.dispatchHistory) ? job.dispatchHistory : []), dispatchEvent],
+    updatedAt: now
+  };
+  const updatedOrder = { ...order, installationDate: job.installationDate, installationStatus: "sent_to_installer", status: "Sent to Installer", updatedAt: now };
+  const changes = [];
+  recordFieldChanges(changes, "installationJobs", job, updatedJob);
+  recordFieldChanges(changes, "orders", order, updatedOrder);
+  const plan = installationMutationPlan("send-installation", job.id, changes, {
+    installationJobs: state.installationJobs.map((row) => String(row.id) === String(job.id) ? updatedJob : row),
+    orders: state.orders.map((row) => String(row.id) === String(order.id) ? updatedOrder : row)
+  });
+  const result = await commitOrderActionPlan(plan, {
+    local: "Installation sent locally. Syncing cloud...",
+    success: `Installation sent to ${updatedJob.assignedInstallerName}.`,
+    cloudFailure: "Installation dispatch saved locally but cloud sync failed"
+  });
+  return { ...result, jobId: job.id, assignedInstallerId: installer.userId, status: "sent_to_installer" };
+}
+
+function validateInstallationDispatch(jobId) {
+  const exactJobId = String(jobId || "").trim();
+  const job = state.installationJobs.find((row) => String(row.id || "") === exactJobId);
+  if (!exactJobId || !job) return { ok: false, message: "The exact Installation stable ID was not found." };
+  if (!isActiveWorkflowRecord(job)) return { ok: false, message: "Archived or cancelled Installation records cannot be sent." };
+  if (!String(job.installationDate || "").trim()) return { ok: false, message: "Select an installation date before sending." };
+  const installer = exactInstallerUser(job.assignedInstallerId);
+  if (!installer) return { ok: false, message: "Select an active Installer by exact staff/user ID before sending." };
+  const order = state.orders.find((row) => String(row.id || "") === String(job.orderId || "") && isActiveOrderRecord(row));
+  if (!order) return { ok: false, message: "The exact related active Order could not be identified." };
+  if (installationDispatchStage(job) === "completed") return { ok: false, message: "Completed Installation records cannot be sent again." };
+  return { ok: true, job, order, installer };
+}
+
+function openInstallationRecall(jobId) {
+  if (!isBossOrAdmin()) return failInstallationAction("Permission denied: only Boss/Admin can recall an Installation.");
+  const job = state.installationJobs.find((row) => String(row.id || "") === String(jobId || ""));
+  if (!job || !isActiveWorkflowRecord(job) || String(job.status || "").toLowerCase() !== "sent_to_installer") return failInstallationAction("The exact sent Installation stable ID was not found.");
+  installationRecallJobId = String(jobId);
+  installationDispatchPreviewId = "";
+  renderInstallationJobs();
+}
+
+function closeInstallationRecall() {
+  installationRecallJobId = "";
+  renderInstallationJobs();
+}
+
+function confirmInstallationRecall(jobId, button) {
+  const reason = button.closest("[data-installation-recall-panel]")?.querySelector("[data-installation-recall-reason]")?.value || "";
+  recallInstallationFromInstaller(jobId, reason).then((result) => {
+    if (result.ok) installationRecallJobId = "";
+    renderInstallationJobs();
+  });
+}
+
+export async function recallInstallationFromInstaller(jobId, recallReason) {
+  if (!isBossOrAdmin()) return failInstallationAction("Permission denied: only Boss/Admin can recall an Installation.");
+  const exactJobId = String(jobId || "").trim();
+  const reason = String(recallReason || "").trim();
+  const job = state.installationJobs.find((row) => String(row.id || "") === exactJobId);
+  if (!job || !isActiveWorkflowRecord(job) || String(job.status || "").toLowerCase() !== "sent_to_installer") return failInstallationAction("The exact sent Installation stable ID was not found.");
+  if (!reason) return failInstallationAction("Enter a recall reason.");
+  const now = new Date().toISOString();
+  const actor = currentActor();
+  const updatedJob = {
+    ...job,
+    status: "pending_arrangement",
+    dispatchStatus: "recalled",
+    recalledAt: now,
+    recalledBy: actor,
+    recallReason: reason,
+    dispatchHistory: [...(Array.isArray(job.dispatchHistory) ? job.dispatchHistory : []), { action: "recalled", at: now, by: actor, reason, installerId: job.assignedInstallerId || "", installerName: job.assignedInstallerName || "" }],
+    updatedAt: now
+  };
+  const order = state.orders.find((row) => String(row.id || "") === String(job.orderId || ""));
+  const updatedOrder = order ? { ...order, installationStatus: "pending_arrangement", updatedAt: now } : null;
+  const changes = [];
+  recordFieldChanges(changes, "installationJobs", job, updatedJob);
+  if (order) recordFieldChanges(changes, "orders", order, updatedOrder);
+  const plan = installationMutationPlan("recall-installation", exactJobId, changes, {
+    installationJobs: state.installationJobs.map((row) => String(row.id || "") === exactJobId ? updatedJob : row),
+    orders: updatedOrder ? state.orders.map((row) => String(row.id || "") === String(order.id) ? updatedOrder : row) : state.orders
+  });
+  const result = await commitOrderActionPlan(plan, {
+    local: "Installation recall saved locally. Syncing cloud...",
+    success: "Installation recalled. It is hidden from Installer users until explicitly sent again.",
+    cloudFailure: "Installation recall saved locally but cloud sync failed"
+  });
+  return { ...result, jobId: exactJobId, status: "pending_arrangement" };
+}
+
+function exactInstallerUser(installerId) {
+  const exactId = String(installerId || "").trim();
+  if (!exactId) return null;
+  return state.users.find((user) => user.active !== false && normalizeText(user.role) === "installer" && String(user.userId || "") === exactId) || null;
+}
+
+function installationMutationPlan(action, jobId, changes, overrides = {}) {
+  return {
+    ok: true,
+    action,
+    jobId,
+    orderId: "",
+    changes,
+    nextState: {
+      quotations: state.quotations,
+      orders: overrides.orders || state.orders,
+      productionJobs: state.productionJobs,
+      installationJobs: overrides.installationJobs || state.installationJobs,
+      warrantyCards: overrides.warrantyCards || state.warrantyCards
+    }
+  };
+}
+
+function failInstallationAction(message) {
+  showWorkflowMessage(message, "error");
+  return { ok: false, message };
 }
 
 function handleInstallationChange(event) {
@@ -5666,7 +6031,9 @@ function findOrder(orderId) {
 }
 
 function openCompletionForm(jobId) {
-  if (!canCompleteInstallation()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+  const job = state.installationJobs.find((row) => String(row.id || "") === String(jobId || ""));
+  if (!job || !canCompleteInstallationJob(job)) return showWorkflowMessage("Permission denied or Installation is not assigned to this exact Installer.", "error");
+  if (installationDispatchStage(job) !== "sent_to_installer") return showWorkflowMessage("Installation must be sent to the assigned Installer before completion.", "error");
   activeCompletionJobId = jobId;
   renderInstallationJobs();
 }
@@ -5704,49 +6071,66 @@ function removeInstallationMedia(jobId, field, index) {
   renderInstallationJobs();
 }
 
-function saveInstallationCompletion(jobId) {
-  if (!canCompleteInstallation()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+async function saveInstallationCompletion(jobId) {
   const job = state.installationJobs.find((row) => row.id === jobId);
-  if (!job) return;
+  if (!job || !canCompleteInstallationJob(job) || installationDispatchStage(job) !== "sent_to_installer") return showWorkflowMessage("Permission denied or Installation is not ready for completion.", "error");
   const panel = document.querySelector(`[data-completion-panel="${jobId}"]`);
   const error = document.querySelector(`[data-completion-error="${jobId}"]`);
   if (!panel) return;
 
   const completionData = readCompletionForm(panel);
-  Object.assign(job, completionData.fields);
-  job.checklist = completionData.checklist;
-  job.balanceCollected = completionData.fields.balanceCollected === "true";
-  job.touchUpRequired = completionData.fields.touchUpRequired === "true";
+  const draft = {
+    ...structuredCloneSafe(job),
+    ...completionData.fields,
+    checklist: completionData.checklist,
+    balanceCollected: completionData.fields.balanceCollected === "true",
+    touchUpRequired: completionData.fields.touchUpRequired === "true"
+  };
 
   const signature = signatureDataUrl(jobId);
-  const validationError = validateCompletion(job, completionData, signature);
+  const validationError = validateCompletion(draft, completionData, signature);
   if (validationError) {
     if (error) error.textContent = validationError;
     return;
   }
 
-  job.customerSignature = signature;
-  job.completionStatus = "Completed";
-  job.balanceToCollect = parseAmount(job.balanceToCollect);
-  job.amountCollected = parseAmount(job.amountCollected);
-  if (job.balanceCollected && job.amountCollected < job.balanceToCollect) job.amountCollected = job.balanceToCollect;
-  job.balance = Math.max(0, job.balanceToCollect - job.amountCollected);
-  job.status = job.touchUpRequired ? "touch_up" : job.balance <= 0 ? "installed" : "pending_collection";
-  job.updatedAt = new Date().toISOString();
+  const now = new Date().toISOString();
+  draft.customerSignature = signature;
+  draft.completionStatus = "Completed";
+  draft.balanceToCollect = parseAmount(draft.balanceToCollect);
+  draft.amountCollected = parseAmount(draft.amountCollected);
+  if (draft.balanceCollected && draft.amountCollected < draft.balanceToCollect) draft.amountCollected = draft.balanceToCollect;
+  draft.balance = Math.max(0, draft.balanceToCollect - draft.amountCollected);
+  draft.statusBeforeCompletion = job.status;
+  draft.completionOutcome = draft.touchUpRequired ? "touch_up" : draft.balance <= 0 ? "installed" : "pending_collection";
+  draft.status = "completed";
+  draft.dispatchStatus = "completed";
+  draft.completedAt = draft.completionDate || now;
+  draft.updatedAt = now;
 
   const order = findOrder(job.orderId);
-  if (order) {
-    order.installationStatus = job.status;
-    order.status = job.status === "touch_up" ? "Touch Up" : job.status === "installed" ? "Completed" : "Pending Collection";
-    order.balance = job.balance;
-    order.updatedAt = new Date().toISOString();
-    persistOrders();
-  }
-
-  persistInstallationJobs();
-  activeCompletionJobId = null;
+  const updatedOrder = order ? {
+    ...order,
+    installationStatus: draft.completionOutcome,
+    status: draft.completionOutcome === "touch_up" ? "Touch Up" : draft.completionOutcome === "installed" ? "Completed" : "Pending Collection",
+    balance: draft.balance,
+    updatedAt: now
+  } : null;
+  const changes = [];
+  recordFieldChanges(changes, "installationJobs", job, draft);
+  if (order) recordFieldChanges(changes, "orders", order, updatedOrder);
+  const plan = installationMutationPlan("complete-installation", job.id, changes, {
+    installationJobs: state.installationJobs.map((row) => row.id === job.id ? draft : row),
+    orders: updatedOrder ? state.orders.map((row) => row.id === order.id ? updatedOrder : row) : state.orders
+  });
+  const result = await commitOrderActionPlan(plan, {
+    local: "Installation completion saved locally. Syncing cloud...",
+    success: draft.completionOutcome === "touch_up" ? "Installation completed with touch up required." : draft.completionOutcome === "installed" ? "Installation completed." : "Installation completed with pending collection.",
+    cloudFailure: "Installation completion saved locally but cloud sync failed"
+  });
+  if (result.ok) activeCompletionJobId = null;
   renderWorkflowModules();
-  showWorkflowMessage(job.status === "touch_up" ? "Installation saved with touch up required" : job.status === "installed" ? "Installation completed" : "Installation completed with pending collection", "success");
+  return result;
 }
 
 function readCompletionForm(panel) {
@@ -5770,27 +6154,22 @@ function validateCompletion(job, completionData, signature) {
   return "";
 }
 
-function markTouchUpCompleted(jobId) {
-  if (!canCompleteInstallation()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+async function markTouchUpCompleted(jobId) {
   const job = state.installationJobs.find((row) => row.id === jobId);
-  if (!job) return;
-  job.touchUpStatus = "Completed";
-  job.touchUpRequired = false;
+  if (!job || !canCompleteInstallationJob(job)) return showWorkflowMessage("Permission denied or Installation is not assigned to this exact Installer.", "error");
   const order = findOrder(job.orderId);
   const remaining = getRemainingBalance(order || {}, job);
-  job.status = remaining <= 0 ? "installed" : "pending_collection";
-  job.balance = remaining;
-  job.updatedAt = new Date().toISOString();
-  if (order) {
-    order.installationStatus = job.status;
-    order.status = remaining <= 0 ? "Completed" : "Pending Collection";
-    order.balance = remaining;
-    order.updatedAt = new Date().toISOString();
-    persistOrders();
-  }
-  persistInstallationJobs();
-  renderWorkflowModules();
-  showWorkflowMessage("Touch up completed", "success");
+  const now = new Date().toISOString();
+  const updatedJob = { ...job, touchUpStatus: "Completed", touchUpRequired: false, status: "completed", dispatchStatus: "completed", completionOutcome: remaining <= 0 ? "installed" : "pending_collection", balance: remaining, updatedAt: now };
+  const updatedOrder = order ? { ...order, installationStatus: updatedJob.completionOutcome, status: remaining <= 0 ? "Completed" : "Pending Collection", balance: remaining, updatedAt: now } : null;
+  const changes = [];
+  recordFieldChanges(changes, "installationJobs", job, updatedJob);
+  if (order) recordFieldChanges(changes, "orders", order, updatedOrder);
+  const plan = installationMutationPlan("complete-installation-touch-up", job.id, changes, {
+    installationJobs: state.installationJobs.map((row) => row.id === job.id ? updatedJob : row),
+    orders: updatedOrder ? state.orders.map((row) => row.id === order.id ? updatedOrder : row) : state.orders
+  });
+  return commitOrderActionPlan(plan, { local: "Touch up completion saved locally. Syncing cloud...", success: "Touch up completed.", cloudFailure: "Touch up completion saved locally but cloud sync failed" });
 }
 
 function setupSignatureCanvas(jobId) {
@@ -5865,73 +6244,177 @@ function signatureDataUrl(jobId) {
   return canvas.toDataURL("image/png");
 }
 
-function generateWarrantyCard(jobId) {
-  if (!canCompleteInstallation() && !isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
-  const job = state.installationJobs.find((row) => row.id === jobId);
-  if (!job) return showWorkflowMessage("Installation job not found.", "error");
-  if (!["installed", "pending_collection", "Completed", "Pending Collection"].includes(job.status)) {
-    showWorkflowMessage("Complete installation before generating warranty card.", "error");
-    return;
-  }
-  const existing = state.warrantyCards.find((card) => card.installationJobNo === job.installationNumber);
-  if (existing) {
-    job.warrantyNo = existing.warrantyNo;
-    persistInstallationJobs();
-    showWorkflowMessage(`Warranty card already exists: ${existing.warrantyNo}`, "warning");
+export async function generateWarrantyCard(jobId, options = {}) {
+  if (!canGenerateWarrantyCard()) return failInstallationAction("Permission denied: only Boss, Admin or Secretary can generate Warranty Cards.");
+  const validation = validateWarrantyGeneration(jobId);
+  if (!validation.ok) return failInstallationAction(validation.message);
+  const { job, order } = validation;
+  const existing = existingWarrantyForInstallation(job.id);
+  if (existing && options.regenerate !== true) {
+    warrantyPreviewCardId = String(existing.id);
     renderInstallationJobs();
-    return;
+    showWorkflowMessage(`Warranty already exists: ${existing.warrantyCardNo || existing.warrantyNo}. Use View Existing or Regenerate.`, "warning");
+    return { ok: true, reused: true, card: existing, previewHtml: warrantyCardPreviewHtml(existing) };
   }
+
+  const now = new Date().toISOString();
+  const warrantyStartDate = String(job.completionDate || job.completedAt).slice(0, 10);
+  const warrantyItems = (job.items || []).map((item) => warrantyItemFromInstallation(item, warrantyStartDate));
+  const warrantyCardNo = existing?.warrantyCardNo || existing?.warrantyNo || nextWarrantyCardNumber();
   const card = {
-    id: uid("warranty"),
-    warrantyNo: nextWarrantyNumber(),
-    orderNo: job.orderNo || job.orderNumber,
-    orderNumber: job.orderNo || job.orderNumber,
-    quoteNumber: job.quoteNumber || job.quotationNo || "",
-    quotationNo: job.quoteNumber || job.quotationNo || "",
-    installationJobNo: job.installationNumber,
-    customer: { ...job.customer },
-    products: job.items.map((item) => ({
-      productName: item.productName,
-      meshType: meshValue(item),
-      warrantyPeriod: warrantyPeriodForProduct(item.productName)
-    })),
-    startDate: (job.completionDate || new Date().toISOString()).slice(0, 10),
-    warrantyPeriod: warrantySummary(job.items),
-    warrantyTerms,
-    createdAt: new Date().toISOString()
+    ...(existing || {}),
+    id: existing?.id || uid("warranty"),
+    warrantyCardNo,
+    warrantyNo: warrantyCardNo,
+    orderId: String(order.id),
+    installationId: String(job.id),
+    installationJobNo: job.installationNumber || "",
+    customerName: order.customer?.name || job.customer?.name || "",
+    customerPhone: order.customer?.phone || job.customer?.phone || job.phone || "",
+    address: job.address || order.customer?.address || job.customer?.address || "",
+    orderNo: getOrderDisplayNo(order),
+    orderNumber: getOrderDisplayNo(order),
+    quotationNo: order.quoteNumber || order.quotationNo || job.quoteNumber || job.quotationNo || "",
+    quoteNumber: order.quoteNumber || order.quotationNo || job.quoteNumber || job.quotationNo || "",
+    installationCompletedAt: job.completionDate || job.completedAt,
+    warrantyStartDate,
+    startDate: warrantyStartDate,
+    warrantyExpiryDate: latestWarrantyExpiry(warrantyItems),
+    warrantyItems,
+    products: warrantyItems,
+    terms: [...warrantyTerms],
+    warrantyTerms: [...warrantyTerms],
+    warrantyPeriod: warrantyItems.map((item) => `${item.productName}: ${item.warrantyPeriod}`).join(", "),
+    generatedAt: now,
+    generatedBy: currentActor(),
+    updatedAt: now,
+    status: "active",
+    auditHistory: existing ? [...(Array.isArray(existing.auditHistory) ? existing.auditHistory : []), { action: "regenerated", at: now, by: currentActor(), previousGeneratedAt: existing.generatedAt || existing.createdAt || "", previousGeneratedBy: existing.generatedBy || "" }] : [],
+    createdAt: existing?.createdAt || now
   };
-  state.warrantyCards = [card, ...state.warrantyCards];
-  job.warrantyNo = card.warrantyNo;
-  persistWarrantyCards();
-  persistInstallationJobs();
-  renderInstallationJobs();
-  showWorkflowMessage(`Warranty card generated: ${card.warrantyNo}`, "success");
+  if (state.warrantyCards.some((row) => String(row.id || "") !== String(card.id) && normalizeRefNo(row.warrantyCardNo || row.warrantyNo) === normalizeRefNo(warrantyCardNo))) {
+    return failInstallationAction("Warranty Card number conflict detected. No record was changed.");
+  }
+  const updatedJob = { ...job, warrantyNo: warrantyCardNo, warrantyCardId: card.id, updatedAt: now };
+  const changes = [];
+  recordFieldChanges(changes, "warrantyCards", existing || {}, card);
+  recordFieldChanges(changes, "installationJobs", job, updatedJob);
+  const nextWarranties = existing
+    ? state.warrantyCards.map((row) => String(row.id) === String(existing.id) ? card : row)
+    : [card, ...state.warrantyCards];
+  const plan = installationMutationPlan(existing ? "regenerate-warranty-card" : "generate-warranty-card", job.id, changes, {
+    installationJobs: state.installationJobs.map((row) => String(row.id) === String(job.id) ? updatedJob : row),
+    warrantyCards: nextWarranties
+  });
+  const result = await commitOrderActionPlan(plan, {
+    local: "Warranty Card saved locally. Syncing cloud...",
+    success: `${existing ? "Warranty Card regenerated" : "Warranty Card generated"}: ${warrantyCardNo}`,
+    cloudFailure: "Warranty Card saved locally but cloud sync failed"
+  });
+  if (result.ok) {
+    warrantyPreviewCardId = String(card.id);
+    renderInstallationJobs();
+  }
+  return { ...result, card, regenerated: Boolean(existing), previewHtml: warrantyCardPreviewHtml(card) };
 }
 
-function printWarrantyCard(jobId) {
-  const job = state.installationJobs.find((row) => row.id === jobId);
-  if (!job) return;
-  let card = state.warrantyCards.find((row) => row.installationJobNo === job.installationNumber);
-  if (!card) {
-    generateWarrantyCard(jobId);
-    card = state.warrantyCards.find((row) => row.installationJobNo === job.installationNumber);
+function validateWarrantyGeneration(jobId) {
+  const exactJobId = String(jobId || "").trim();
+  const job = state.installationJobs.find((row) => String(row.id || "") === exactJobId);
+  if (!exactJobId || !job || !isActiveWorkflowRecord(job)) return { ok: false, message: "The exact active Installation stable ID was not found." };
+  if (!isCompletedInstallation(job)) return { ok: false, message: "Complete the Installation before generating a Warranty Card." };
+  const order = state.orders.find((row) => String(row.id || "") === String(job.orderId || "") && isActiveOrderRecord(row));
+  if (!order) return { ok: false, message: "The exact related active Order could not be identified." };
+  if (!String(order.customer?.name || job.customer?.name || "").trim()) return { ok: false, message: "Customer name is required for the Warranty Card." };
+  if (!String(job.completionDate || job.completedAt || "").trim()) return { ok: false, message: "Installation completion date is required for the Warranty Card." };
+  if (!Array.isArray(job.items) || !job.items.length || job.items.some((item) => !String(item.productName || "").trim())) return { ok: false, message: "Installed product and warranty information is required for the Warranty Card." };
+  return { ok: true, job, order };
+}
+
+function isCompletedInstallation(job = {}) {
+  const status = String(job.status || "").trim().toLowerCase();
+  return status === "completed" || (job.completionStatus === "Completed" && ["installed", "pending_collection", "touch_up"].includes(status));
+}
+
+function existingWarrantyForInstallation(installationId) {
+  const exactId = String(installationId || "").trim();
+  if (!exactId) return null;
+  return state.warrantyCards.find((card) => card.status !== "deleted" && String(card.installationId || "") === exactId) || null;
+}
+
+export function nextWarrantyCardNumber(date = new Date()) {
+  const prefix = `WC-${String(date.getFullYear()).slice(-2)}${String(date.getMonth() + 1).padStart(2, "0")}-`;
+  const used = new Set(state.warrantyCards.map((card) => normalizeRefNo(card.warrantyCardNo || card.warrantyNo)).filter(Boolean));
+  const highest = [...used].filter((number) => number.startsWith(prefix)).map((number) => Number(number.slice(prefix.length))).filter(Number.isInteger).reduce((max, number) => Math.max(max, number), 0);
+  let sequence = highest + 1;
+  let candidate = `${prefix}${String(sequence).padStart(4, "0")}`;
+  while (used.has(candidate)) {
+    sequence += 1;
+    candidate = `${prefix}${String(sequence).padStart(4, "0")}`;
   }
-  if (!card) return;
-  openPrint(t("Warranty Card"), card.warrantyNo, `
-    <div class="print-box"><strong>${card.customer.name || "-"}</strong><br>${card.customer.phone || "-"}<br>${card.customer.address || "-"}</div>
-    <p><strong>${t("Order")}:</strong> ${card.orderNo}</p>
-    <p><strong>${t("Quote")}:</strong> ${card.quoteNumber || card.quotationNo || "-"}</p>
-    <p><strong>${t("Installation Jobs")}:</strong> ${card.installationJobNo}</p>
-    <p><strong>Start Date:</strong> ${card.startDate}</p>
-    <p><strong>${t("Warranty Card")}:</strong> ${card.warrantyPeriod}</p>
-    <table><thead><tr><th>${t("Product")}</th><th>${t("Mesh / Net Type")}</th><th>${t("Warranty Card")}</th></tr></thead><tbody>
-      ${card.products.map((product) => `<tr><td>${product.productName}</td><td>${product.meshType || "-"}</td><td>${product.warrantyPeriod}</td></tr>`).join("")}
-    </tbody></table>
-    <div class="terms">
-      <h3>Warranty Terms</h3>
-      ${card.warrantyTerms.map((term) => `<p>${term}</p>`).join("")}
-    </div>
-  `);
+  return candidate;
+}
+
+function warrantyItemFromInstallation(item, warrantyStartDate) {
+  const configuredProduct = item.productId ? productById(item.productId) : null;
+  const warrantyPeriod = String(item.warrantyPeriod || configuredProduct?.warrantyPeriod || warrantyPeriodForProduct(item.productName)).trim();
+  return {
+    productId: item.productId || "",
+    productName: item.productName,
+    meshType: meshValue(item),
+    quantity: item.quantity || 0,
+    warrantyPeriod,
+    warrantyStartDate,
+    warrantyExpiryDate: warrantyExpiryFromPeriod(warrantyStartDate, warrantyPeriod)
+  };
+}
+
+function warrantyExpiryFromPeriod(startDate, period) {
+  const years = Math.max(1, Number.parseInt(String(period || "1"), 10) || 1);
+  const date = new Date(`${startDate}T00:00:00Z`);
+  date.setUTCFullYear(date.getUTCFullYear() + years);
+  return date.toISOString().slice(0, 10);
+}
+
+function latestWarrantyExpiry(items) {
+  return items.map((item) => item.warrantyExpiryDate).filter(Boolean).sort().at(-1) || "";
+}
+
+function viewExistingWarrantyCard(cardId) {
+  if (!canGenerateWarrantyCard()) return failInstallationAction("Permission denied: only Boss, Admin or Secretary can view Warranty Cards.");
+  const card = state.warrantyCards.find((row) => String(row.id || "") === String(cardId || ""));
+  if (!card) return failInstallationAction("The exact Warranty Card stable ID was not found.");
+  warrantyPreviewCardId = String(card.id);
+  renderInstallationJobs();
+  showWorkflowMessage(`Warranty Card opened: ${card.warrantyCardNo || card.warrantyNo}`, "success");
+}
+
+function closeWarrantyPreview() {
+  warrantyPreviewCardId = "";
+  renderInstallationJobs();
+}
+
+export function warrantyCardPreviewHtml(card = {}) {
+  const items = Array.isArray(card.warrantyItems) ? card.warrantyItems : Array.isArray(card.products) ? card.products : [];
+  const terms = Array.isArray(card.terms) ? card.terms : Array.isArray(card.warrantyTerms) ? card.warrantyTerms : [];
+  return `<section class="warranty-card-preview" data-warranty-preview="${escapeHtml(card.id || "")}">
+    <div class="section-head"><div><p class="eyebrow">Eco Screen Warranty</p><h3>${escapeHtml(card.warrantyCardNo || card.warrantyNo || "Warranty Card")}</h3></div><button class="btn" type="button" data-close-warranty-preview="${escapeHtml(card.id || "")}">Close</button></div>
+    <div class="warranty-company"><strong>${escapeHtml(state.companySettings.companyName || "Eco Screen")}</strong><span>0195763499</span></div>
+    <div class="installation-assigned-summary"><span>Customer<strong>${escapeHtml(card.customerName || card.customer?.name || "-")}</strong></span><span>Phone<strong>${escapeHtml(card.customerPhone || card.customer?.phone || "-")}</strong></span><span>Address<strong>${escapeHtml(card.address || card.customer?.address || "-")}</strong></span><span>Quotation<strong>${escapeHtml(card.quotationNo || card.quoteNumber || "-")}</strong></span><span>SO Number<strong>${escapeHtml(card.orderNo || "-")}</strong></span><span>Completion Date<strong>${escapeHtml(card.installationCompletedAt || "-")}</strong></span><span>Warranty Start<strong>${escapeHtml(card.warrantyStartDate || card.startDate || "-")}</strong></span><span>Warranty Expiry<strong>${escapeHtml(card.warrantyExpiryDate || "-")}</strong></span><span>Generated At<strong>${escapeHtml(card.generatedAt || card.createdAt || "-")}</strong></span><span>Generated By<strong>${escapeHtml(card.generatedBy || "-")}</strong></span></div>
+    <div class="table-wrap"><table><thead><tr><th>Installed Product</th><th>Quantity</th><th>Warranty Period</th><th>Start</th><th>Expiry</th></tr></thead><tbody>${items.map((item) => `<tr><td>${escapeHtml(item.productName || "-")}</td><td>${escapeHtml(item.quantity || "-")}</td><td>${escapeHtml(item.warrantyPeriod || "-")}</td><td>${escapeHtml(item.warrantyStartDate || card.warrantyStartDate || "-")}</td><td>${escapeHtml(item.warrantyExpiryDate || "-")}</td></tr>`).join("")}</tbody></table></div>
+    <div class="terms"><h4>Warranty Terms</h4>${terms.map((term) => `<p>${escapeHtml(term)}</p>`).join("")}</div>
+    <button class="btn primary" type="button" data-print-warranty-card="${escapeHtml(card.id || "")}">Download / Print Warranty Card</button>
+    <p class="muted-text">This inline preview remains available when a mobile browser blocks new tabs.</p>
+  </section>`;
+}
+
+function printWarrantyCardById(cardId) {
+  const card = state.warrantyCards.find((row) => String(row.id || "") === String(cardId || ""));
+  if (!card) return failInstallationAction("The exact Warranty Card stable ID was not found.");
+  const preview = warrantyCardPreviewHtml(card);
+  openPrint(t("Warranty Card"), card.warrantyCardNo || card.warrantyNo, preview);
+  showWorkflowMessage(`Warranty Card ready to print/download: ${card.warrantyCardNo || card.warrantyNo}`, "success");
+  return { ok: true, cardId: card.id };
 }
 
 function warrantyPeriodForProduct(productName = "") {
@@ -5939,10 +6422,6 @@ function warrantyPeriodForProduct(productName = "") {
   if (name.includes("security mesh")) return "10 years";
   if (name.includes("roller") || name.includes("invisible")) return "3 years";
   return "1 year";
-}
-
-function warrantySummary(items) {
-  return [...new Set(items.map((item) => `${item.productName}: ${warrantyPeriodForProduct(item.productName)}`))].join(", ");
 }
 
 function currentDateTimeLocal() {
