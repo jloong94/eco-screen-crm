@@ -1962,6 +1962,8 @@ for (const sourceUrl of translationSourceUrls) {
 }
 assert(missingChineseTranslations(visibleTranslationKeys).length === 0,
   `AB6: every literal visible t() key must have a Chinese translation: ${missingChineseTranslations(visibleTranslationKeys).join(", ")}`);
+assert(missingChineseTranslations(["Cloud Checked (read-only)"]).length === 0,
+  "AB6: dynamic read-only cloud status must have a Chinese translation");
 state.language = "en";
 
 console.log([

@@ -167,6 +167,7 @@ const zh = {
   "Rebuild Orders From Quotations": "从报价重建订单",
   "Reset Orders Only": "只重置订单",
   "Local Mode": "本机模式",
+  "Cloud Checked (read-only)": "云端检查完成（只读）",
   "Missing Vercel environment variables": "缺少 Vercel 环境变量",
   "Cloud Sync Failed": "云端同步失败",
   "Unknown error": "未知错误",
