@@ -39,6 +39,7 @@ const {
   buildSafeOrderOwnershipComparison,
   convertQuoteToOrder,
   createOrderFromQuote,
+  createProductionJobFromOrder,
   createInstallationJobFromOrder,
   duplicateArchiveActionHtml,
   findExistingOrderForQuote,
@@ -96,10 +97,13 @@ const {
 } = await import("../src/workflow.js");
 const {
   buildDuplicateQuotation,
+  archiveQuotation,
   duplicateQuotation,
   quoteDocumentHtml,
+  quotationArchiveEligibility,
   quotationProjectName,
-  quotationsForTab
+  quotationsForTab,
+  restoreQuotation
 } = await import("../src/quotations.js");
 const {
   COLOR_VALUES,
@@ -115,6 +119,7 @@ const {
 const {
   isActiveOrderRecord,
   isActiveWorkflowRecord,
+  normalizedFinalOrderTotal,
   normalizeWorkflowStatus,
   uniqueActiveOrders,
   uniqueActiveProductionJobs
@@ -1874,13 +1879,18 @@ assert(t("Waiting to Send") === "等待发送" && t("Sent to Production") === "�
   "AC4: Chinese dispatch and Production work-stage labels must remain language-consistent");
 state.language = "en";
 
-assert(JSON.stringify(OPENING_DIRECTION_VALUES) === JSON.stringify(["close_left", "close_right", "close_down"]),
-  "AB1: Opening Direction must expose only the three stable canonical values");
+assert(JSON.stringify(OPENING_DIRECTION_VALUES) === JSON.stringify(["close_left", "close_right", "close_down", "double_open"]),
+  "AB1: Opening Direction must expose only the four stable canonical values");
 assert(JSON.stringify(COLOR_VALUES) === JSON.stringify(["white", "grey"]),
   "AB1: Color must expose only white and grey as stable canonical values");
 assert(normalizeOpeningDirection("Left") === "close_left"
   && normalizeOpeningDirection("Right Close") === "close_right"
   && normalizeOpeningDirection("Bottom") === "close_down"
+  && normalizeOpeningDirection("Double") === "double_open"
+  && normalizeOpeningDirection("Double Open") === "double_open"
+  && normalizeOpeningDirection("Double Opening") === "double_open"
+  && normalizeOpeningDirection("对开") === "double_open"
+  && normalizeOpeningDirection("双开") === "double_open"
   && normalizeOpeningDirection("左") === "close_left"
   && normalizeOpeningDirection("右") === "close_right"
   && normalizeOpeningDirection("下") === "close_down",
@@ -1900,6 +1910,7 @@ state.language = "en";
 assert(openingDirectionLabel("close_left") === "Close Left"
   && openingDirectionLabel("close_right") === "Close Right"
   && openingDirectionLabel("close_down") === "Close Down"
+  && openingDirectionLabel("double_open") === "Double Open"
   && colorLabel("white") === "White"
   && colorLabel("grey") === "Grey",
 "AB1: English canonical labels must be consistent");
@@ -1907,6 +1918,7 @@ state.language = "zh";
 assert(openingDirectionLabel("close_left") === "左关"
   && openingDirectionLabel("close_right") === "右关"
   && openingDirectionLabel("close_down") === "下关"
+  && openingDirectionLabel("double_open") === "对开"
   && colorLabel("white") === "白色"
   && colorLabel("grey") === "灰色"
   && statusLabel("follow_up") === "跟进",
@@ -2055,6 +2067,17 @@ assert(chineseQuotePrintHtml.includes("网站: www.ecosecurityscreens.com")
   && !chineseQuotePrintHtml.includes("Handle Position"),
 "AB5: Chinese Quotation output must use Chinese-only interface headings and omit Handle Position");
 
+state.language = "en";
+const doubleOpenQuote = validQuote("ESQ-DOUBLE-OPEN", "Double Open Customer");
+doubleOpenQuote.items[0].openingDirection = "double_open";
+const doubleOpenOrder = createOrderFromQuote(doubleOpenQuote, { id: "order-double-open", orderNo: "SO-DOUBLE-OPEN" });
+const doubleOpenProduction = createProductionJobFromOrder(doubleOpenOrder);
+assert(quoteDocumentHtml(doubleOpenQuote).includes("Double Open")
+  && doubleOpenOrder.items[0].openingDirection === "double_open"
+  && doubleOpenProduction.items[0].openingDirection === "double_open"
+  && productionSheetPrintHtml(doubleOpenProduction, doubleOpenOrder).includes("Double Open"),
+"AB7: double_open must remain canonical through Quotation print, converted Order, Production Job and Production Sheet");
+
 resetWorkflowState();
 state.language = "en";
 state.currentUser = { userId: "secretary-duplicate-test", username: "secretary-duplicate-test", name: "Secretary Test", role: "Secretary", active: true };
@@ -2164,11 +2187,102 @@ const rollbackResult = await duplicateQuotation(duplicateSource.id, {}, {
 });
 assert(!rollbackResult.ok && JSON.stringify(state.quotations) === beforeRollback, "AC8: local save failure must roll back the complete duplicate transaction before cloud sync");
 
+resetWorkflowState();
+state.currentUser = { userId: "boss-quotation-archive", username: "boss-quotation-archive", name: "Boss Archive", role: "Boss", active: true };
+state.role = "Boss";
+const archiveQuote = validQuote("ESQ-ARCHIVE-001", "Archive Customer");
+Object.assign(archiveQuote, {
+  id: "quote-archive-exact",
+  status: "quoted",
+  workflowStatus: "quoted",
+  projectName: "Archive Project",
+  siteAddress: "Archive Site",
+  total: 1234.56,
+  duplicatedFromQuotationId: "quote-source-audit",
+  duplicatedFromQuotationNo: "ESQ-SOURCE-AUDIT",
+  updatedAt: "2026-07-17T11:00:00.000Z"
+});
+state.quotations = [archiveQuote];
+const archivePreservedBefore = JSON.stringify({
+  quoteNumber: archiveQuote.quoteNumber,
+  customer: archiveQuote.customer,
+  items: archiveQuote.items,
+  total: archiveQuote.total,
+  projectName: archiveQuote.projectName,
+  siteAddress: archiveQuote.siteAddress,
+  remark: archiveQuote.remark,
+  duplicatedFromQuotationId: archiveQuote.duplicatedFromQuotationId,
+  duplicatedFromQuotationNo: archiveQuote.duplicatedFromQuotationNo
+});
+assert(quotationArchiveEligibility(archiveQuote).ok, "AD1: an unlinked Quoted record must be eligible for safe archive");
+const archivedQuoteResult = await archiveQuotation(archiveQuote.id, "Customer requested removal from active quotations", {
+  now: "2026-07-17T12:00:00.000Z",
+  downloadBackup: false,
+  syncCloud: async () => ({ ok: false, reason: "Simulated cloud failure" })
+});
+const archivedQuote = state.quotations.find((quote) => quote.id === archiveQuote.id);
+assert(archivedQuoteResult.ok && archivedQuoteResult.cloudOk === false
+  && archivedQuote.status === "deleted_archived" && archivedQuote.statusBeforeArchive === "quoted"
+  && archivedQuote.isArchived === true && archivedQuote.archivedBy === "Boss Archive"
+  && quotationsForTab("quoted").length === 0 && quotationsForTab("deleted_archived")[0]?.id === archiveQuote.id,
+"AD1: safe archive must survive cloud failure, keep the exact record, and hide it from normal Quotation tabs");
+assert(JSON.stringify({
+  quoteNumber: archivedQuote.quoteNumber,
+  customer: archivedQuote.customer,
+  items: archivedQuote.items,
+  total: archivedQuote.total,
+  projectName: archivedQuote.projectName,
+  siteAddress: archivedQuote.siteAddress,
+  remark: archivedQuote.remark,
+  duplicatedFromQuotationId: archivedQuote.duplicatedFromQuotationId,
+  duplicatedFromQuotationNo: archivedQuote.duplicatedFromQuotationNo
+}) === archivePreservedBefore, "AD2: archive must preserve ESQ, customer, items, prices, total, location, address, remarks and duplication audit fields");
+
+state.orders = [{ id: "order-block-restore", quoteId: archiveQuote.id, quotationId: archiveQuote.id, status: "Confirmed", isArchived: false }];
+const blockedRestore = await restoreQuotation(archiveQuote.id, "Should remain blocked", { downloadBackup: false, syncCloud: async () => ({ ok: true }) });
+assert(!blockedRestore.ok && archivedQuote.status === "deleted_archived", "AD3: an exact active Order relationship must block restoring a deleted Quotation");
+state.orders = [];
+const restoredQuoteResult = await restoreQuotation(archiveQuote.id, "Customer requested restoration", {
+  now: "2026-07-17T13:00:00.000Z",
+  downloadBackup: false,
+  syncCloud: async () => ({ ok: true })
+});
+const restoredQuote = state.quotations.find((quote) => quote.id === archiveQuote.id);
+assert(restoredQuoteResult.ok && restoredQuote.status === "quoted" && restoredQuote.isArchived === false
+  && restoredQuote.restoredBy === "Boss Archive" && restoredQuote.restoreReason === "Customer requested restoration"
+  && restoredQuote.orderId === "" && restoredQuote.linkedOrderId === "" && restoredQuote.orderNo === "" && restoredQuote.orderNumber === ""
+  && restoredQuote.converted === false && restoredQuote.convertedToOrder === false,
+"AD3: restore must use the prior status and never restore SO, Order or conversion links automatically");
+
+const blockedArchiveQuote = validQuote("ESQ-ARCHIVE-BLOCK", "Linked Customer");
+Object.assign(blockedArchiveQuote, { id: "quote-archive-block", status: "follow_up", updatedAt: "2026-07-17T14:00:00.000Z" });
+state.quotations = [blockedArchiveQuote];
+state.orders = [{ id: "order-active-exact-link", quoteId: blockedArchiveQuote.id, quotationId: blockedArchiveQuote.id, status: "Sent to Production", isArchived: false }];
+const blockedArchiveBefore = JSON.stringify(blockedArchiveQuote);
+const blockedArchive = await archiveQuotation(blockedArchiveQuote.id, "Must be blocked", { downloadBackup: false, syncCloud: async () => ({ ok: true }) });
+assert(!blockedArchive.ok && JSON.stringify(state.quotations[0]) === blockedArchiveBefore,
+  "AD4: an exact active Order must block Quotation archive without changing the selected record");
+
+const salesOrders = [
+  { id: "sales-a", status: "Confirmed", finalTotal: "RM 1,200.00", grandTotal: 9999, deposit: 999999, paidAmount: 999999, updatedAt: "2026-07-17T12:00:00.000Z" },
+  { id: "sales-b", status: "Sent to Production", total: "2,000.00", payments: [{ amount: 500000 }], totalPaid: 500000, balance: 1, updatedAt: "2026-07-17T12:00:00.000Z" },
+  { id: "sales-b", status: "Confirmed", total: 9999, updatedAt: "2026-07-16T12:00:00.000Z" },
+  { id: "sales-archived", status: "cancelled_archived", total: 50000, isArchived: true, updatedAt: "2026-07-17T12:00:00.000Z" },
+  { id: "sales-invalid", status: "Completed", total: "not available", deposit: 7000, updatedAt: "2026-07-17T12:00:00.000Z" }
+];
+const uniqueSalesOrders = uniqueActiveOrders(salesOrders);
+const calculatedTotalSales = uniqueSalesOrders.reduce((sum, order) => sum + (normalizedFinalOrderTotal(order) ?? 0), 0);
+assert(uniqueSalesOrders.length === 3 && calculatedTotalSales === 3200
+  && normalizedFinalOrderTotal(salesOrders[0]) === 1200
+  && uniqueSalesOrders.filter((order) => normalizedFinalOrderTotal(order) === null).map((order) => order.id).join(",") === "sales-invalid",
+"AD5: Total Sales must use one prioritized final amount for each unique active Order and ignore archived records, duplicates, payments, deposits and balances");
+
 const quotationSource = await readFile(new URL("../src/quotations.js", import.meta.url), "utf8");
 assert(quotationSource.includes("canonicalSelectOptions(COLOR_VALUES")
   && quotationSource.includes("canonicalSelectOptions(OPENING_DIRECTION_VALUES")
   && !quotationSource.includes('data-field="handlePosition"')
-  && !quotationSource.includes('fieldSelect(t("Handle Position")'),
+  && !quotationSource.includes('fieldSelect(t("Handle Position")')
+  && !quotationSource.includes("state.quotations = state.quotations.filter"),
 "AB6: active Quotation forms must use canonical dropdowns and must not render Handle Position");
 const translationSourceUrls = [
   "../src/ads.js",

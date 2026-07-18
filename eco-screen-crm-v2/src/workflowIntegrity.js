@@ -22,7 +22,10 @@ export function normalizeWorkflowStatus(value) {
 }
 
 function isArchivedWorkflowStatus(status) {
-  return archivedWorkflowStatuses.has(normalizeWorkflowStatus(status));
+  const normalized = normalizeWorkflowStatus(status);
+  return archivedWorkflowStatuses.has(normalized)
+    || normalized.endsWith("_archived")
+    || normalized.startsWith("archived_");
 }
 
 export function isActiveOrderRecord(order = {}) {
@@ -60,6 +63,19 @@ export function uniqueActiveOrders(orders = []) {
 
 export function uniqueActiveProductionJobs(productionJobs = []) {
   return uniqueLatestByStableId(Array.isArray(productionJobs) ? productionJobs : []).filter(isActiveWorkflowRecord);
+}
+
+export function normalizedFinalOrderTotal(order = {}) {
+  const fields = ["finalTotal", "grandTotal", "total", "quotationTotal"];
+  for (const field of fields) {
+    const raw = order?.[field];
+    if (raw === null || raw === undefined || String(raw).trim() === "") continue;
+    const normalized = typeof raw === "number"
+      ? raw
+      : Number(String(raw).replace(/RM/gi, "").replaceAll(",", "").trim());
+    if (Number.isFinite(normalized) && normalized >= 0) return normalized;
+  }
+  return null;
 }
 
 export function scanWorkflowIntegrity(snapshot = {}) {

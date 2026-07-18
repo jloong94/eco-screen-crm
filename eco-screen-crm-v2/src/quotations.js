@@ -9,6 +9,7 @@ import {
   persistQuotationsLocally,
   productById,
   state,
+  stateSnapshot,
   syncCollectionNow,
   uid
 } from "./state.js";
@@ -44,8 +45,10 @@ import {
   t
 } from "./i18n.js";
 import { canDuplicateQuotation, isBossOrAdmin } from "./permissions.js";
+import { isActiveOrderRecord, isActiveWorkflowRecord, normalizeWorkflowStatus } from "./workflowIntegrity.js";
 
 const quotationTabs = ["quoted", "follow_up", "won", "lost"];
+const quotationArchiveStatuses = new Set(["quoted", "follow_up", "lost"]);
 let activeQuotationTab = "quoted";
 
 const copiedItemFields = [
@@ -575,10 +578,12 @@ export function renderQuotationList() {
   const list = document.querySelector("#quotationList");
   if (!list) return;
   const cloudIsLoading = state.cloud.status === "Checking cloud...";
+  const visibleTabs = isBossOrAdmin() ? [...quotationTabs, "deleted_archived"] : quotationTabs;
+  if (!visibleTabs.includes(activeQuotationTab)) activeQuotationTab = "quoted";
   const rows = quotationsForTab(activeQuotationTab);
   list.innerHTML = `
     <div class="filter-tabs" aria-label="${t("Quotation status")}">
-      ${quotationTabs.map((status) => `<button class="filter-tab ${activeQuotationTab === status ? "active" : ""}" type="button" data-quotation-tab="${status}">${statusLabel(status)} (${quotationsForTab(status).length})</button>`).join("")}
+      ${visibleTabs.map((status) => `<button class="filter-tab ${activeQuotationTab === status ? "active" : ""}" type="button" data-quotation-tab="${status}">${status === "deleted_archived" ? t("Deleted Quotations") : statusLabel(status)} (${quotationsForTab(status).length})</button>`).join("")}
     </div>
     ${rows.length
       ? rows.map((quote) => quotationListRowHtml(quote, cloudIsLoading, activeQuotationTab)).join("")
@@ -586,7 +591,7 @@ export function renderQuotationList() {
   `;
   list.querySelectorAll("[data-quotation-tab]").forEach((button) => {
     button.addEventListener("click", () => {
-      activeQuotationTab = quotationTabs.includes(button.dataset.quotationTab) ? button.dataset.quotationTab : "quoted";
+      activeQuotationTab = visibleTabs.includes(button.dataset.quotationTab) ? button.dataset.quotationTab : "quoted";
       renderQuotationList();
     });
   });
@@ -625,13 +630,20 @@ export function renderQuotationList() {
     button.addEventListener("click", () => openDuplicateQuotationDialog(button.dataset.duplicateQuote));
   });
   list.querySelectorAll("[data-delete-quote]").forEach((button) => {
-    button.addEventListener("click", () => deleteQuotation(button.dataset.deleteQuote));
+    button.addEventListener("click", () => openArchiveQuotationPrompt(button.dataset.deleteQuote));
+  });
+  list.querySelectorAll("[data-restore-quote]").forEach((button) => {
+    button.addEventListener("click", () => openRestoreQuotationPrompt(button.dataset.restoreQuote));
   });
 }
 
 export function quotationsForTab(tab, quotations = state.quotations) {
+  if (tab === "deleted_archived") {
+    return quotations.filter((quote) => quote.isArchived === true && normalizeWorkflowStatus(quote.status) === "deleted_archived");
+  }
   const status = quotationTabs.includes(tab) ? tab : "quoted";
   return quotations.filter((quote) => {
+    if (quote.isArchived === true || normalizeWorkflowStatus(quote.status) === "deleted_archived") return false;
     if (normalizeStatus(quote.status) !== status) return false;
     if (status !== "follow_up") return true;
     return !String(quote.linkedOrderId || quote.orderId || "").trim();
@@ -639,6 +651,17 @@ export function quotationsForTab(tab, quotations = state.quotations) {
 }
 
 function quotationListRowHtml(quote, cloudIsLoading, tab) {
+  if (tab === "deleted_archived") {
+    return `
+      <article class="quote-row">
+        <div class="quote-row-summary">
+          <span><strong>${escapeHtml(getQuotationDisplayNo(quote))}</strong><small>${escapeHtml(quote.customer?.name || "-")} | ${t("Deleted Quotations")}</small><small>${t("Location / Project Name")}: ${escapeHtml(quotationProjectName(quote) || "-")}</small></span>
+          <span>${money(quote.total || 0)}</span>
+        </div>
+        <button class="btn" type="button" data-restore-quote="${escapeHtml(quote.id || "")}">${t("Restore Quotation")}</button>
+      </article>
+    `;
+  }
   const action = tab === "won"
     ? quotationOrderAction(quote)
     : { order: null, canConvert: false, warning: "" };
@@ -655,7 +678,7 @@ function quotationListRowHtml(quote, cloudIsLoading, tab) {
           ? `<button class="btn primary" type="button" data-convert-quote="${quote.id}" ${cloudIsLoading ? "disabled" : ""} title="${cloudIsLoading ? "Waiting for cloud data to finish loading" : ""}">${t("Convert to Order")}</button>`
           : ""}
       ${canDuplicateQuotation() ? `<button class="btn" type="button" data-duplicate-quote="${quote.id}">${t("Duplicate Quotation")}</button>` : ""}
-      ${isBossOrAdmin() ? `<button class="btn danger" type="button" data-delete-quote="${quote.id}">${t("Delete")}</button>` : ""}
+      ${isBossOrAdmin() && quotationArchiveStatuses.has(normalizeWorkflowStatus(quote.status)) ? `<button class="btn danger" type="button" data-delete-quote="${quote.id}">${t("Delete Quotation")}</button>` : ""}
     </article>
   `;
 }
@@ -735,42 +758,191 @@ function openDuplicateQuotationDialog(sourceQuotationId) {
   else dialog.setAttribute("open", "");
 }
 
-function deleteQuotation(quoteId) {
-  if (!isBossOrAdmin()) {
-    setSaveStatus("Permission denied: your role cannot perform this action.", "error");
-    return;
-  }
-  const quote = state.quotations.find((row) => row.id === quoteId);
-  if (!quote) {
-    setSaveStatus("Quotation not found.", "error");
-    return;
-  }
-  if (quotationHasLinkedOrder(quote)) {
-    setSaveStatus("This quotation has been converted to order. Please cancel/archive the order first.", "error");
-    return;
-  }
-  const confirmation = window.prompt("Are you sure you want to delete this quotation?\nType DELETE to confirm.");
-  if (confirmation !== "DELETE") {
-    setSaveStatus("Delete cancelled.", "info");
-    return;
-  }
-  state.quotations = state.quotations.filter((row) => row.id !== quoteId);
-  if (state.currentQuote?.id === quoteId) state.currentQuote = null;
-  const cloudSave = persistQuotations();
-  setSaveStatus("Quotation deleted successfully. Syncing cloud...", "success");
-  cloudSave.then((result) => {
-    setSaveStatus(result.ok
-      ? "Quotation deleted successfully."
-      : `Quotation deleted locally. Cloud sync failed: ${result.reason}`, result.ok ? "success" : "warning");
-  }).catch((error) => {
-    console.error("Quotation delete cloud sync failed", error);
-    setSaveStatus("Quotation deleted locally. Cloud sync failed.", "warning");
+function exactQuotationRelationships(quote = {}) {
+  const quoteId = String(quote.id || "").trim();
+  const forwardOrderIds = new Set([quote.orderId, quote.linkedOrderId].map((id) => String(id || "").trim()).filter(Boolean));
+  const orders = state.orders.filter((order) => {
+    const orderId = String(order.id || "").trim();
+    return isActiveOrderRecord(order) && (forwardOrderIds.has(orderId)
+      || String(order.quoteId || "").trim() === quoteId
+      || String(order.quotationId || "").trim() === quoteId);
   });
+  const relationshipOrderIds = new Set([...forwardOrderIds, ...orders.map((order) => String(order.id || "").trim())].filter(Boolean));
+  const productionJobs = state.productionJobs.filter((job) => isActiveWorkflowRecord(job) && (
+    String(job.quoteId || "").trim() === quoteId
+    || String(job.quotationId || "").trim() === quoteId
+    || relationshipOrderIds.has(String(job.orderId || "").trim())
+  ));
+  const installationJobs = state.installationJobs.filter((job) => isActiveWorkflowRecord(job) && (
+    String(job.quoteId || "").trim() === quoteId
+    || String(job.quotationId || "").trim() === quoteId
+    || relationshipOrderIds.has(String(job.orderId || "").trim())
+  ));
+  return { orders, productionJobs, installationJobs };
+}
+
+export function quotationArchiveEligibility(quote = {}, options = {}) {
+  const quoteId = String(quote.id || "").trim();
+  if (!quoteId) return { ok: false, message: "Quotation stable ID is missing." };
+  const relationships = exactQuotationRelationships(quote);
+  if (relationships.orders.length || relationships.productionJobs.length || relationships.installationJobs.length) {
+    return {
+      ok: false,
+      message: `Quotation has an active exact relationship (Orders: ${relationships.orders.length}, Production: ${relationships.productionJobs.length}, Installation: ${relationships.installationJobs.length}).`
+    };
+  }
+  if (options.forRestore !== true && (quote.converted === true || quote.convertedToOrder === true || String(quote.orderId || quote.linkedOrderId || "").trim())) {
+    return { ok: false, message: "This Quotation has a converted Order relationship and cannot be archived." };
+  }
+  if (options.forRestore !== true && !quotationArchiveStatuses.has(normalizeWorkflowStatus(quote.status))) {
+    return { ok: false, message: "Only Quoted, Follow Up or Lost Quotations can be archived." };
+  }
+  return { ok: true };
+}
+
+function downloadQuotationArchiveBackup(action, quoteId) {
+  try {
+    const payload = {
+      type: "eco-screen-crm-v2-full-backup",
+      action,
+      quotationId: quoteId,
+      exportedAt: new Date().toISOString(),
+      state: cloneValue(stateSnapshot())
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `eco-screen-crm-v2-full-backup-before-quotation-${action}-${new Date().toISOString().replaceAll(":", "-")}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    return true;
+  } catch (error) {
+    console.error("Quotation archive backup failed", error);
+    return false;
+  }
+}
+
+async function persistQuotationArchiveChange(previousQuotations, previousCurrentQuote, options = {}) {
+  try {
+    const localSave = await Promise.resolve((options.saveLocal || persistQuotationsLocally)());
+    if (!localSave?.ok) throw new Error(localSave?.reason || "Local save failed.");
+  } catch (error) {
+    state.quotations = previousQuotations;
+    state.currentQuote = previousCurrentQuote;
+    return { ok: false, message: `Quotation change was rolled back: ${error.message || "Local save failed."}` };
+  }
+  try {
+    const cloudSync = await (options.syncCloud || (() => syncCollectionNow("quotations")))();
+    const localOnly = cloudSync?.reason === "Local Mode Only";
+    return { ok: true, cloudOk: Boolean(cloudSync?.ok), localOnly, cloudReason: cloudSync?.reason || "" };
+  } catch (error) {
+    return { ok: true, cloudOk: false, localOnly: false, cloudReason: error.message || "Unknown error" };
+  }
+}
+
+export async function archiveQuotation(quotationId, archiveReason, options = {}) {
+  if (!isBossOrAdmin(options.userRole)) return { ok: false, message: "Permission denied: only Boss or Admin can archive Quotations." };
+  const quoteId = String(quotationId || "").trim();
+  const quote = state.quotations.find((row) => String(row.id || "").trim() === quoteId);
+  if (!quote) return { ok: false, message: "Quotation not found by exact stable ID." };
+  const reason = String(archiveReason || "").trim();
+  if (!reason) return { ok: false, message: "Archive reason is required." };
+  const eligibility = quotationArchiveEligibility(quote);
+  if (!eligibility.ok) return eligibility;
+  if (options.downloadBackup !== false && !downloadQuotationArchiveBackup("archive", quoteId)) {
+    return { ok: false, message: "Full JSON backup download failed. Quotation was not changed." };
+  }
+  const now = options.now || new Date().toISOString();
+  const previousQuotations = state.quotations;
+  const previousCurrentQuote = state.currentQuote;
+  const archived = {
+    ...quote,
+    statusBeforeArchive: normalizeWorkflowStatus(quote.status),
+    status: "deleted_archived",
+    isArchived: true,
+    archiveReason: reason,
+    archivedAt: now,
+    archivedBy: options.archivedBy || state.currentUser?.name || state.currentUser?.username || "",
+    updatedAt: now
+  };
+  state.quotations = state.quotations.map((row) => String(row.id || "").trim() === quoteId ? archived : row);
+  if (state.currentQuote?.id === quoteId) state.currentQuote = null;
+  const result = await persistQuotationArchiveChange(previousQuotations, previousCurrentQuote, options);
+  if (!result.ok) return result;
+  return {
+    ...result,
+    quotation: archived,
+    message: result.cloudOk || result.localOnly
+      ? "Quotation archived safely."
+      : `Quotation archived locally, but cloud sync failed: ${result.cloudReason}`
+  };
+}
+
+export async function restoreQuotation(quotationId, restoreReason, options = {}) {
+  if (!isBossOrAdmin(options.userRole)) return { ok: false, message: "Permission denied: only Boss or Admin can restore Quotations." };
+  const quoteId = String(quotationId || "").trim();
+  const quote = state.quotations.find((row) => String(row.id || "").trim() === quoteId);
+  if (!quote || quote.isArchived !== true || normalizeWorkflowStatus(quote.status) !== "deleted_archived") {
+    return { ok: false, message: "Deleted Quotation not found by exact stable ID." };
+  }
+  const reason = String(restoreReason || "").trim();
+  if (!reason) return { ok: false, message: "Restore reason is required." };
+  const eligibility = quotationArchiveEligibility(quote, { forRestore: true });
+  if (!eligibility.ok) return eligibility;
+  if (options.downloadBackup !== false && !downloadQuotationArchiveBackup("restore", quoteId)) {
+    return { ok: false, message: "Full JSON backup download failed. Quotation was not changed." };
+  }
+  const now = options.now || new Date().toISOString();
+  const restoredStatus = quotationArchiveStatuses.has(normalizeWorkflowStatus(quote.statusBeforeArchive))
+    ? normalizeWorkflowStatus(quote.statusBeforeArchive)
+    : "quoted";
+  const previousQuotations = state.quotations;
+  const previousCurrentQuote = state.currentQuote;
+  const restored = {
+    ...quote,
+    status: restoredStatus,
+    isArchived: false,
+    orderId: "",
+    linkedOrderId: "",
+    orderNo: "",
+    orderNumber: "",
+    converted: false,
+    convertedToOrder: false,
+    convertedAt: null,
+    restoredAt: now,
+    restoredBy: options.restoredBy || state.currentUser?.name || state.currentUser?.username || "",
+    restoreReason: reason,
+    updatedAt: now
+  };
+  state.quotations = state.quotations.map((row) => String(row.id || "").trim() === quoteId ? restored : row);
+  const result = await persistQuotationArchiveChange(previousQuotations, previousCurrentQuote, options);
+  if (!result.ok) return result;
+  return {
+    ...result,
+    quotation: restored,
+    message: result.cloudOk || result.localOnly
+      ? "Quotation restored safely without restoring Order links."
+      : `Quotation restored locally, but cloud sync failed: ${result.cloudReason}`
+  };
+}
+
+async function openArchiveQuotationPrompt(quoteId) {
+  const reason = window.prompt(`${t("Delete Quotation")}\n${t("Archive Reason")}:`);
+  if (reason === null) return;
+  const result = await archiveQuotation(quoteId, reason);
+  activeQuotationTab = result.ok ? "deleted_archived" : activeQuotationTab;
+  setSaveStatus(result.message, result.ok ? (result.cloudOk === false && !result.localOnly ? "warning" : "success") : "error");
   renderQuotationForm();
 }
 
-function quotationHasLinkedOrder(quote) {
-  return Boolean(quotationOrderAction(quote).order);
+async function openRestoreQuotationPrompt(quoteId) {
+  const reason = window.prompt(`${t("Restore Quotation")}\n${t("Restore Reason")}:`);
+  if (reason === null) return;
+  const result = await restoreQuotation(quoteId, reason);
+  activeQuotationTab = result.ok ? normalizeWorkflowStatus(result.quotation.status) : activeQuotationTab;
+  setSaveStatus(result.message, result.ok ? (result.cloudOk === false && !result.localOnly ? "warning" : "success") : "error");
+  renderQuotationForm();
 }
 
 function setSaveStatus(message, type = "info") {
