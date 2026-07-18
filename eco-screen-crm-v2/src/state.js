@@ -99,6 +99,22 @@ export function persistQuotations() {
   return syncCollectionNow("quotations");
 }
 
+export function persistQuotationsLocally() {
+  const previousValue = localStorage.getItem(storageKeys.quotations);
+  try {
+    saveJson(storageKeys.quotations, state.quotations);
+    return { ok: true };
+  } catch (error) {
+    try {
+      if (previousValue === null) localStorage.removeItem(storageKeys.quotations);
+      else localStorage.setItem(storageKeys.quotations, previousValue);
+    } catch {
+      // Preserve the original local save error for the caller.
+    }
+    return { ok: false, reason: error.message || "Local quotation save failed." };
+  }
+}
+
 export function persistOrders() {
   saveJson(storageKeys.orders, state.orders);
   return syncCollectionNow("orders");
@@ -232,8 +248,19 @@ export function today() {
   return new Date().toISOString().slice(0, 10);
 }
 
-export function nextQuoteNumber() {
-  return nextNumber("ESQ", state.quotations, "quoteNumber");
+export function nextQuoteNumber(rows = state.quotations, date = new Date()) {
+  const year = date.getFullYear();
+  const expression = new RegExp(`^ESQ-${year}-(\\d+)$`, "i");
+  const used = new Set();
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    [row?.quoteNumber, row?.quotationNo, row?.quoteNo].forEach((value) => {
+      const match = String(value || "").trim().match(expression);
+      if (match) used.add(Number(match[1]));
+    });
+  });
+  let sequence = used.size ? Math.max(...used) + 1 : 1;
+  while (used.has(sequence)) sequence += 1;
+  return `ESQ-${year}-${String(sequence).padStart(4, "0")}`;
 }
 
 export function nextOrderNumber() {
@@ -275,6 +302,8 @@ export function makeQuote() {
   return {
     id: uid("quote"),
     quoteNumber: nextQuoteNumber(),
+    projectName: "",
+    siteAddress: "",
     customer: {
       name: "",
       phone: "",
@@ -284,6 +313,7 @@ export function makeQuote() {
     },
     appointmentDate: today(),
     status: "quoted",
+    workflowStatus: "quoted",
     remark: "",
     items: [],
     discount: 0,

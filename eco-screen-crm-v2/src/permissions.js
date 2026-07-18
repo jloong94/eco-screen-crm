@@ -62,6 +62,11 @@ export function canEditOrder() {
   return isBossOrAdmin() || role() === "Secretary";
 }
 
+export function canDuplicateQuotation(userRole = role()) {
+  const normalizedRole = String(userRole ?? "").trim().toLowerCase();
+  return ["boss", "admin", "secretary"].includes(normalizedRole);
+}
+
 export function canSendOrder() {
   return isBossOrAdmin() || ["Secretary", "Sales"].includes(role());
 }
