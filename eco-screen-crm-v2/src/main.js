@@ -19,7 +19,7 @@ import {
 } from "./state.js";
 import { itemWithCalculatedTotals, money, quoteTotals, toNumber } from "./calculations.js";
 import { attachWorkflowEvents, getQuotationDisplayNo, nextSalesOrderNumber, renderWorkflowModules, resetWorkflowNavigationState } from "./workflow.js";
-import { uniqueActiveOrders } from "./workflowIntegrity.js";
+import { normalizedFinalOrderTotal, uniqueActiveOrders } from "./workflowIntegrity.js";
 import { t } from "./i18n.js";
 import { canAccessPage, defaultPageForRole, isBossOrAdmin, pageDefinitions, role } from "./permissions.js";
 import { cloudCollections, cloudConfigurationIssue, isCloudConfigured, safeSyncWithCloud, syncFromCloud, syncToCloud } from "./cloudSync.js";
@@ -123,6 +123,8 @@ function isCurrentPage(page) {
 
 function dashboardPageHtml() {
   const activeOrders = uniqueActiveOrders(state.orders);
+  const totalSales = activeOrders.reduce((sum, order) => sum + (normalizedFinalOrderTotal(order) ?? 0), 0);
+  const activeQuotationCount = state.quotations.filter((quote) => quote.isArchived !== true && String(quote.status || "").trim().toLowerCase() !== "deleted_archived").length;
   return `
     <section class="panel page-panel" data-page-panel="dashboard">
       <div class="panel-head">
@@ -132,8 +134,9 @@ function dashboardPageHtml() {
         </div>
       </div>
       <div class="dashboard-grid">
-        <div class="metric-card"><span>${t("Quotations")}</span><strong>${state.quotations.length}</strong></div>
+        <div class="metric-card"><span>${t("Quotations")}</span><strong>${activeQuotationCount}</strong></div>
         <div class="metric-card"><span>${t("Orders")}</span><strong>${activeOrders.length}</strong></div>
+        <div class="metric-card"><span>${t("Total Sales")}</span><strong>${money(totalSales)}</strong><small>${t("Active confirmed Order value")}</small></div>
         <div class="metric-card"><span>${t("Production Jobs")}</span><strong>${state.productionJobs.length}</strong></div>
         <div class="metric-card"><span>${t("Installation Jobs")}</span><strong>${state.installationJobs.length}</strong></div>
       </div>
@@ -1162,9 +1165,9 @@ function attachMonthlySummaryEvents() {
 }
 
 function monthlySummary(monthValue) {
-  const rows = state.orders.filter((order) => isOrderInMonth(order, monthValue) && !order.isArchived && order.status !== "Cancelled");
+  const rows = uniqueActiveOrders(state.orders).filter((order) => isOrderInMonth(order, monthValue));
   return rows.reduce((summary, order) => {
-    const total = toNumber(order.total);
+    const total = normalizedFinalOrderTotal(order) ?? 0;
     const collected = totalCollectedForOrder(order);
     const remaining = Math.max(total - collected, 0);
     const completed = remaining <= 0 && isOrderCompleted(order);

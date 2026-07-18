@@ -123,6 +123,7 @@ const zh = {
   "Close Left": "左关",
   "Close Right": "右关",
   "Close Down": "下关",
+  "Double Open": "对开",
   White: "白色",
   Grey: "灰色",
   Legacy: "旧值",
@@ -554,6 +555,13 @@ const zh = {
   "Last Month": "上个月",
   "Select Month": "选择月份",
   "New Orders Total": "新单总额",
+  "Total Sales": "总销售额",
+  "Active confirmed Order value": "有效成交订单总额",
+  "Delete Quotation": "删除报价",
+  "Deleted Quotations": "已删除报价",
+  "Restore Quotation": "恢复报价",
+  "Archive Reason": "归档原因",
+  "Restore Reason": "恢复原因",
   "new orders": "新单",
   "Total Collected": "已收总额",
   "Outstanding Balance": "未收余额",
@@ -700,7 +708,7 @@ export function missingChineseTranslations(keys = []) {
   return [...new Set(keys)].filter((key) => !hasChineseTranslation(key));
 }
 
-export const OPENING_DIRECTION_VALUES = Object.freeze(["close_left", "close_right", "close_down"]);
+export const OPENING_DIRECTION_VALUES = Object.freeze(["close_left", "close_right", "close_down", "double_open"]);
 export const COLOR_VALUES = Object.freeze(["white", "grey"]);
 
 const openingDirectionAliases = new Map([
@@ -724,6 +732,12 @@ const openingDirectionAliases = new Map([
   ["bottom", "close_down"],
   ["bottom_close", "close_down"],
   ["bottomclose", "close_down"],
+  ["double_open", "double_open"],
+  ["doubleopen", "double_open"],
+  ["double", "double_open"],
+  ["double_opening", "double_open"],
+  ["对开", "double_open"],
+  ["双开", "double_open"],
   ["下", "close_down"],
   ["下关", "close_down"]
 ]);
@@ -767,7 +781,8 @@ export function openingDirectionLabel(value) {
   const labels = {
     close_left: "Close Left",
     close_right: "Close Right",
-    close_down: "Close Down"
+    close_down: "Close Down",
+    double_open: "Double Open"
   };
   return labels[normalized] ? t(labels[normalized]) : legacyLabel(value);
 }
