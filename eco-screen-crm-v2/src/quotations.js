@@ -4,9 +4,13 @@ import {
   ensureCurrentQuote,
   makeQuote,
   makeQuoteItem,
+  nextQuoteNumber,
   persistQuotations,
+  persistQuotationsLocally,
   productById,
-  state
+  state,
+  syncCollectionNow,
+  uid
 } from "./state.js";
 import {
   autoCalculatedPrice,
@@ -39,18 +43,33 @@ import {
   statusLabel,
   t
 } from "./i18n.js";
-import { isBossOrAdmin } from "./permissions.js";
+import { canDuplicateQuotation, isBossOrAdmin } from "./permissions.js";
 
 const quotationTabs = ["quoted", "follow_up", "won", "lost"];
 let activeQuotationTab = "quoted";
+
+const copiedItemFields = [
+  "productId", "productName", "category", "calculationType", "minimumSqft",
+  "width", "height", "quantity", "measurements", "color", "trackType",
+  "trackOpening", "meshType", "meshMaterial", "material", "installType",
+  "trackSize", "handleHeight", "handlePosition", "installationLocation",
+  "openingDirection", "powdercoat", "powdercoatRate", "lock", "description",
+  "label", "remark", "remarks", "unitPrice", "manualFinalPrice",
+  "priceAdjustmentRemark", "discount", "discountType"
+];
+
+const copiedTaxFields = [
+  "taxEnabled", "taxRate", "taxAmount", "serviceTaxEnabled", "serviceTaxRate",
+  "sstEnabled", "sstRate"
+];
 
 export function renderQuotationForm() {
   const quote = ensureCurrentQuote();
   document.querySelector("#quoteNumber").value = getQuotationDisplayNo(quote);
   document.querySelector("#customerName").value = quote.customer.name;
   document.querySelector("#customerPhone").value = quote.customer.phone;
-  document.querySelector("#customerArea").value = quote.customer.area;
-  document.querySelector("#customerAddress").value = quote.customer.address;
+  document.querySelector("#projectName").value = quotationProjectName(quote);
+  document.querySelector("#customerAddress").value = quote.siteAddress || quote.customer.address || "";
   document.querySelector("#customerRemark").value = quote.customer.remark;
   document.querySelector("#appointmentDate").value = quote.appointmentDate;
   quote.status = normalizeStatus(quote.status);
@@ -85,11 +104,17 @@ function updateQuoteHeaderFromEvent(event) {
   const customerMap = {
     customerName: "name",
     customerPhone: "phone",
-    customerArea: "area",
-    customerAddress: "address",
     customerRemark: "remark"
   };
   if (customerMap[id]) quote.customer[customerMap[id]] = event.target.value;
+  else if (id === "projectName") {
+    quote.projectName = event.target.value;
+    quote.customer.area = event.target.value;
+  }
+  else if (id === "customerAddress") {
+    quote.siteAddress = event.target.value;
+    quote.customer.address = event.target.value;
+  }
   else if (id === "quoteNumber") quote.quoteNumber = event.target.value;
   else if (id === "appointmentDate") quote.appointmentDate = event.target.value;
   else if (id === "quoteStatus") {
@@ -341,12 +366,174 @@ export function updateQuoteSummary() {
   document.querySelector("#balanceValue").textContent = money(totals.balance);
 }
 
+export function quotationProjectName(quote = {}) {
+  return String(quote.projectName || quote.locationProjectName || quote.project || quote.customer?.area || "").trim();
+}
+
+function cloneValue(value) {
+  if (value === undefined) return undefined;
+  return JSON.parse(JSON.stringify(value));
+}
+
+function duplicateQuoteItem(sourceItem = {}, { copyPrices, copyRemarks }) {
+  const item = { id: uid("item") };
+  copiedItemFields.forEach((field) => {
+    if (Object.prototype.hasOwnProperty.call(sourceItem, field)) item[field] = cloneValue(sourceItem[field]);
+  });
+  if (!copyPrices) {
+    item.unitPrice = 0;
+    item.manualFinalPrice = "";
+    item.priceAdjustmentRemark = "";
+    item.discount = 0;
+    item.discountType = "";
+    item.powdercoatRate = 0;
+  }
+  if (!copyRemarks) {
+    item.remark = "";
+    item.remarks = "";
+    item.priceAdjustmentRemark = "";
+  }
+  item.createdAt = Date.now();
+  return itemWithCalculatedTotals(item);
+}
+
+function uniqueQuotationId(idFactory = () => uid("quote"), existing = state.quotations) {
+  const ids = new Set((Array.isArray(existing) ? existing : []).map((quote) => String(quote?.id || "")).filter(Boolean));
+  let id = String(idFactory() || "").trim();
+  let attempts = 0;
+  while ((!id || ids.has(id)) && attempts < 20) {
+    id = String(idFactory() || "").trim();
+    attempts += 1;
+  }
+  if (!id || ids.has(id)) throw new Error("Unable to generate a unique Quotation stable ID.");
+  return id;
+}
+
+export function buildDuplicateQuotation(source = {}, values = {}, options = {}) {
+  const sourceId = String(source.id || "").trim();
+  if (!sourceId) throw new Error("The source Quotation stable ID is missing.");
+  const now = options.now || new Date().toISOString();
+  const nowDate = new Date(now);
+  const existing = options.existingQuotations || state.quotations;
+  const quoteNumber = options.quoteNumber || nextQuoteNumber(existing, Number.isNaN(nowDate.getTime()) ? new Date() : nowDate);
+  const copyItems = values.copyItems !== false;
+  const copyPrices = values.copyPrices !== false;
+  const copyRemarks = values.copyRemarks !== false;
+  const sourceCustomer = source.customer || {};
+  const projectName = String(values.projectName ?? quotationProjectName(source)).trim();
+  const siteAddress = String(values.siteAddress ?? source.siteAddress ?? sourceCustomer.address ?? "").trim();
+  const customerName = String(values.customerName ?? sourceCustomer.name ?? source.customerName ?? "").trim();
+  const phone = String(values.phone ?? sourceCustomer.phone ?? source.phone ?? "").trim();
+  const email = String(sourceCustomer.email ?? source.email ?? "").trim();
+  const company = String(sourceCustomer.company ?? source.company ?? "").trim();
+  const items = copyItems
+    ? (Array.isArray(source.items) ? source.items : []).map((item) => duplicateQuoteItem(item, { copyPrices, copyRemarks }))
+    : [];
+  const discount = copyPrices ? Number(source.discount || 0) : 0;
+  const totals = quoteTotals(items, discount, 0);
+  const duplicate = {
+    id: uniqueQuotationId(options.idFactory, existing),
+    quoteNumber,
+    quotationNo: quoteNumber,
+    quoteNo: quoteNumber,
+    projectName,
+    siteAddress,
+    customer: {
+      name: customerName,
+      phone,
+      email,
+      company,
+      area: projectName,
+      address: siteAddress,
+      remark: copyRemarks ? String(sourceCustomer.remark || "") : ""
+    },
+    email,
+    company,
+    appointmentDate: String(now).slice(0, 10),
+    status: "quoted",
+    workflowStatus: "quoted",
+    remark: copyRemarks ? String(source.remark || source.remarks || "") : "",
+    items,
+    discount,
+    deposit: 0,
+    subtotal: totals.subtotal,
+    total: totals.total,
+    balance: totals.balance,
+    salesperson: cloneValue(source.salesperson),
+    salespersonId: source.salespersonId || "",
+    salespersonName: source.salespersonName || "",
+    duplicatedFromQuotationId: sourceId,
+    duplicatedFromQuotationNo: getQuotationDisplayNo(source),
+    createdAt: now,
+    createdBy: state.currentUser?.name || state.currentUser?.username || state.currentUser?.userId || "",
+    updatedAt: now
+  };
+  if (copyPrices) {
+    copiedTaxFields.forEach((field) => {
+      if (Object.prototype.hasOwnProperty.call(source, field)) duplicate[field] = cloneValue(source[field]);
+    });
+  }
+  return duplicate;
+}
+
+export async function duplicateQuotation(sourceQuotationId, values = {}, options = {}) {
+  if (!canDuplicateQuotation(options.userRole)) {
+    return { ok: false, message: "Permission denied: only Boss, Admin or Secretary can duplicate Quotations." };
+  }
+  const sourceId = String(sourceQuotationId || "").trim();
+  const source = sourceId ? state.quotations.find((quote) => String(quote.id || "") === sourceId) : null;
+  if (!source) return { ok: false, message: "Source Quotation not found by exact stable ID." };
+
+  const previousQuotations = state.quotations;
+  const previousCurrentQuote = state.currentQuote;
+  let duplicate;
+  try {
+    duplicate = buildDuplicateQuotation(source, values, options);
+    state.quotations = [duplicate, ...state.quotations];
+    const localSave = await Promise.resolve((options.saveLocal || persistQuotationsLocally)());
+    if (!localSave?.ok) {
+      state.quotations = previousQuotations;
+      state.currentQuote = previousCurrentQuote;
+      return { ok: false, message: `Duplicate Quotation was rolled back: ${localSave?.reason || "Local save failed."}` };
+    }
+    state.currentQuote = cloneValue(duplicate);
+  } catch (error) {
+    state.quotations = previousQuotations;
+    state.currentQuote = previousCurrentQuote;
+    return { ok: false, message: `Duplicate Quotation was rolled back: ${error.message || "Local save failed."}` };
+  }
+
+  try {
+    const cloudSync = await (options.syncCloud || (() => syncCollectionNow("quotations")))();
+    const localOnly = cloudSync?.reason === "Local Mode Only";
+    const cloudOk = Boolean(cloudSync?.ok);
+    const message = cloudOk
+      ? `Quotation duplicated as ${duplicate.quoteNumber}.`
+      : localOnly
+        ? `Quotation duplicated locally as ${duplicate.quoteNumber}.`
+        : `Quotation duplicated locally as ${duplicate.quoteNumber}, but cloud sync failed: ${cloudSync?.reason || "Unknown error"}`;
+    return { ok: true, quotation: duplicate, cloudOk, localOnly, message };
+  } catch (error) {
+    return {
+      ok: true,
+      quotation: duplicate,
+      cloudOk: false,
+      localOnly: false,
+      message: `Quotation duplicated locally as ${duplicate.quoteNumber}, but cloud sync failed: ${error.message || "Unknown error"}`
+    };
+  }
+}
+
 export function saveQuote() {
   const quote = ensureCurrentQuote();
   const displayNo = String(document.querySelector("#quoteNumber")?.value || getQuotationDisplayNo(quote)).trim();
   quote.quoteNumber = displayNo;
   quote.quotationNo = displayNo;
   quote.quoteNo = displayNo;
+  quote.projectName = String(document.querySelector("#projectName")?.value || quotationProjectName(quote)).trim();
+  quote.siteAddress = String(document.querySelector("#customerAddress")?.value || quote.siteAddress || quote.customer.address || "").trim();
+  quote.customer.area = quote.projectName;
+  quote.customer.address = quote.siteAddress;
   quote.updatedAt = new Date().toISOString();
   const totals = quoteTotals(quote.items, quote.discount, quote.deposit);
   const snapshot = {
@@ -354,6 +541,8 @@ export function saveQuote() {
     quoteNumber: displayNo,
     quotationNo: displayNo,
     quoteNo: displayNo,
+    projectName: quote.projectName,
+    siteAddress: quote.siteAddress,
     status: normalizeStatus(quote.status),
     subtotal: totals.subtotal,
     total: totals.total,
@@ -432,6 +621,9 @@ export function renderQuotationList() {
       if (!result.ok) setSaveStatus(result.message, "error");
     });
   });
+  list.querySelectorAll("[data-duplicate-quote]").forEach((button) => {
+    button.addEventListener("click", () => openDuplicateQuotationDialog(button.dataset.duplicateQuote));
+  });
   list.querySelectorAll("[data-delete-quote]").forEach((button) => {
     button.addEventListener("click", () => deleteQuotation(button.dataset.deleteQuote));
   });
@@ -454,7 +646,7 @@ function quotationListRowHtml(quote, cloudIsLoading, tab) {
   return `
     <article class="quote-row">
       <button type="button" data-open-quote="${quote.id}">
-        <span><strong>${escapeHtml(getQuotationDisplayNo(quote))}</strong><small>${escapeHtml(quote.customer.name || "-")} | ${statusLabel(quote.status)}</small>${action.warning ? `<small class="warning-text">${t(action.warning)}</small>` : ""}</span>
+        <span><strong>${escapeHtml(getQuotationDisplayNo(quote))}</strong><small>${escapeHtml(quote.customer.name || "-")} | ${statusLabel(quote.status)}</small><small>${t("Location / Project Name")}: ${escapeHtml(quotationProjectName(quote) || "-")}</small>${action.warning ? `<small class="warning-text">${t(action.warning)}</small>` : ""}</span>
         <span>${money(quote.total || 0)}</span>
       </button>
       ${action.order
@@ -462,9 +654,85 @@ function quotationListRowHtml(quote, cloudIsLoading, tab) {
         : action.canConvert
           ? `<button class="btn primary" type="button" data-convert-quote="${quote.id}" ${cloudIsLoading ? "disabled" : ""} title="${cloudIsLoading ? "Waiting for cloud data to finish loading" : ""}">${t("Convert to Order")}</button>`
           : ""}
+      ${canDuplicateQuotation() ? `<button class="btn" type="button" data-duplicate-quote="${quote.id}">${t("Duplicate Quotation")}</button>` : ""}
       ${isBossOrAdmin() ? `<button class="btn danger" type="button" data-delete-quote="${quote.id}">${t("Delete")}</button>` : ""}
     </article>
   `;
+}
+
+function openDuplicateQuotationDialog(sourceQuotationId) {
+  if (!canDuplicateQuotation()) {
+    setSaveStatus("Permission denied: only Boss, Admin or Secretary can duplicate Quotations.", "error");
+    return;
+  }
+  const sourceId = String(sourceQuotationId || "").trim();
+  const source = state.quotations.find((quote) => String(quote.id || "") === sourceId);
+  if (!source) {
+    setSaveStatus("Source Quotation not found by exact stable ID.", "error");
+    return;
+  }
+  document.querySelector("#duplicateQuotationDialog")?.remove();
+  const dialog = document.createElement("dialog");
+  dialog.id = "duplicateQuotationDialog";
+  dialog.className = "detail-dialog duplicate-quotation-dialog";
+  dialog.innerHTML = `
+    <form id="duplicateQuotationForm" class="stack" method="dialog">
+      <div class="panel-head">
+        <div><p class="eyebrow">${t("Quotation")}</p><h2>${t("Duplicate Quotation")}</h2><p class="muted-text">${escapeHtml(getQuotationDisplayNo(source))} · ${escapeHtml(sourceId)}</p></div>
+        <button class="btn" type="button" data-close-duplicate-quotation>${t("Close")}</button>
+      </div>
+      <div class="form-grid compact">
+        <label>${t("Customer Name")}<input name="customerName" value="${escapeHtml(source.customer?.name || source.customerName || "")}" required /></label>
+        <label>${t("Phone")}<input name="phone" value="${escapeHtml(source.customer?.phone || source.phone || "")}" /></label>
+        <label>${t("Location / Project Name")}<input name="projectName" value="${escapeHtml(quotationProjectName(source))}" /></label>
+        <label class="wide">${t("Site Address")}<textarea name="siteAddress" rows="3">${escapeHtml(source.siteAddress || source.customer?.address || "")}</textarea></label>
+      </div>
+      <div class="duplicate-quotation-options">
+        <label><input type="checkbox" name="copyItems" checked /> ${t("Copy items")}</label>
+        <label><input type="checkbox" name="copyPrices" checked /> ${t("Copy prices")}</label>
+        <label><input type="checkbox" name="copyRemarks" checked /> ${t("Copy remarks")}</label>
+      </div>
+      <p class="muted-text">${t("A new Quoted record will be created. Order, payment, Production, Installation and Warranty links are never copied.")}</p>
+      <p class="muted-text" data-duplicate-quotation-status></p>
+      <div class="actions">
+        <button class="btn" type="button" data-close-duplicate-quotation>${t("Cancel")}</button>
+        <button class="btn primary" type="submit">${t("Duplicate Quotation")}</button>
+      </div>
+    </form>
+  `;
+  document.body.append(dialog);
+  const closeDialog = () => dialog.close();
+  dialog.querySelectorAll("[data-close-duplicate-quotation]").forEach((button) => button.addEventListener("click", closeDialog));
+  dialog.addEventListener("close", () => dialog.remove(), { once: true });
+  dialog.querySelector("#duplicateQuotationForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submit = form.querySelector("button[type='submit']");
+    const status = form.querySelector("[data-duplicate-quotation-status]");
+    submit.disabled = true;
+    status.textContent = t("Saving duplicate locally...");
+    const result = await duplicateQuotation(sourceId, {
+      customerName: form.elements.customerName.value,
+      phone: form.elements.phone.value,
+      projectName: form.elements.projectName.value,
+      siteAddress: form.elements.siteAddress.value,
+      copyItems: form.elements.copyItems.checked,
+      copyPrices: form.elements.copyPrices.checked,
+      copyRemarks: form.elements.copyRemarks.checked
+    });
+    if (!result.ok) {
+      status.textContent = t(result.message);
+      status.className = "warning-text";
+      submit.disabled = false;
+      return;
+    }
+    activeQuotationTab = "quoted";
+    dialog.close();
+    renderQuotationForm();
+    setSaveStatus(result.message, result.cloudOk === false && !result.localOnly ? "warning" : "success");
+  });
+  if (typeof dialog.showModal === "function") dialog.showModal();
+  else dialog.setAttribute("open", "");
 }
 
 function deleteQuotation(quoteId) {
@@ -558,8 +826,8 @@ export function quoteDocumentHtml(quote) {
       </header>
       <div class="divider"></div>
       <section class="customer-grid">
-        <div class="info-box"><p class="section-label">${t("Bill To").toUpperCase()}</p><h3>${escapeHtml(quote.customer.name || "-")}</h3><p>${escapeHtml(quote.customer.phone || "-")}</p><p>${escapeHtml(quote.customer.address || "-")}</p></div>
-        <div class="info-box"><p class="section-label">${t("Job Details").toUpperCase()}</p><p><strong>${t("Area")}:</strong> ${escapeHtml(quote.customer.area || "-")}</p><p><strong>${t("Appointment Date")}:</strong> ${escapeHtml(quote.appointmentDate || "-")}</p><p><strong>${t("Status")}:</strong> ${statusLabel(quote.status || "quoted")}</p></div>
+        <div class="info-box"><p class="section-label">${t("Bill To").toUpperCase()}</p><h3>${escapeHtml(quote.customer.name || "-")}</h3><p>${escapeHtml(quote.customer.phone || "-")}</p><p><strong>${t("Site Address")}:</strong> ${escapeHtml(quote.siteAddress || quote.customer.address || "-")}</p></div>
+        <div class="info-box"><p class="section-label">${t("Job Details").toUpperCase()}</p><p><strong>${t("Location / Project Name")}:</strong> ${escapeHtml(quotationProjectName(quote) || "-")}</p><p><strong>${t("Appointment Date")}:</strong> ${escapeHtml(quote.appointmentDate || "-")}</p><p><strong>${t("Status")}:</strong> ${statusLabel(quote.status || "quoted")}</p></div>
       </section>
       <table class="items-table"><thead><tr><th>${t("Description")}</th><th>${t("Product")}</th><th class="right">${t("Size")}</th><th class="right">${t("Sqft")}</th><th class="right">${t("Rate")}</th><th class="right">${t("Quantity")}</th><th class="right">${t("Total")}</th></tr></thead><tbody>${quoteItemRowsHtml(quote.items)}</tbody></table>
       <section class="bottom-grid">

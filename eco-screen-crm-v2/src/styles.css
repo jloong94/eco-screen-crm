@@ -573,6 +573,24 @@ input:focus, select:focus, textarea:focus {
   box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
 }
 .detail-dialog::backdrop { background: rgba(15, 23, 42, 0.55); }
+.duplicate-quotation-dialog { width: min(680px, calc(100vw - 24px)); }
+.duplicate-quotation-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.duplicate-quotation-options label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--soft);
+  padding: 8px 10px;
+  font-weight: 800;
+}
+.duplicate-quotation-options input { width: 18px; height: 18px; }
 .warning-text { color: #9a3412 !important; }
 .filter-tabs {
   display: flex;
@@ -1225,6 +1243,7 @@ input:focus, select:focus, textarea:focus {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .duplicate-quotation-options { grid-template-columns: 1fr; }
   .duplicate-summary,
   .duplicate-member-grid { grid-template-columns: 1fr; }
   .filter-tab {

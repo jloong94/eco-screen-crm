@@ -26,6 +26,7 @@ const {
   applyCloudSnapshot,
   makeQuote,
   makeQuoteItem,
+  nextQuoteNumber,
   state
 } = await import("../src/state.js");
 const { runtimeEnv } = await import("../src/env.js");
@@ -93,7 +94,13 @@ const {
   updateQuotationStatus,
   warrantyCardPreviewHtml
 } = await import("../src/workflow.js");
-const { quoteDocumentHtml, quotationsForTab } = await import("../src/quotations.js");
+const {
+  buildDuplicateQuotation,
+  duplicateQuotation,
+  quoteDocumentHtml,
+  quotationProjectName,
+  quotationsForTab
+} = await import("../src/quotations.js");
 const {
   COLOR_VALUES,
   OPENING_DIRECTION_VALUES,
@@ -112,7 +119,7 @@ const {
   uniqueActiveOrders,
   uniqueActiveProductionJobs
 } = await import("../src/workflowIntegrity.js");
-const { isBossOrAdmin } = await import("../src/permissions.js");
+const { canDuplicateQuotation, isBossOrAdmin } = await import("../src/permissions.js");
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -120,6 +127,7 @@ function assert(condition, message) {
 
 assert(isBossOrAdmin("Boss") && isBossOrAdmin(" boss ") && isBossOrAdmin("ADMIN") && isBossOrAdmin(" Admin "), "Boss/Admin recognition must ignore case and surrounding whitespace");
 assert(!isBossOrAdmin("Sales") && !isBossOrAdmin(""), "Non-Boss/Admin roles must remain restricted");
+assert(canDuplicateQuotation("Boss") && canDuplicateQuotation(" admin ") && canDuplicateQuotation("SECRETARY") && !canDuplicateQuotation("Sales"), "Duplicate Quotation must be restricted to normalized Boss/Admin/Secretary roles");
 
 function resetWorkflowState() {
   state.quotations = [];
@@ -1707,7 +1715,6 @@ const duplicateActiveOrder = { ...countActiveOrders[0], customer: { name: "Older
 assert(uniqueActiveOrders([...state.orders, duplicateActiveOrder]).length === 15
   && uniqueActiveOrders([...state.orders, duplicateActiveOrder]).find((order) => order.id === countActiveOrders[0].id).customer.name === "Count Customer 1",
 "AA1: stable-ID duplicates must collapse to the latest active Order without double-counting");
-
 setOrderNavigationFilter("pending");
 assert(ordersForDisplay().length === 8 && workflowNavigationState().orders.filter === "pending", "AA2: the retained Pending category must narrow the Orders list before navigation reset");
 resetWorkflowNavigationState("orders");
@@ -2048,6 +2055,115 @@ assert(chineseQuotePrintHtml.includes("网站: www.ecosecurityscreens.com")
   && !chineseQuotePrintHtml.includes("Handle Position"),
 "AB5: Chinese Quotation output must use Chinese-only interface headings and omit Handle Position");
 
+resetWorkflowState();
+state.language = "en";
+state.currentUser = { userId: "secretary-duplicate-test", username: "secretary-duplicate-test", name: "Secretary Test", role: "Secretary", active: true };
+state.role = "Secretary";
+const duplicateSource = validQuote("ESQ-2026-0041", "Duplicate Source Customer");
+Object.assign(duplicateSource, {
+  id: "quote-duplicate-source",
+  projectName: "Original Project",
+  siteAddress: "Original Site Address",
+  status: "won",
+  workflowStatus: "won",
+  orderId: "order-source-link",
+  linkedOrderId: "order-source-link",
+  orderNo: "SO2607041",
+  orderNumber: "SO2607041",
+  converted: true,
+  convertedToOrder: true,
+  convertedAt: "2026-07-01T00:00:00.000Z",
+  payments: [{ id: "source-payment", amount: 500 }],
+  deposit: 500,
+  productionJobId: "production-source-link",
+  installationJobId: "installation-source-link",
+  warrantyCardId: "warranty-source-link",
+  collectionRecords: [{ id: "collection-source" }],
+  taxEnabled: true,
+  taxRate: 8,
+  salesperson: { id: "salesperson-source", name: "Sales Person" },
+  updatedAt: "2026-07-01T00:00:00.000Z"
+});
+duplicateSource.customer.email = "customer@example.com";
+duplicateSource.customer.company = "Customer Company";
+duplicateSource.items[0].measurements = { width: 1000, height: 1200 };
+duplicateSource.items[0].unitPrice = "125.50";
+duplicateSource.items[0].discount = 5;
+const aliasNumberQuote = { id: "quote-number-alias", quotationNo: "ESQ-2026-0042", status: "quoted", updatedAt: "2026-07-01T00:00:00.000Z" };
+state.quotations = [duplicateSource, aliasNumberQuote];
+assert(nextQuoteNumber(state.quotations, new Date("2026-07-17T00:00:00.000Z")) === "ESQ-2026-0043", "AC1: ESQ generation must include quoteNumber, quotationNo and quoteNo aliases and return the next unused number");
+const duplicateSourceBefore = JSON.stringify(duplicateSource);
+const duplicatedResult = await duplicateQuotation(duplicateSource.id, {
+  customerName: "Duplicate Source Customer",
+  phone: "0123456789",
+  projectName: "Second Location Project",
+  siteAddress: "Second Location Address",
+  copyItems: true,
+  copyPrices: true,
+  copyRemarks: true
+}, {
+  now: "2026-07-17T09:30:00.000Z",
+  idFactory: () => "quote-duplicate-created",
+  syncCloud: async () => ({ ok: false, reason: "Local Mode Only" })
+});
+assert(duplicatedResult.ok && duplicatedResult.localOnly, "AC2: Secretary must be able to save a duplicate locally before cloud sync");
+const duplicatedQuote = state.quotations.find((quote) => quote.id === "quote-duplicate-created");
+assert(JSON.stringify(state.quotations.find((quote) => quote.id === duplicateSource.id)) === duplicateSourceBefore, "AC2: duplicating must leave the exact source Quotation unchanged");
+assert(duplicatedQuote.quoteNumber === "ESQ-2026-0043" && duplicatedQuote.quotationNo === "ESQ-2026-0043" && duplicatedQuote.quoteNo === "ESQ-2026-0043", "AC2: duplicate must receive a new unique ESQ number across every quotation-number alias");
+assert(duplicatedQuote.id !== duplicateSource.id && duplicatedQuote.createdAt === "2026-07-17T09:30:00.000Z" && duplicatedQuote.updatedAt === duplicatedQuote.createdAt
+  && duplicatedQuote.createdBy === "Secretary Test", "AC2: duplicate must receive a new stable ID and exact creation audit fields");
+assert(duplicatedQuote.status === "quoted" && duplicatedQuote.workflowStatus === "quoted" && quotationsForTab("quoted").some((quote) => quote.id === duplicatedQuote.id), "AC2: duplicate must start as a separate Quoted record");
+assert(quotationProjectName(duplicatedQuote) === "Second Location Project" && duplicatedQuote.siteAddress === "Second Location Address"
+  && duplicatedQuote.customer.address === "Second Location Address", "AC3: project name and site address must be independently editable per Quotation");
+assert(duplicatedQuote.customer.email === "customer@example.com" && duplicatedQuote.customer.company === "Customer Company"
+  && duplicatedQuote.items.length === 1 && duplicatedQuote.items[0].id !== duplicateSource.items[0].id
+  && duplicatedQuote.items[0].unitPrice === "125.50" && duplicatedQuote.discount === 25
+  && duplicatedQuote.taxEnabled === true && duplicatedQuote.taxRate === 8
+  && duplicatedQuote.remark === "Quotation remark" && duplicatedQuote.salesperson.id === "salesperson-source", "AC3: selected customer, items, measurements, prices, tax, remarks and salesperson fields must copy into independent objects");
+assert(!("orderId" in duplicatedQuote) && !("linkedOrderId" in duplicatedQuote) && !("orderNo" in duplicatedQuote) && !("orderNumber" in duplicatedQuote)
+  && !("converted" in duplicatedQuote) && !("convertedToOrder" in duplicatedQuote) && !("convertedAt" in duplicatedQuote)
+  && !("payments" in duplicatedQuote) && duplicatedQuote.deposit === 0 && !("productionJobId" in duplicatedQuote)
+  && !("installationJobId" in duplicatedQuote) && !("warrantyCardId" in duplicatedQuote) && !("collectionRecords" in duplicatedQuote),
+"AC4: Order, conversion, payment, deposit, Production, Installation, Warranty and collection fields must never copy");
+assert(duplicatedQuote.duplicatedFromQuotationId === duplicateSource.id && duplicatedQuote.duplicatedFromQuotationNo === "ESQ-2026-0041", "AC4: duplicate audit fields must identify the exact source stable ID and ESQ number");
+const persistedDuplicateQuotes = JSON.parse(localStorage.getItem("ecoScreenV2.quotations") || "[]");
+assert(persistedDuplicateQuotes.some((quote) => quote.id === duplicateSource.id) && persistedDuplicateQuotes.some((quote) => quote.id === duplicatedQuote.id), "AC5: refresh storage must preserve both the original and duplicate Quotations");
+applyCloudSnapshot({ quotations: [{ ...duplicateSource, updatedAt: "2020-01-01T00:00:00.000Z" }] });
+assert(state.quotations.some((quote) => quote.id === duplicateSource.id) && state.quotations.some((quote) => quote.id === duplicatedQuote.id), "AC5: an older cloud roundtrip must preserve both Quotations");
+duplicatedQuote.items[0].width = "777";
+assert(duplicateSource.items[0].width === "1000", "AC6: editing a duplicated item must never mutate the source item object");
+const duplicatePrintHtml = quoteDocumentHtml(duplicatedQuote);
+assert(duplicatePrintHtml.includes("Location / Project Name") && duplicatePrintHtml.includes("Second Location Project")
+  && duplicatePrintHtml.includes("Site Address") && duplicatePrintHtml.includes("Second Location Address"), "AC6: Quotation preview and print must visibly include project name and site address");
+const duplicateWon = await updateQuotationStatus(duplicatedQuote.id, "won");
+assert(duplicateWon.ok, "AC7: duplicated Quotation must remain independently editable");
+const duplicateConversion = await convertQuoteToOrder(duplicatedQuote.id);
+assert(duplicateConversion.ok && state.orders.some((order) => order.quoteId === duplicatedQuote.id), "AC7: duplicated Quotation must convert through its own exact stable ID");
+assert(JSON.stringify(state.quotations.find((quote) => quote.id === duplicateSource.id)) === duplicateSourceBefore, "AC7: converting the duplicate must not change the original Quotation");
+
+const noCopyDuplicate = buildDuplicateQuotation(duplicateSource, {
+  projectName: "Blank Copy Project",
+  siteAddress: "Blank Copy Address",
+  copyItems: false,
+  copyPrices: false,
+  copyRemarks: false
+}, {
+  now: "2026-07-17T10:00:00.000Z",
+  quoteNumber: "ESQ-2026-0099",
+  idFactory: () => "quote-no-copy",
+  existingQuotations: state.quotations
+});
+assert(noCopyDuplicate.items.length === 0 && noCopyDuplicate.discount === 0 && noCopyDuplicate.deposit === 0 && noCopyDuplicate.remark === ""
+  && noCopyDuplicate.customer.remark === "" && !("taxEnabled" in noCopyDuplicate), "AC8: unchecked copy options must omit items, prices, tax and remarks");
+const beforeRollback = JSON.stringify(state.quotations);
+const rollbackResult = await duplicateQuotation(duplicateSource.id, {}, {
+  quoteNumber: "ESQ-2026-0100",
+  idFactory: () => "quote-local-save-failure",
+  saveLocal: () => ({ ok: false, reason: "Simulated local storage failure" }),
+  syncCloud: async () => { throw new Error("Cloud must not run after local failure"); }
+});
+assert(!rollbackResult.ok && JSON.stringify(state.quotations) === beforeRollback, "AC8: local save failure must roll back the complete duplicate transaction before cloud sync");
+
 const quotationSource = await readFile(new URL("../src/quotations.js", import.meta.url), "utf8");
 assert(quotationSource.includes("canonicalSelectOptions(COLOR_VALUES")
   && quotationSource.includes("canonicalSelectOptions(OPENING_DIRECTION_VALUES")
@@ -2107,4 +2223,5 @@ console.log([
   ,"Unique active Production visibility, status aliases and navigation reset: passed"
   ,"Separate Order dispatch board, Production work stages and safe exact-ID integrity repair: passed"
   ,"Dedicated A4 Production Sheet isolation, exact IDs, fixed table and print footer: passed"
+  ,"Reusable Duplicate Quotation, independent project/address, safe field whitelist and rollback: passed"
 ].join("\n"));

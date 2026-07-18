@@ -169,9 +169,9 @@ function quotationPageHtml() {
             <label>${t("Quotation Status")}<select id="quoteStatus"></select></label>
             <label>${t("Customer Name")}<input id="customerName" placeholder="${t("Customer name example")}" /></label>
             <label>${t("Phone")}<input id="customerPhone" placeholder="0123456789" /></label>
-            <label>${t("Area")}<input id="customerArea" placeholder="${t("Area example")}" /></label>
+            <label>${t("Location / Project Name")}<input id="projectName" placeholder="${t("Location or project name")}" /></label>
             <label>${t("Appointment Date")}<input id="appointmentDate" type="date" /></label>
-            <label class="wide">${t("Address")}<textarea id="customerAddress" rows="3"></textarea></label>
+            <label class="wide">${t("Site Address")}<textarea id="customerAddress" rows="3"></textarea></label>
             <label class="wide">${t("Customer Remark")}<textarea id="customerRemark" rows="2"></textarea></label>
             <label class="wide">${t("Quotation Remark")}<textarea id="quoteRemark" rows="2"></textarea></label>
           </div>
