@@ -1777,7 +1777,11 @@ function soNumberReassignmentPanelHtml() {
       ${scan?.ok ? `<button class="btn" type="button" data-order-tool="reassign-so-number-preview">${t("Show Before / After Preview")}</button>` : ""}
       ${plan?.ok ? `<div class="covered-order-safety">
         <strong>${t("Exact records selected for change")}</strong>
-        <p>${t("Stale quotation reference")}: ${escapeHtml(plan.staleQuotationId)}</p>
+        <p>Desired SO: ${escapeHtml(plan.desiredOrderNo)}</p>
+        <p>Active owner: None</p>
+        <p>Archived audit references: ${escapeHtml(plan.archivedAuditReferences.map((entry) => `${entry.collection}: ${entry.stableId}`).join(", ") || t("none"))}</p>
+        <p>Result: Archived audit records remain unchanged. ${escapeHtml(plan.currentOrderNo)} changes to ${escapeHtml(plan.desiredOrderNo)}.</p>
+        <p>${t("Stale quotation reference")}: ${escapeHtml(plan.staleQuotationId || t("none"))}</p>
         <p>${t("Correct active Order")}: ${escapeHtml(plan.orderId)}</p>
         <p>${t("Exact linked Quotations")}: ${escapeHtml(plan.linkedQuotationIds.join(", ") || t("none"))}</p>
         <p>${t("Exact linked Production Jobs")}: ${escapeHtml(plan.productionJobIds.join(", ") || t("none"))}</p>
@@ -4286,6 +4290,7 @@ export function scanSoNumberReassignment(desiredOrderNo, currentOrderNo, source 
         collectionLabel: ({ quotations: "Quotation", orders: "Order", productionJobs: "Production Job", installationJobs: "Installation Job" })[collection],
         record,
         matchReason: `Exact ${desired} reference`,
+        archivedAudit: archived,
         releaseEligible,
         releaseReason: collection !== "quotations"
           ? "Reference only"
@@ -4298,7 +4303,16 @@ export function scanSoNumberReassignment(desiredOrderNo, currentOrderNo, source 
       };
     }));
   const eligibleQuotationIds = records.filter((entry) => entry.releaseEligible).map((entry) => String(entry.record.id));
-  const ok = desiredOwners.length === 0 && eligibleQuotationIds.length > 0;
+  const archivedAuditReferences = records.filter((entry) => entry.archivedAudit);
+  const activeAmbiguousReferences = records.filter((entry) => {
+    if (entry.archivedAudit || entry.releaseEligible || entry.collection === "orders") return false;
+    if (!["productionJobs", "installationJobs"].includes(entry.collection)) return true;
+    return String(entry.record.orderId || "") !== String(currentOrder.id || "");
+  });
+  const archivedOnlyReuseAllowed = records.length > 0 && archivedAuditReferences.length === records.length;
+  const ok = desiredOwners.length === 0
+    && activeAmbiguousReferences.length === 0
+    && (eligibleQuotationIds.length > 0 || archivedOnlyReuseAllowed);
   return {
     ok,
     desiredOrderNo: desired,
@@ -4307,9 +4321,19 @@ export function scanSoNumberReassignment(desiredOrderNo, currentOrderNo, source 
     currentOrderView: coveredOrderRecordView("orders", currentOrder, rows),
     desiredActiveOrderIds: desiredOwners.map((order) => String(order.id || "missing-id")),
     eligibleQuotationIds,
+    archivedOnlyReuseAllowed,
+    archivedAuditReferences: archivedAuditReferences.map((entry) => ({
+      collection: entry.collection,
+      stableId: String(entry.record.id || "missing-id")
+    })),
+    activeAmbiguousReferenceIds: activeAmbiguousReferences.map((entry) => String(entry.record.id || "missing-id")),
     records,
     message: desiredOwners.length
       ? `${desired} is owned by active Order ${desiredOwners.map((order) => order.id || "missing-id").join(", ")}. Reassignment is blocked.`
+      : activeAmbiguousReferences.length
+        ? `${desired} has active or ambiguous linked reference(s): ${activeAmbiguousReferences.map((entry) => entry.record.id || "missing-id").join(", ")}. Reassignment is blocked.`
+      : archivedOnlyReuseAllowed
+        ? `${records.length} archived audit reference(s) found. They will remain unchanged; no stale quotation release is required.`
       : !eligibleQuotationIds.length
         ? `No archived, deleted, unconverted or stale quotation reference can safely release ${desired}.`
         : `${records.length} exact ${desired} reference(s) found. Select one exact stale quotation reference to release.`
@@ -4329,19 +4353,24 @@ export function buildSoNumberReassignmentPlan(values = {}, source = state) {
   const staleQuotationId = String(values.staleQuotationId || "").trim();
   const scan = scanSoNumberReassignment(values.desiredOrderNo, values.currentOrderNo, source);
   if (!scan.ok) return { ...scan, ok: false };
-  if (!staleQuotationId || !scan.eligibleQuotationIds.includes(staleQuotationId)) {
+  if (staleQuotationId && !scan.eligibleQuotationIds.includes(staleQuotationId)) {
+    return { ok: false, message: "Select one eligible stale quotation by its exact stable ID." };
+  }
+  if (!staleQuotationId && !scan.archivedOnlyReuseAllowed) {
     return { ok: false, message: "Select one eligible stale quotation by its exact stable ID." };
   }
   const order = scan.currentOrder;
   const orderId = String(order.id || "");
-  const staleQuote = source.quotations.find((record) => String(record.id || "") === staleQuotationId);
-  if (!staleQuote?.id) return { ok: false, message: "The selected stale quotation stable ID no longer exists." };
-  if ([order.quoteId, order.quotationId].filter(Boolean).map(String).includes(staleQuotationId)
-    || [staleQuote.orderId, staleQuote.linkedOrderId].filter(Boolean).map(String).includes(orderId)) {
+  const staleQuote = staleQuotationId
+    ? source.quotations.find((record) => String(record.id || "") === staleQuotationId)
+    : null;
+  if (staleQuotationId && !staleQuote?.id) return { ok: false, message: "The selected stale quotation stable ID no longer exists." };
+  if (staleQuote && ([order.quoteId, order.quotationId].filter(Boolean).map(String).includes(staleQuotationId)
+    || [staleQuote.orderId, staleQuote.linkedOrderId].filter(Boolean).map(String).includes(orderId))) {
     return { ok: false, message: "The selected stale quotation is exactly linked to the correct active Order. Reassignment is blocked." };
   }
 
-  const linkedQuotations = source.quotations.filter((quote) => String(quote.id || "") !== staleQuotationId && (
+  const linkedQuotations = source.quotations.filter((quote) => (!staleQuotationId || String(quote.id || "") !== staleQuotationId) && (
     [quote.orderId, quote.linkedOrderId].filter(Boolean).map(String).includes(orderId)
     || [order.quoteId, order.quotationId].filter(Boolean).map(String).includes(String(quote.id || ""))
   ));
@@ -4363,19 +4392,21 @@ export function buildSoNumberReassignmentPlan(values = {}, source = state) {
       return updated;
     });
   };
-  replaceRecord("quotations", staleQuotationId, (record) => ({
-    ...record,
-    orderId: "",
-    linkedOrderId: "",
-    orderNo: "",
-    orderNumber: "",
-    converted: false,
-    convertedToOrder: false,
-    releasedOrderNo: scan.desiredOrderNo,
-    releasedAt: now,
-    releasedBy: currentActor(),
-    updatedAt: now
-  }));
+  if (staleQuotationId) {
+    replaceRecord("quotations", staleQuotationId, (record) => ({
+      ...record,
+      orderId: "",
+      linkedOrderId: "",
+      orderNo: "",
+      orderNumber: "",
+      converted: false,
+      convertedToOrder: false,
+      releasedOrderNo: scan.desiredOrderNo,
+      releasedAt: now,
+      releasedBy: currentActor(),
+      updatedAt: now
+    }));
+  }
   replaceRecord("orders", orderId, (record) => ({
     ...record,
     orderNo: scan.desiredOrderNo,
@@ -4411,6 +4442,7 @@ export function buildSoNumberReassignmentPlan(values = {}, source = state) {
     timestamp: now,
     orderId,
     staleQuotationId,
+    archivedAuditReferences: scan.archivedAuditReferences,
     linkedQuotationIds: linkedQuotations.map((record) => String(record.id)),
     productionJobIds: productionJobs.map((record) => String(record.id)),
     installationJobIds: installationJobs.map((record) => String(record.id)),
@@ -4444,7 +4476,8 @@ export async function reassignSoNumber(values = {}, options = {}) {
   if (options.confirm !== false) {
     const confirmation = window.prompt([
       `Reassign SO Number ${plan.currentOrderNo} to ${plan.desiredOrderNo}`,
-      `Release stale quotation: ${plan.staleQuotationId}`,
+      `Release stale quotation: ${plan.staleQuotationId || "none (archived audit references remain unchanged)"}`,
+      `Archived audit references unchanged: ${plan.archivedAuditReferences.map((entry) => `${entry.collection}: ${entry.stableId}`).join(", ") || "none"}`,
       `Correct active Order: ${plan.orderId}`,
       `Exact linked Quotations: ${plan.linkedQuotationIds.join(", ") || "none"}`,
       `Exact linked Production Jobs: ${plan.productionJobIds.join(", ") || "none"}`,
