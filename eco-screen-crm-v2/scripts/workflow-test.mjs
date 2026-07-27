@@ -2360,7 +2360,7 @@ const reassignProduction = {
   remarks: "Preserve production progress",
   statusHistory: [{ status: "in_production" }]
 };
-const numberOnlyProduction = { id: "production-number-only-7020", orderNo: "SO2607020", orderNumber: "SO2607020", status: "not_produced", remarks: "Reference only; do not relink" };
+const numberOnlyProduction = { id: "production-number-only-7020", orderNo: "SO2607020", orderNumber: "SO2607020", status: "duplicate_archived", isArchived: true, remarks: "Reference only; do not relink" };
 const reassignInstallation = {
   id: "installation-correct-7021",
   orderId: reassignCorrectOrder.id,
@@ -2463,6 +2463,100 @@ try {
 assert(!failedReassign.ok
   && JSON.stringify({ quotations: state.quotations, orders: state.orders, productionJobs: state.productionJobs, installationJobs: state.installationJobs }) === rollbackReassignState,
 "AE11: local persistence failure must roll back the complete SO reassignment transaction before cloud sync");
+
+const archivedOnlyOrder = {
+  id: "order-archived-audit-7020",
+  orderNo: "SO2607020",
+  orderNumber: "SO2607020",
+  quoteId: "quote-archived-audit-7020",
+  status: "deleted_archived",
+  isArchived: true,
+  customer: { name: "Archived Audit Customer" },
+  items: [{ product: "Archived Screen", quantity: 1 }],
+  total: 511.5,
+  remarks: "Historical Order audit"
+};
+const archivedOnlyProduction = {
+  id: "production-archived-audit-7020",
+  orderId: archivedOnlyOrder.id,
+  orderNo: "SO2607020",
+  orderNumber: "SO2607020",
+  status: "deleted_archived",
+  isArchived: true,
+  assignedStaff: ["historical-production"],
+  items: structuredClone(archivedOnlyOrder.items),
+  remarks: "Historical Production audit"
+};
+const archivedOnlyInstallation = {
+  id: "installation-archived-audit-7020",
+  orderId: archivedOnlyOrder.id,
+  orderNo: "SO2607020",
+  orderNumber: "SO2607020",
+  status: "cancelled_archived",
+  isArchived: true,
+  assignedStaff: ["historical-installer"],
+  items: structuredClone(archivedOnlyOrder.items),
+  remarks: "Historical Installation audit"
+};
+state.quotations = [structuredClone(reassignCorrectQuote)];
+state.orders = [structuredClone(reassignCorrectOrder), archivedOnlyOrder];
+state.productionJobs = [structuredClone(reassignProduction), archivedOnlyProduction];
+state.installationJobs = [structuredClone(reassignInstallation), archivedOnlyInstallation];
+const archivedAuditBefore = structuredClone({
+  order: archivedOnlyOrder,
+  production: archivedOnlyProduction,
+  installation: archivedOnlyInstallation
+});
+const archivedOnlyScan = scanSoNumberReassignment("SO2607020", "SO2607021");
+assert(archivedOnlyScan.ok && archivedOnlyScan.archivedOnlyReuseAllowed
+  && archivedOnlyScan.eligibleQuotationIds.length === 0
+  && archivedOnlyScan.archivedAuditReferences.map((entry) => entry.stableId).sort().join(",")
+    === [archivedOnlyOrder.id, archivedOnlyProduction.id, archivedOnlyInstallation.id].sort().join(","),
+"AE12: archived-only desired SO references must allow preview without requiring a stale Quotation");
+const archivedOnlyPlan = buildSoNumberReassignmentPlan({
+  desiredOrderNo: "SO2607020",
+  currentOrderNo: "SO2607021",
+  now: "2026-07-22T11:00:00.000Z"
+});
+assert(archivedOnlyPlan.ok && archivedOnlyPlan.staleQuotationId === ""
+  && archivedOnlyPlan.changes.every((change) => ![archivedOnlyOrder.id, archivedOnlyProduction.id, archivedOnlyInstallation.id].includes(change.stableId)),
+"AE13: archived-only plan must not include any archived audit record in its exact field changes");
+const archivedOnlyResult = await reassignSoNumber({
+  desiredOrderNo: "SO2607020",
+  currentOrderNo: "SO2607021",
+  now: "2026-07-22T11:00:00.000Z"
+}, { downloadBackup: false, confirm: false });
+assert(archivedOnlyResult.ok
+  && state.orders.find((record) => record.id === reassignCorrectOrder.id)?.orderNo === "SO2607020"
+  && state.quotations.find((record) => record.id === reassignCorrectQuote.id)?.orderNo === "SO2607020"
+  && state.productionJobs.find((record) => record.id === reassignProduction.id)?.orderNo === "SO2607020"
+  && state.installationJobs.find((record) => record.id === reassignInstallation.id)?.orderNo === "SO2607020",
+"AE14: archived-only reuse must update the exact active Order chain without a Quotation release");
+assert(JSON.stringify(state.orders.find((record) => record.id === archivedOnlyOrder.id)) === JSON.stringify(archivedAuditBefore.order)
+  && JSON.stringify(state.productionJobs.find((record) => record.id === archivedOnlyProduction.id)) === JSON.stringify(archivedAuditBefore.production)
+  && JSON.stringify(state.installationJobs.find((record) => record.id === archivedOnlyInstallation.id)) === JSON.stringify(archivedAuditBefore.installation),
+"AE15: archived Order, Production and Installation audit records must remain completely unchanged");
+assert(nextSalesOrderNumber(new Date("2026-07-22T12:00:00.000Z")) === "SO2607022",
+"AE16: archived-only reassignment must keep SO2607021 reserved through previousOrderNo");
+state.quotations = [structuredClone(reassignCorrectQuote)];
+state.orders = [structuredClone(reassignCorrectOrder), archivedOnlyOrder, { id: "order-active-owner-7020", orderNo: "SO2607020", orderNumber: "SO2607020", status: "Confirmed" }];
+state.productionJobs = [structuredClone(reassignProduction), archivedOnlyProduction];
+state.installationJobs = [structuredClone(reassignInstallation), archivedOnlyInstallation];
+const archivedOnlyBlocked = buildSoNumberReassignmentPlan({ desiredOrderNo: "SO2607020", currentOrderNo: "SO2607021" });
+assert(!archivedOnlyBlocked.ok && archivedOnlyBlocked.message.includes("owned by active Order"),
+"AE17: an active owner of the desired SO must still block archived-only reuse");
+state.orders = [structuredClone(reassignCorrectOrder), archivedOnlyOrder];
+state.productionJobs = [structuredClone(reassignProduction), archivedOnlyProduction, {
+  id: "production-active-ambiguous-7020",
+  orderId: "missing-or-wrong-order",
+  orderNo: "SO2607020",
+  orderNumber: "SO2607020",
+  status: "in_production"
+}];
+state.installationJobs = [structuredClone(reassignInstallation), archivedOnlyInstallation];
+const ambiguousActiveReferenceBlocked = buildSoNumberReassignmentPlan({ desiredOrderNo: "SO2607020", currentOrderNo: "SO2607021" });
+assert(!ambiguousActiveReferenceBlocked.ok && ambiguousActiveReferenceBlocked.message.includes("active or ambiguous linked reference"),
+"AE18: an active desired-number Job without the exact correct Order relationship must block reassignment");
 
 const quotationSource = await readFile(new URL("../src/quotations.js", import.meta.url), "utf8");
 assert(quotationSource.includes("canonicalSelectOptions(COLOR_VALUES")
