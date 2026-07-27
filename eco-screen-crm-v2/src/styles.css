@@ -131,7 +131,7 @@ h3 { font-size: 17px; }
 .btn.danger { color: var(--danger); border-color: #fecaca; }
 .layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 380px;
+  grid-template-columns: minmax(0, 1.6fr) minmax(540px, 1fr);
   gap: 18px;
   padding: 18px;
   max-width: 1440px;
