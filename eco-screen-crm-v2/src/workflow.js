@@ -117,6 +117,7 @@ let workflowIntegrityResult = null;
 let productionDispatchIntegrityVisible = false;
 let productionDispatchIntegrityResult = null;
 let coveredOrderRecovery = null;
+let soNumberReassignment = null;
 let returnToFollowUpPanel = null;
 let paymentPanel = null;
 let paymentReversalPanel = null;
@@ -304,7 +305,7 @@ export function nextSalesOrderNumber(date = new Date()) {
   const year = String(date.getFullYear()).slice(-2);
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const prefix = `SO${year}${month}`;
-  const references = state.orders.flatMap((order) => [order.orderNo, order.orderNumber]).filter(Boolean);
+  const references = state.orders.flatMap((order) => [order.orderNo, order.orderNumber, order.previousOrderNo]).filter(Boolean);
   const usedNumbers = new Set(references.map(normalizeRefNo).filter(Boolean));
   const highest = references
     .map((number) => monthlyOrderSequence(number, year, month))
@@ -818,6 +819,7 @@ function renderOrderTools() {
       ${isBossOrAdmin() ? `<button class="btn" type="button" data-order-tool="workflow-integrity">${t("Workflow Integrity Check")}</button>` : ""}
       ${isBossOrAdmin() ? `<button class="btn" type="button" data-order-tool="production-dispatch-integrity">${t("Repair Production Dispatch Integrity")}</button>` : ""}
       ${isBossOrAdmin() ? `<button class="btn" type="button" data-order-tool="recover-covered-order">${t("Recover Covered Order")}</button>` : ""}
+      ${isBossOrAdmin() ? `<button class="btn" type="button" data-order-tool="reassign-so-number">${t("Reassign SO Number")}</button>` : ""}
       </div>
       <div class="filter-tabs">
         ${visibleFilters.map((filter) => `<button class="filter-tab ${orderSearch.filter === filter.id ? "active" : ""}" type="button" data-order-filter="${filter.id}">${t(filter.label)}</button>`).join("")}
@@ -826,6 +828,7 @@ function renderOrderTools() {
       ${workflowIntegrityPanelHtml()}
       ${productionDispatchIntegrityPanelHtml()}
       ${coveredOrderRecoveryPanelHtml()}
+      ${soNumberReassignmentPanelHtml()}
     </section>
   `;
 }
@@ -1736,6 +1739,73 @@ function coveredOrderRecoveryRowHtml(entry) {
     <td>${escapeHtml(view.total === "" ? "-" : view.total)}</td>
     <td><strong>Q:</strong> ${escapeHtml(view.quotationStableId || "-")}<br><strong>O:</strong> ${escapeHtml(view.orderStableId || "-")}</td>
     <td><strong>P:</strong> ${escapeHtml(view.productionJobIds.join(", ") || "-")}<br><strong>I:</strong> ${escapeHtml(view.installationJobIds.join(", ") || "-")}</td>
+    <td><pre>${escapeHtml(JSON.stringify({ forward: view.forwardLinks, reverse: view.reverseLinks }, null, 2))}</pre></td>
+  </tr>`;
+}
+
+function soNumberReassignmentPanelHtml() {
+  if (!soNumberReassignment) return "";
+  const { desiredOrderNo = "", currentOrderNo = "", scan = null, selectedQuotationId = "", plan = null } = soNumberReassignment;
+  const records = scan?.records || [];
+  return `
+    <section class="covered-order-panel" data-so-reassignment-panel>
+      <div class="section-head">
+        <div>
+          <h3>${t("Reassign SO Number")}</h3>
+          <p class="muted-text">${t("Release one exact stale quotation reference, then move the desired SO number to one exact active Order.")}</p>
+        </div>
+        <button class="btn" type="button" data-order-tool="reassign-so-number-close">${t("Close")}</button>
+      </div>
+      <div class="form-grid compact">
+        <label>${t("Old / desired SO")}<input data-reassign-desired-so value="${escapeHtml(desiredOrderNo)}" placeholder="SO2607020" /></label>
+        <label>${t("Current correct Order No")}<input data-reassign-current-so value="${escapeHtml(currentOrderNo)}" placeholder="SO2607021" /></label>
+      </div>
+      <div class="actions">
+        <button class="btn" type="button" data-order-tool="reassign-so-number-scan">${t("Find Exact References")}</button>
+      </div>
+      ${scan ? `<p class="${scan.ok ? "muted-text" : "danger-text"}">${escapeHtml(scan.message)}</p>` : ""}
+      ${scan?.currentOrder ? `<div class="covered-order-safety">
+        <strong>${t("Exact active Order currently using the current number")}</strong>
+        <p>${t("Stable ID")}: ${escapeHtml(scan.currentOrder.id)} | ${t("Customer")}: ${escapeHtml(scan.currentOrderView.customer || "-")} | ${t("Quotation No")}: ${escapeHtml(scan.currentOrderView.quotationNo || "-")} | ${t("Order No")}: ${escapeHtml(getOrderDisplayNo(scan.currentOrder) || "-")} | ${t("Total")}: ${escapeHtml(scan.currentOrderView.total === "" ? "-" : scan.currentOrderView.total)}</p>
+      </div>` : ""}
+      ${scan ? `<div class="table-wrap covered-order-table-wrap">
+        <table class="data-table covered-order-table">
+          <thead><tr><th>${t("Release")}</th><th>${t("Record")}</th><th>${t("Customer / Phone")}</th><th>${t("Quotation / Order")}</th><th>${t("Status")}</th><th>${t("Total")}</th><th>${t("Stable IDs")}</th><th>${t("Forward / Reverse links")}</th></tr></thead>
+          <tbody>${records.map((entry) => soNumberReassignmentRecordRowHtml(entry, selectedQuotationId)).join("") || `<tr><td colspan="8">${t("No records reference this exact SO number.")}</td></tr>`}</tbody>
+        </table>
+      </div>` : ""}
+      ${scan?.ok ? `<button class="btn" type="button" data-order-tool="reassign-so-number-preview">${t("Show Before / After Preview")}</button>` : ""}
+      ${plan?.ok ? `<div class="covered-order-safety">
+        <strong>${t("Exact records selected for change")}</strong>
+        <p>${t("Stale quotation reference")}: ${escapeHtml(plan.staleQuotationId)}</p>
+        <p>${t("Correct active Order")}: ${escapeHtml(plan.orderId)}</p>
+        <p>${t("Exact linked Quotations")}: ${escapeHtml(plan.linkedQuotationIds.join(", ") || t("none"))}</p>
+        <p>${t("Exact linked Production Jobs")}: ${escapeHtml(plan.productionJobIds.join(", ") || t("none"))}</p>
+        <p>${t("Exact linked Installation Jobs")}: ${escapeHtml(plan.installationJobIds.join(", ") || t("none"))}</p>
+        <div class="table-wrap"><table class="data-table"><thead><tr><th>${t("Record")}</th><th>${t("Stable ID")}</th><th>${t("Field")}</th><th>${t("Before")}</th><th>${t("After")}</th></tr></thead><tbody>
+          ${plan.changes.map((change) => `<tr><td>${escapeHtml(change.collection)}</td><td>${escapeHtml(change.stableId)}</td><td>${escapeHtml(change.field)}</td><td><pre>${escapeHtml(JSON.stringify(change.from ?? null))}</pre></td><td><pre>${escapeHtml(JSON.stringify(change.to ?? null))}</pre></td></tr>`).join("")}
+        </tbody></table></div>
+        <p class="muted-text">${t("Confirmation phrase")}: REASSIGN SO NUMBER</p>
+        <button class="btn primary" type="button" data-order-tool="reassign-so-number-apply">${t("Reassign SO Number")}</button>
+      </div>` : ""}
+      <div class="covered-order-safety"><strong>${t("Before repair")}</strong><p>${t("A full JSON backup is downloaded before one local transaction. Customer, items, prices, totals, deposits, payments, balances, statuses, staff, progress and remarks remain unchanged.")}</p></div>
+    </section>`;
+}
+
+function soNumberReassignmentRecordRowHtml(entry, selectedQuotationId) {
+  const view = entry.view;
+  const stableId = String(entry.record.id || "");
+  const releaseControl = entry.releaseEligible
+    ? `<label><input type="radio" name="reassign-stale-quotation" value="${escapeHtml(stableId)}" ${selectedQuotationId === stableId ? "checked" : ""} /> ${t("Release stale quotation reference")}</label>`
+    : `<span class="muted-text">${escapeHtml(entry.releaseReason || t("Reference only"))}</span>`;
+  return `<tr>
+    <td>${releaseControl}</td>
+    <td>${escapeHtml(entry.collectionLabel)}<br><span class="muted-text">${escapeHtml(entry.matchReason)}</span></td>
+    <td>${escapeHtml(view.customer || "-")}<br>${escapeHtml(view.phone || "-")}</td>
+    <td>${escapeHtml(view.quotationNo || "-")}<br>${escapeHtml(view.orderNo || "-")}</td>
+    <td>${escapeHtml(view.quotationStatus || view.orderStatus || entry.record.status || "-")}</td>
+    <td>${escapeHtml(view.total === "" ? "-" : view.total)}</td>
+    <td><strong>Q:</strong> ${escapeHtml(view.quotationStableId || "-")}<br><strong>O:</strong> ${escapeHtml(view.orderStableId || "-")}<br><strong>${t("Record")}:</strong> ${escapeHtml(stableId || "-")}</td>
     <td><pre>${escapeHtml(JSON.stringify({ forward: view.forwardLinks, reverse: view.reverseLinks }, null, 2))}</pre></td>
   </tr>`;
 }
@@ -3358,6 +3428,14 @@ function handleOrderToolsClick(event) {
   if (tool === "recover-covered-order-apply") recoverCoveredOrderFromPanel(event.target);
   if (tool === "recover-missing-order-preview") previewMissingConfirmedOrder(event.target);
   if (tool === "recover-missing-order-apply") recoverMissingConfirmedOrderFromPanel(event.target);
+  if (tool === "reassign-so-number") openSoNumberReassignment();
+  if (tool === "reassign-so-number-scan") scanSoNumberReassignmentFromPanel(event.target);
+  if (tool === "reassign-so-number-preview") previewSoNumberReassignment(event.target);
+  if (tool === "reassign-so-number-apply") applySoNumberReassignment(event.target);
+  if (tool === "reassign-so-number-close") {
+    soNumberReassignment = null;
+    renderOrderTools();
+  }
   if (tool === "duplicates" || tool === "duplicates-refresh") {
     if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
     if (tool === "duplicates-refresh" || !duplicateScanVisible) duplicateMainSelections.clear();
@@ -3383,6 +3461,53 @@ function openCoveredOrderRecovery() {
   coveredOrderRecovery = { mode: "search" };
   renderOrderTools();
   setTimeout(() => document.querySelector?.(".covered-order-panel")?.scrollIntoView({ behavior: "smooth", block: "start" }), 25);
+}
+
+function openSoNumberReassignment() {
+  if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+  soNumberReassignment = { desiredOrderNo: "", currentOrderNo: "", scan: null, selectedQuotationId: "", plan: null };
+  renderOrderTools();
+  setTimeout(() => document.querySelector?.("[data-so-reassignment-panel]")?.scrollIntoView({ behavior: "smooth", block: "start" }), 25);
+}
+
+function scanSoNumberReassignmentFromPanel(button) {
+  if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+  const panel = button.closest("[data-so-reassignment-panel]");
+  const desiredOrderNo = normalizeCoveredOrderNo(panel?.querySelector("[data-reassign-desired-so]")?.value);
+  const currentOrderNo = normalizeCoveredOrderNo(panel?.querySelector("[data-reassign-current-so]")?.value);
+  const scan = scanSoNumberReassignment(desiredOrderNo, currentOrderNo);
+  soNumberReassignment = { desiredOrderNo, currentOrderNo, scan, selectedQuotationId: "", plan: null };
+  renderOrderTools();
+  showWorkflowMessage(scan.message, scan.ok ? "success" : "error");
+}
+
+function previewSoNumberReassignment(button) {
+  if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+  const panel = button.closest("[data-so-reassignment-panel]");
+  const staleQuotationId = String(panel?.querySelector('input[name="reassign-stale-quotation"]:checked')?.value || "");
+  const values = {
+    desiredOrderNo: soNumberReassignment?.desiredOrderNo || "",
+    currentOrderNo: soNumberReassignment?.currentOrderNo || "",
+    staleQuotationId
+  };
+  const plan = buildSoNumberReassignmentPlan(values);
+  soNumberReassignment = { ...soNumberReassignment, selectedQuotationId: staleQuotationId, plan };
+  renderOrderTools();
+  showWorkflowMessage(plan.message || (plan.ok ? "Exact before/after preview prepared. No records changed." : "Unable to prepare reassignment preview."), plan.ok ? "success" : "error");
+}
+
+async function applySoNumberReassignment(button) {
+  if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+  const values = {
+    desiredOrderNo: soNumberReassignment?.desiredOrderNo || "",
+    currentOrderNo: soNumberReassignment?.currentOrderNo || "",
+    staleQuotationId: soNumberReassignment?.selectedQuotationId || "",
+    now: soNumberReassignment?.plan?.timestamp || ""
+  };
+  setOrderActionBusy(button, t("Saving..."));
+  const result = await reassignSoNumber(values);
+  if (result.ok) soNumberReassignment = null;
+  renderOrderTools();
 }
 
 function searchCoveredOrderBySo(button) {
@@ -4121,6 +4246,261 @@ function coveredOrderRecordView(collection, record, rows) {
   };
 }
 
+export function scanSoNumberReassignment(desiredOrderNo, currentOrderNo, source = state) {
+  const desired = normalizeCoveredOrderNo(desiredOrderNo);
+  const current = normalizeCoveredOrderNo(currentOrderNo);
+  const rows = coveredOrderCollections(source);
+  if (!desired || !current || !/^SO\d+$/.test(desired) || !/^SO\d+$/.test(current)) {
+    return { ok: false, desiredOrderNo: desired, currentOrderNo: current, records: [], message: "Enter two valid SO numbers." };
+  }
+  if (desired === current) {
+    return { ok: false, desiredOrderNo: desired, currentOrderNo: current, records: [], message: "The desired SO number must differ from the current Order number." };
+  }
+
+  const currentOwners = rows.orders.filter((order) => isActiveOrderRecord(order)
+    && [order.orderNo, order.orderNumber].some((value) => normalizeCoveredOrderNo(value) === current));
+  if (currentOwners.length !== 1 || !String(currentOwners[0]?.id || "")) {
+    return {
+      ok: false,
+      desiredOrderNo: desired,
+      currentOrderNo: current,
+      records: [],
+      currentOwnerIds: currentOwners.map((order) => String(order.id || "missing-id")),
+      message: `${current} must belong to exactly one active Order with a stable ID.`
+    };
+  }
+  const currentOrder = currentOwners[0];
+  const desiredOwners = rows.orders.filter((order) => isActiveOrderRecord(order)
+    && [order.orderNo, order.orderNumber].some((value) => normalizeCoveredOrderNo(value) === desired)
+    && String(order.id || "") !== String(currentOrder.id));
+  const directMatch = (record) => coveredOrderNumberFields(record).some((value) => normalizeCoveredOrderNo(value) === desired);
+  const records = Object.entries(rows).flatMap(([collection, collectionRows]) => collectionRows
+    .filter(directMatch)
+    .map((record) => {
+      const activeLinkedOrders = collection === "quotations" ? exactActiveOrdersForQuotation(record, rows.orders) : [];
+      const unconverted = record.converted !== true && record.convertedToOrder !== true;
+      const archived = record.isArchived === true || !isActiveWorkflowRecord(record);
+      const releaseEligible = collection === "quotations" && Boolean(record.id) && activeLinkedOrders.length === 0 && (archived || unconverted || activeLinkedOrders.length === 0);
+      return {
+        collection,
+        collectionLabel: ({ quotations: "Quotation", orders: "Order", productionJobs: "Production Job", installationJobs: "Installation Job" })[collection],
+        record,
+        matchReason: `Exact ${desired} reference`,
+        releaseEligible,
+        releaseReason: collection !== "quotations"
+          ? "Reference only"
+          : !record.id
+            ? "Missing quotation stable ID"
+            : activeLinkedOrders.length
+              ? `Linked to active Order ${activeLinkedOrders.map((order) => order.id).join(", ")}`
+              : "Eligible stale quotation reference",
+        view: coveredOrderRecordView(collection, record, rows)
+      };
+    }));
+  const eligibleQuotationIds = records.filter((entry) => entry.releaseEligible).map((entry) => String(entry.record.id));
+  const ok = desiredOwners.length === 0 && eligibleQuotationIds.length > 0;
+  return {
+    ok,
+    desiredOrderNo: desired,
+    currentOrderNo: current,
+    currentOrder,
+    currentOrderView: coveredOrderRecordView("orders", currentOrder, rows),
+    desiredActiveOrderIds: desiredOwners.map((order) => String(order.id || "missing-id")),
+    eligibleQuotationIds,
+    records,
+    message: desiredOwners.length
+      ? `${desired} is owned by active Order ${desiredOwners.map((order) => order.id || "missing-id").join(", ")}. Reassignment is blocked.`
+      : !eligibleQuotationIds.length
+        ? `No archived, deleted, unconverted or stale quotation reference can safely release ${desired}.`
+        : `${records.length} exact ${desired} reference(s) found. Select one exact stale quotation reference to release.`
+  };
+}
+
+function exactActiveOrdersForQuotation(quote, orders) {
+  const quoteId = String(quote.id || "");
+  const forwardIds = [quote.orderId, quote.linkedOrderId].filter(Boolean).map(String);
+  return orders.filter((order) => isActiveOrderRecord(order) && (
+    forwardIds.includes(String(order.id || ""))
+    || (quoteId && [order.quoteId, order.quotationId].filter(Boolean).map(String).includes(quoteId))
+  ));
+}
+
+export function buildSoNumberReassignmentPlan(values = {}, source = state) {
+  const staleQuotationId = String(values.staleQuotationId || "").trim();
+  const scan = scanSoNumberReassignment(values.desiredOrderNo, values.currentOrderNo, source);
+  if (!scan.ok) return { ...scan, ok: false };
+  if (!staleQuotationId || !scan.eligibleQuotationIds.includes(staleQuotationId)) {
+    return { ok: false, message: "Select one eligible stale quotation by its exact stable ID." };
+  }
+  const order = scan.currentOrder;
+  const orderId = String(order.id || "");
+  const staleQuote = source.quotations.find((record) => String(record.id || "") === staleQuotationId);
+  if (!staleQuote?.id) return { ok: false, message: "The selected stale quotation stable ID no longer exists." };
+  if ([order.quoteId, order.quotationId].filter(Boolean).map(String).includes(staleQuotationId)
+    || [staleQuote.orderId, staleQuote.linkedOrderId].filter(Boolean).map(String).includes(orderId)) {
+    return { ok: false, message: "The selected stale quotation is exactly linked to the correct active Order. Reassignment is blocked." };
+  }
+
+  const linkedQuotations = source.quotations.filter((quote) => String(quote.id || "") !== staleQuotationId && (
+    [quote.orderId, quote.linkedOrderId].filter(Boolean).map(String).includes(orderId)
+    || [order.quoteId, order.quotationId].filter(Boolean).map(String).includes(String(quote.id || ""))
+  ));
+  const productionJobs = source.productionJobs.filter((job) => String(job.orderId || "") === orderId);
+  const installationJobs = source.installationJobs.filter((job) => String(job.orderId || "") === orderId);
+  const exactLinkedRecords = [...linkedQuotations, ...productionJobs, ...installationJobs];
+  if (exactLinkedRecords.some((record) => !String(record.id || ""))) {
+    return { ok: false, message: "An exact linked record is missing its stable ID. Reassignment is blocked." };
+  }
+
+  const now = String(values.now || new Date().toISOString());
+  const nextState = snapshotOrderWorkflowState(source);
+  const changes = [];
+  const replaceRecord = (collection, stableId, updater) => {
+    nextState[collection] = nextState[collection].map((record) => {
+      if (String(record.id || "") !== String(stableId)) return record;
+      const updated = updater(record);
+      recordFieldChanges(changes, collection, record, updated);
+      return updated;
+    });
+  };
+  replaceRecord("quotations", staleQuotationId, (record) => ({
+    ...record,
+    orderId: "",
+    linkedOrderId: "",
+    orderNo: "",
+    orderNumber: "",
+    converted: false,
+    convertedToOrder: false,
+    releasedOrderNo: scan.desiredOrderNo,
+    releasedAt: now,
+    releasedBy: currentActor(),
+    updatedAt: now
+  }));
+  replaceRecord("orders", orderId, (record) => ({
+    ...record,
+    orderNo: scan.desiredOrderNo,
+    orderNumber: scan.desiredOrderNo,
+    previousOrderNo: scan.currentOrderNo,
+    updatedAt: now
+  }));
+  linkedQuotations.forEach((quote) => replaceRecord("quotations", quote.id, (record) => ({
+    ...record,
+    orderNo: scan.desiredOrderNo,
+    orderNumber: scan.desiredOrderNo,
+    updatedAt: now
+  })));
+  productionJobs.forEach((job) => replaceRecord("productionJobs", job.id, (record) => ({
+    ...record,
+    orderNo: scan.desiredOrderNo,
+    orderNumber: scan.desiredOrderNo
+  })));
+  installationJobs.forEach((job) => replaceRecord("installationJobs", job.id, (record) => ({
+    ...record,
+    orderNo: scan.desiredOrderNo,
+    orderNumber: scan.desiredOrderNo
+  })));
+
+  if (!protectedSoReassignmentPayloadUnchanged(source, nextState)) {
+    return { ok: false, message: "Safety check failed: protected customer, item, financial, status, staff, progress or remark data would change." };
+  }
+  return {
+    ok: true,
+    message: "Exact before/after preview prepared. No records changed.",
+    desiredOrderNo: scan.desiredOrderNo,
+    currentOrderNo: scan.currentOrderNo,
+    timestamp: now,
+    orderId,
+    staleQuotationId,
+    linkedQuotationIds: linkedQuotations.map((record) => String(record.id)),
+    productionJobIds: productionJobs.map((record) => String(record.id)),
+    installationJobIds: installationJobs.map((record) => String(record.id)),
+    changes,
+    nextState
+  };
+}
+
+function protectedSoReassignmentPayloadUnchanged(before, after) {
+  const protectedFields = [
+    "id", "customer", "customerName", "phone", "items", "prices", "unitPrice", "unitPrices", "discount", "subtotal",
+    "total", "grandTotal", "finalTotal", "quotationTotal", "deposit", "payments", "paymentRecords", "paidAmount", "totalPaid",
+    "balance", "remarks", "remark", "status", "isArchived", "archiveReason", "assignedStaff", "staff", "progress", "statusHistory", "history"
+  ];
+  return ["quotations", "orders", "productionJobs", "installationJobs"].every((collection) => {
+    if (before[collection].length !== after[collection].length) return false;
+    return before[collection].every((record) => {
+      const candidate = after[collection].find((row) => String(row.id || "") === String(record.id || ""));
+      return Boolean(candidate) && protectedFields.every((field) => JSON.stringify(record[field]) === JSON.stringify(candidate[field]));
+    });
+  });
+}
+
+export async function reassignSoNumber(values = {}, options = {}) {
+  if (!isBossOrAdmin()) return failWorkflowIntegrityRepair("Permission denied: your role cannot perform this action.");
+  const plan = buildSoNumberReassignmentPlan(values);
+  if (!plan.ok) return failWorkflowIntegrityRepair(plan.message);
+  if (options.downloadBackup !== false && !downloadSoNumberReassignmentBackup(plan)) {
+    return failWorkflowIntegrityRepair("Full JSON backup download failed. No workflow records were changed.");
+  }
+  if (options.confirm !== false) {
+    const confirmation = window.prompt([
+      `Reassign SO Number ${plan.currentOrderNo} to ${plan.desiredOrderNo}`,
+      `Release stale quotation: ${plan.staleQuotationId}`,
+      `Correct active Order: ${plan.orderId}`,
+      `Exact linked Quotations: ${plan.linkedQuotationIds.join(", ") || "none"}`,
+      `Exact linked Production Jobs: ${plan.productionJobIds.join(", ") || "none"}`,
+      `Exact linked Installation Jobs: ${plan.installationJobIds.join(", ") || "none"}`,
+      "Exact before/after field changes:",
+      JSON.stringify(plan.changes, null, 2),
+      "Type REASSIGN SO NUMBER to confirm."
+    ].join("\n"));
+    if (confirmation !== "REASSIGN SO NUMBER") return { ok: false, cancelled: true, message: "SO number reassignment cancelled." };
+  }
+
+  const previousState = snapshotOrderWorkflowState();
+  let localCommitted = false;
+  try {
+    state.quotations = plan.nextState.quotations;
+    state.orders = plan.nextState.orders;
+    state.productionJobs = plan.nextState.productionJobs;
+    state.installationJobs = plan.nextState.installationJobs;
+    const localSave = persistOrderConversionLocally();
+    if (!localSave.ok) {
+      restoreConversionState(previousState);
+      return failWorkflowIntegrityRepair(`Failed to save SO number reassignment locally: ${localSave.reason}`);
+    }
+    localCommitted = true;
+    workflowIntegrityResult = scanWorkflowIntegrity();
+    renderWorkflowModules();
+    showWorkflowMessage("SO number reassignment saved locally. Syncing cloud...", "info");
+    const cloudSync = await syncOrderConversionCollections();
+    if (!cloudSync.ok && !cloudSync.localOnly) {
+      const message = `SO number reassignment saved locally but cloud sync failed: ${cloudSync.reason}`;
+      showWorkflowMessage(message, "warning");
+      return { ok: true, cloudOk: false, changes: plan.changes, message };
+    }
+    showWorkflowMessage(`${plan.currentOrderNo} reassigned to ${plan.desiredOrderNo}.`, "success");
+    return {
+      ok: true,
+      cloudOk: !cloudSync.localOnly,
+      localOnly: cloudSync.localOnly,
+      orderId: plan.orderId,
+      staleQuotationId: plan.staleQuotationId,
+      linkedQuotationIds: plan.linkedQuotationIds,
+      productionJobIds: plan.productionJobIds,
+      installationJobIds: plan.installationJobIds,
+      changes: plan.changes
+    };
+  } catch (error) {
+    if (!localCommitted) {
+      restoreConversionState(previousState);
+      return failWorkflowIntegrityRepair(`SO number reassignment failed before local commit: ${error.message || "Unknown error"}`);
+    }
+    const message = `SO number reassignment saved locally but cloud sync failed: ${error.message || "Unknown cloud error"}`;
+    showWorkflowMessage(message, "warning");
+    return { ok: true, cloudOk: false, changes: plan.changes, message };
+  }
+}
+
 export async function recoverCoveredOrder(values = {}, options = {}) {
   if (!isBossOrAdmin()) return failWorkflowIntegrityRepair("Permission denied: your role cannot perform this action.");
   const plan = planCoveredOrderRecovery(values);
@@ -4576,6 +4956,40 @@ function planCoveredOrderRecovery(values) {
     changes,
     nextState
   };
+}
+
+function downloadSoNumberReassignmentBackup(plan) {
+  try {
+    if (typeof document?.createElement !== "function" || typeof URL?.createObjectURL !== "function") return false;
+    const payload = {
+      type: "eco-screen-crm-v2-full-backup-before-so-number-reassignment",
+      timestamp: new Date().toISOString(),
+      desiredOrderNo: plan.desiredOrderNo,
+      currentOrderNo: plan.currentOrderNo,
+      selectedStableIds: {
+        staleQuotationId: plan.staleQuotationId,
+        orderId: plan.orderId,
+        linkedQuotationIds: plan.linkedQuotationIds,
+        productionJobIds: plan.productionJobIds,
+        installationJobIds: plan.installationJobIds
+      },
+      exactFieldChanges: plan.changes,
+      state: structuredCloneSafe(stateSnapshot())
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `eco-screen-crm-v2-full-backup-before-so-number-reassignment-${backupTimestamp()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    return true;
+  } catch (error) {
+    console.error("SO number reassignment backup failed", error);
+    return false;
+  }
 }
 
 function downloadCoveredOrderBackup(plan) {
@@ -5718,13 +6132,13 @@ export function findOrderByNumber(value) {
   return state.orders.find((order) => isActiveOrderRecord(order) && [order.orderNo, order.orderNumber].some((number) => normalizeRefNo(number) === normalized)) || null;
 }
 
-function snapshotOrderWorkflowState() {
+function snapshotOrderWorkflowState(source = state) {
   return {
-    orders: state.orders,
-    quotations: state.quotations,
-    productionJobs: state.productionJobs,
-    installationJobs: state.installationJobs,
-    warrantyCards: state.warrantyCards
+    orders: source.orders,
+    quotations: source.quotations,
+    productionJobs: source.productionJobs,
+    installationJobs: source.installationJobs,
+    warrantyCards: source.warrantyCards || []
   };
 }
 

@@ -63,6 +63,7 @@ const {
   recoverCoveredOrder,
   recoverMissingConfirmedOrder,
   recordOrderPayment,
+  reassignSoNumber,
   repairProductionDispatchIntegrity,
   repairWorkflowIntegrityIssue,
   repairOrderOwnership,
@@ -85,11 +86,13 @@ const {
   scanWorkflowIntegrity,
   scanCoveredOrderReferences,
   scanMissingConfirmedOrderRecovery,
+  scanSoNumberReassignment,
   searchCoveredOrderQuotations,
   scanDuplicateOrders,
   scanDuplicateProductionJobs,
   sendInstallationToInstaller,
   sendOrderToProduction,
+  buildSoNumberReassignmentPlan,
   updateOrderNumber,
   updateOrderStatus,
   updateQuotationStatus,
@@ -2277,6 +2280,190 @@ assert(uniqueSalesOrders.length === 3 && calculatedTotalSales === 3200
   && uniqueSalesOrders.filter((order) => normalizedFinalOrderTotal(order) === null).map((order) => order.id).join(",") === "sales-invalid",
 "AD5: Total Sales must use one prioritized final amount for each unique active Order and ignore archived records, duplicates, payments, deposits and balances");
 
+resetWorkflowState();
+state.currentUser = { userId: "boss-so-reassign", username: "boss-so-reassign", name: "Boss SO Reassign", role: "Boss", active: true };
+state.role = "Boss";
+const reassignCorrectQuote = {
+  id: "quote-correct-7021",
+  quotationNo: "ESQ-2026-0021",
+  status: "won",
+  orderId: "order-correct-7021",
+  linkedOrderId: "order-correct-7021",
+  orderNo: "SO2607021",
+  orderNumber: "SO2607021",
+  converted: true,
+  convertedToOrder: true,
+  customer: { name: "Correct Customer", phone: "0121111111" },
+  items: [{ product: "Security Screen", quantity: 2, unitPrice: 1000 }],
+  total: 2000,
+  deposit: 500,
+  remarks: "Correct quotation",
+  updatedAt: "2026-07-21T10:00:00.000Z"
+};
+const reassignStaleQuote = {
+  id: "quote-stale-7020",
+  quotationNo: "ESQ-2026-0020",
+  status: "deleted_archived",
+  isArchived: true,
+  archiveReason: "Old audit quotation",
+  orderId: "missing-old-order",
+  linkedOrderId: "missing-old-order",
+  orderNo: "SO2607020",
+  orderNumber: "SO2607020",
+  converted: true,
+  convertedToOrder: true,
+  customer: { name: "Stale Customer", phone: "0122222222" },
+  items: [{ product: "Old Screen", quantity: 1, unitPrice: 888 }],
+  total: 888,
+  deposit: 100,
+  payments: [{ id: "stale-payment", amount: 100 }],
+  balance: 788,
+  remarks: "Preserve stale audit payload",
+  updatedAt: "2026-07-20T10:00:00.000Z"
+};
+const reassignSameNameNoReference = {
+  id: "quote-same-name-no-reference",
+  quotationNo: "ESQ-2026-0099",
+  status: "quoted",
+  customer: { name: "Correct Customer", phone: "0199999999" },
+  items: [{ product: "Unrelated", quantity: 1, unitPrice: 50 }],
+  total: 50,
+  remarks: "Must never match by customer name",
+  updatedAt: "2026-07-20T10:00:00.000Z"
+};
+const reassignCorrectOrder = {
+  id: "order-correct-7021",
+  orderNo: "SO2607021",
+  orderNumber: "SO2607021",
+  quoteId: reassignCorrectQuote.id,
+  quotationId: reassignCorrectQuote.id,
+  quoteNumber: reassignCorrectQuote.quotationNo,
+  quotationNo: reassignCorrectQuote.quotationNo,
+  status: "Sent to Production",
+  customer: { name: "Correct Customer", phone: "0121111111" },
+  items: structuredClone(reassignCorrectQuote.items),
+  total: 2000,
+  deposit: 500,
+  payments: [{ id: "correct-payment", amount: 500 }],
+  balance: 1500,
+  remarks: "Correct order",
+  updatedAt: "2026-07-21T10:00:00.000Z"
+};
+const reassignProduction = {
+  id: "production-correct-7021",
+  orderId: reassignCorrectOrder.id,
+  orderNo: "SO2607021",
+  orderNumber: "SO2607021",
+  status: "in_production",
+  assignedStaff: ["production-a"],
+  items: structuredClone(reassignCorrectQuote.items),
+  remarks: "Preserve production progress",
+  statusHistory: [{ status: "in_production" }]
+};
+const numberOnlyProduction = { id: "production-number-only-7020", orderNo: "SO2607020", orderNumber: "SO2607020", status: "not_produced", remarks: "Reference only; do not relink" };
+const reassignInstallation = {
+  id: "installation-correct-7021",
+  orderId: reassignCorrectOrder.id,
+  orderNo: "SO2607021",
+  orderNumber: "SO2607021",
+  status: "scheduled",
+  assignedStaff: ["installer-a"],
+  items: structuredClone(reassignCorrectQuote.items),
+  remarks: "Preserve installation progress",
+  history: [{ status: "scheduled" }]
+};
+state.quotations = [reassignCorrectQuote, reassignStaleQuote, reassignSameNameNoReference];
+state.orders = [reassignCorrectOrder];
+state.productionJobs = [reassignProduction, numberOnlyProduction];
+state.installationJobs = [reassignInstallation];
+const reassignBefore = structuredClone({
+  quotations: state.quotations,
+  orders: state.orders,
+  productionJobs: state.productionJobs,
+  installationJobs: state.installationJobs
+});
+const reassignScan = scanSoNumberReassignment("SO2607020", "SO2607021");
+assert(reassignScan.ok && reassignScan.currentOrder.id === reassignCorrectOrder.id
+  && reassignScan.eligibleQuotationIds.join(",") === reassignStaleQuote.id
+  && reassignScan.records.some((entry) => entry.record.id === numberOnlyProduction.id),
+"AE1: Reassign SO scan must find one exact active current Order and every exact desired-number reference");
+const reassignPlan = buildSoNumberReassignmentPlan({
+  desiredOrderNo: "SO2607020",
+  currentOrderNo: "SO2607021",
+  staleQuotationId: reassignStaleQuote.id,
+  now: "2026-07-22T10:00:00.000Z"
+});
+assert(reassignPlan.ok && reassignPlan.orderId === reassignCorrectOrder.id
+  && reassignPlan.linkedQuotationIds.join(",") === reassignCorrectQuote.id
+  && reassignPlan.productionJobIds.join(",") === reassignProduction.id
+  && reassignPlan.installationJobIds.join(",") === reassignInstallation.id,
+"AE2: preview must resolve every changing record by exact stable ID and exact orderId");
+const reassignResult = await reassignSoNumber({
+  desiredOrderNo: "SO2607020",
+  currentOrderNo: "SO2607021",
+  staleQuotationId: reassignStaleQuote.id,
+  now: "2026-07-22T10:00:00.000Z"
+}, { downloadBackup: false, confirm: false });
+assert(reassignResult.ok, "AE3: Boss must be able to reassign the released desired SO to the exact active Order");
+const releasedQuote = state.quotations.find((record) => record.id === reassignStaleQuote.id);
+const reassignedQuote = state.quotations.find((record) => record.id === reassignCorrectQuote.id);
+const reassignedOrder = state.orders.find((record) => record.id === reassignCorrectOrder.id);
+assert(releasedQuote.orderId === "" && releasedQuote.linkedOrderId === "" && releasedQuote.orderNo === "" && releasedQuote.orderNumber === ""
+  && releasedQuote.converted === false && releasedQuote.convertedToOrder === false && releasedQuote.releasedOrderNo === "SO2607020"
+  && releasedQuote.releasedBy === "Boss SO Reassign" && releasedQuote.status === "deleted_archived" && releasedQuote.isArchived === true,
+"AE4: the selected stale quotation must release only relationship fields while preserving its archive state and audit record");
+assert(reassignedOrder.orderNo === "SO2607020" && reassignedOrder.orderNumber === "SO2607020" && reassignedOrder.previousOrderNo === "SO2607021"
+  && reassignedQuote.orderNo === "SO2607020" && reassignedQuote.orderNumber === "SO2607020" && reassignedQuote.orderId === reassignCorrectOrder.id
+  && state.productionJobs.find((record) => record.id === reassignProduction.id).orderNo === "SO2607020"
+  && state.installationJobs.find((record) => record.id === reassignInstallation.id).orderNo === "SO2607020",
+"AE5: the exact Order, linked Quotation, Production and Installation references must receive the desired SO number");
+assert(JSON.stringify({ customer: releasedQuote.customer, items: releasedQuote.items, total: releasedQuote.total, deposit: releasedQuote.deposit, payments: releasedQuote.payments, balance: releasedQuote.balance, remarks: releasedQuote.remarks })
+    === JSON.stringify({ customer: reassignStaleQuote.customer, items: reassignStaleQuote.items, total: reassignStaleQuote.total, deposit: reassignStaleQuote.deposit, payments: reassignStaleQuote.payments, balance: reassignStaleQuote.balance, remarks: reassignStaleQuote.remarks })
+  && JSON.stringify({ customer: reassignedOrder.customer, items: reassignedOrder.items, total: reassignedOrder.total, deposit: reassignedOrder.deposit, payments: reassignedOrder.payments, balance: reassignedOrder.balance, remarks: reassignedOrder.remarks })
+    === JSON.stringify({ customer: reassignCorrectOrder.customer, items: reassignCorrectOrder.items, total: reassignCorrectOrder.total, deposit: reassignCorrectOrder.deposit, payments: reassignCorrectOrder.payments, balance: reassignCorrectOrder.balance, remarks: reassignCorrectOrder.remarks })
+  && JSON.stringify(state.quotations.find((record) => record.id === reassignSameNameNoReference.id)) === JSON.stringify(reassignSameNameNoReference)
+  && state.productionJobs.find((record) => record.id === numberOnlyProduction.id).orderNo === "SO2607020",
+"AE6: customer, item and financial data must remain unchanged and neither customer-name nor number-only records may be relinked");
+assert(nextSalesOrderNumber(new Date("2026-07-22T12:00:00.000Z")) === "SO2607022",
+  "AE7: previousOrderNo must keep the issued SO high-water mark so SO2607021 is not automatically issued again");
+const persistedReassignedOrders = JSON.parse(localStorage.getItem("ecoScreenV2.orders") || "[]");
+assert(persistedReassignedOrders.find((record) => record.id === reassignCorrectOrder.id)?.orderNo === "SO2607020",
+  "AE8: refresh storage must preserve the reassigned SO number");
+applyCloudSnapshot({
+  quotations: reassignBefore.quotations.map((record) => ({ ...record, updatedAt: "2020-01-01T00:00:00.000Z" })),
+  orders: reassignBefore.orders.map((record) => ({ ...record, updatedAt: "2020-01-01T00:00:00.000Z" })),
+  productionJobs: reassignBefore.productionJobs.map((record) => ({ ...record, updatedAt: "2020-01-01T00:00:00.000Z" })),
+  installationJobs: reassignBefore.installationJobs.map((record) => ({ ...record, updatedAt: "2020-01-01T00:00:00.000Z" }))
+});
+assert(state.orders.find((record) => record.id === reassignCorrectOrder.id)?.orderNo === "SO2607020"
+  && state.quotations.find((record) => record.id === reassignStaleQuote.id)?.releasedOrderNo === "SO2607020",
+"AE9: stale cloud roundtrip must not reverse a successful SO reassignment");
+state.quotations = structuredClone(reassignBefore.quotations);
+state.orders = [...structuredClone(reassignBefore.orders), { id: "order-genuine-owner-7020", orderNo: "SO2607020", orderNumber: "SO2607020", status: "Confirmed", customer: { name: "Genuine Owner" }, total: 3000 }];
+state.productionJobs = structuredClone(reassignBefore.productionJobs);
+state.installationJobs = structuredClone(reassignBefore.installationJobs);
+const blockedReassignState = JSON.stringify({ quotations: state.quotations, orders: state.orders, productionJobs: state.productionJobs, installationJobs: state.installationJobs });
+const blockedReassign = buildSoNumberReassignmentPlan({ desiredOrderNo: "SO2607020", currentOrderNo: "SO2607021", staleQuotationId: reassignStaleQuote.id });
+assert(!blockedReassign.ok && blockedReassign.message.includes("owned by active Order")
+  && JSON.stringify({ quotations: state.quotations, orders: state.orders, productionJobs: state.productionJobs, installationJobs: state.installationJobs }) === blockedReassignState,
+"AE10: another genuine active owner of the desired SO must block reassignment without changing data");
+state.quotations = structuredClone(reassignBefore.quotations);
+state.orders = structuredClone(reassignBefore.orders);
+state.productionJobs = structuredClone(reassignBefore.productionJobs);
+state.installationJobs = structuredClone(reassignBefore.installationJobs);
+const rollbackReassignState = JSON.stringify({ quotations: state.quotations, orders: state.orders, productionJobs: state.productionJobs, installationJobs: state.installationJobs });
+const originalStorageSetItem = localStorage.setItem.bind(localStorage);
+localStorage.setItem = () => { throw new Error("Simulated local storage failure"); };
+let failedReassign;
+try {
+  failedReassign = await reassignSoNumber({ desiredOrderNo: "SO2607020", currentOrderNo: "SO2607021", staleQuotationId: reassignStaleQuote.id }, { downloadBackup: false, confirm: false });
+} finally {
+  localStorage.setItem = originalStorageSetItem;
+}
+assert(!failedReassign.ok
+  && JSON.stringify({ quotations: state.quotations, orders: state.orders, productionJobs: state.productionJobs, installationJobs: state.installationJobs }) === rollbackReassignState,
+"AE11: local persistence failure must roll back the complete SO reassignment transaction before cloud sync");
+
 const quotationSource = await readFile(new URL("../src/quotations.js", import.meta.url), "utf8");
 assert(quotationSource.includes("canonicalSelectOptions(COLOR_VALUES")
   && quotationSource.includes("canonicalSelectOptions(OPENING_DIRECTION_VALUES")
@@ -2338,4 +2525,5 @@ console.log([
   ,"Separate Order dispatch board, Production work stages and safe exact-ID integrity repair: passed"
   ,"Dedicated A4 Production Sheet isolation, exact IDs, fixed table and print footer: passed"
   ,"Reusable Duplicate Quotation, independent project/address, safe field whitelist and rollback: passed"
+  ,"Boss/Admin exact-ID SO number reassignment, stale release and sequence safety: passed"
 ].join("\n"));
