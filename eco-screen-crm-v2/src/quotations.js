@@ -655,8 +655,8 @@ function quotationListRowHtml(quote, cloudIsLoading, tab) {
     return `
       <article class="quote-row">
         <div class="quote-row-summary">
-          <span><strong>${escapeHtml(getQuotationDisplayNo(quote))}</strong><small>${escapeHtml(quote.customer?.name || "-")} | ${t("Deleted Quotations")}</small><small>${t("Location / Project Name")}: ${escapeHtml(quotationProjectName(quote) || "-")}</small></span>
-          <span>${money(quote.total || 0)}</span>
+          <span class="quote-record-heading"><strong class="quote-number">${escapeHtml(getQuotationDisplayNo(quote))}</strong><small class="quote-customer-status"><span class="quote-customer">${escapeHtml(quote.customer?.name || "-")}</span><span class="quote-status">| ${t("Deleted Quotations")}</span></small><small class="quote-location">${t("Location / Project Name")}: ${escapeHtml(quotationProjectName(quote) || "-")}</small></span>
+          <span class="quote-amount">${money(quote.total || 0)}</span>
         </div>
         <button class="btn" type="button" data-restore-quote="${escapeHtml(quote.id || "")}">${t("Restore Quotation")}</button>
       </article>
@@ -669,8 +669,8 @@ function quotationListRowHtml(quote, cloudIsLoading, tab) {
   return `
     <article class="quote-row">
       <button type="button" data-open-quote="${quote.id}">
-        <span><strong>${escapeHtml(getQuotationDisplayNo(quote))}</strong><small>${escapeHtml(quote.customer.name || "-")} | ${statusLabel(quote.status)}</small><small>${t("Location / Project Name")}: ${escapeHtml(quotationProjectName(quote) || "-")}</small>${action.warning ? `<small class="warning-text">${t(action.warning)}</small>` : ""}</span>
-        <span>${money(quote.total || 0)}</span>
+        <span class="quote-record-heading"><strong class="quote-number">${escapeHtml(getQuotationDisplayNo(quote))}</strong><small class="quote-customer-status"><span class="quote-customer">${escapeHtml(quote.customer.name || "-")}</span><span class="quote-status">| ${statusLabel(quote.status)}</span></small><small class="quote-location">${t("Location / Project Name")}: ${escapeHtml(quotationProjectName(quote) || "-")}</small>${action.warning ? `<small class="warning-text">${t(action.warning)}</small>` : ""}</span>
+        <span class="quote-amount">${money(quote.total || 0)}</span>
       </button>
       ${action.order
         ? `<button class="btn primary" type="button" data-open-linked-order="${quote.id}">${t("Open Order")}: ${escapeHtml(orderNumber || "-")}</button>`
