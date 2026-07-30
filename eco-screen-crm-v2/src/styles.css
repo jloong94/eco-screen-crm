@@ -311,7 +311,7 @@ input:focus, select:focus, textarea:focus {
   gap: 12px;
   min-width: 0;
 }
-.quote-row > button:first-child {
+.quote-row-open {
   flex: 1 1 420px;
   display: flex;
   justify-content: space-between;
@@ -324,10 +324,19 @@ input:focus, select:focus, textarea:focus {
   cursor: pointer;
   min-width: 0;
 }
+.quote-row-contact {
+  display: grid;
+  flex: 0 0 auto;
+  justify-items: end;
+  align-content: start;
+  gap: 6px;
+}
 .quote-record-heading { min-width: 0; }
 .quote-number,
 .quote-status,
 .quote-amount,
+.quote-phone,
+.quote-phone a,
 .quote-row > [data-duplicate-quote],
 .quote-row > [data-delete-quote],
 .quote-row > [data-restore-quote],
@@ -336,6 +345,20 @@ input:focus, select:focus, textarea:focus {
   word-break: normal;
   overflow-wrap: normal;
 }
+.quote-phone {
+  display: flex !important;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.quote-phone a {
+  color: var(--accent-strong);
+  font-weight: 700;
+  text-decoration: none;
+}
+.quote-phone a:hover,
+.quote-phone a:focus-visible { text-decoration: underline; }
 .quote-customer-status {
   display: flex !important;
   flex-wrap: wrap;
@@ -1299,11 +1322,16 @@ input:focus, select:focus, textarea:focus {
     flex-direction: column;
     align-items: stretch;
   }
-  .quote-row > button:first-child,
+  .quote-row-open,
   .quote-row-summary {
     width: 100%;
     flex: 1 1 auto;
     flex-direction: column;
+  }
+  .quote-row-open { align-items: stretch; }
+  .quote-row-contact {
+    width: 100%;
+    justify-items: start;
   }
   .quote-list { overflow-x: visible; }
   .quote-row > .btn {
