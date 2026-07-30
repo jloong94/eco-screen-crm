@@ -186,6 +186,9 @@ export async function convertQuoteToOrder(quoteId) {
     const quoteDisplayNo = ensureQuotationDisplayNo(quote);
     const order = existing || createOrderFromQuote(quote);
     if (!order) return failConversion("Failed to save order.");
+    if (!existing && isIssuedSalesOrderNumber(getOrderDisplayNo(order))) {
+      return failConversion(`Order number ${getOrderDisplayNo(order)} is already issued. No Order was created.`);
+    }
     const now = new Date().toISOString();
     const workflowJobs = upsertWorkflowJobsForOrder(order, state.productionJobs, state.installationJobs);
     const linkedOrder = {
@@ -302,27 +305,68 @@ function customerFromQuotation(quote = {}) {
 }
 
 export function nextSalesOrderNumber(date = new Date()) {
-  const year = String(date.getFullYear()).slice(-2);
-  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const { year, month } = malaysiaSalesOrderPeriod(date);
   const prefix = `SO${year}${month}`;
-  const references = state.orders.flatMap((order) => [order.orderNo, order.orderNumber, order.previousOrderNo]).filter(Boolean);
-  const usedNumbers = new Set(references.map(normalizeRefNo).filter(Boolean));
+  const references = issuedSalesOrderReferences();
+  const usedNumbers = new Set(references.map(salesOrderNumberIdentity).filter(Boolean));
   const highest = references
     .map((number) => monthlyOrderSequence(number, year, month))
     .filter((number) => Number.isInteger(number) && number > 0)
     .reduce((max, number) => Math.max(max, number), 0);
   let next = highest + 1;
   let orderNumber = `${prefix}${String(next).padStart(3, "0")}`;
-  while (usedNumbers.has(orderNumber)) {
+  while (usedNumbers.has(salesOrderNumberIdentity(orderNumber))) {
     next += 1;
     orderNumber = `${prefix}${String(next).padStart(3, "0")}`;
   }
   return orderNumber;
 }
 
+export function malaysiaSalesOrderPeriod(date = new Date()) {
+  const instant = date instanceof Date ? date : new Date(date);
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kuala_Lumpur",
+    year: "2-digit",
+    month: "2-digit"
+  }).formatToParts(instant);
+  return {
+    year: parts.find((part) => part.type === "year")?.value || "",
+    month: parts.find((part) => part.type === "month")?.value || ""
+  };
+}
+
+function issuedSalesOrderReferences(source = state) {
+  const collections = [source.orders, source.productionJobs, source.installationJobs, source.warrantyCards];
+  const workflowReferences = collections.flatMap((rows) => (Array.isArray(rows) ? rows : []).flatMap((record) => [
+    record?.orderNo,
+    record?.orderNumber,
+    record?.previousOrderNo,
+    record?.previousOrderNumber
+  ])).filter(Boolean);
+  const convertedQuotationReferences = (Array.isArray(source.quotations) ? source.quotations : [])
+    .filter((quote) => quote?.converted === true || quote?.convertedToOrder === true || quote?.orderId || quote?.linkedOrderId)
+    .flatMap((quote) => [quote.orderNo, quote.orderNumber])
+    .filter(Boolean);
+  return [...workflowReferences, ...convertedQuotationReferences];
+}
+
+function salesOrderNumberIdentity(value) {
+  const compact = normalizeRefNo(value).replace(/[\s-]+/g, "");
+  const match = compact.match(/^SO(\d{2})(\d{2})(\d+)$/);
+  if (!match) return "";
+  const sequence = Number(match[3]);
+  if (!Number.isSafeInteger(sequence) || sequence < 1) return "";
+  return `SO${match[1]}${match[2]}${String(sequence).padStart(3, "0")}`;
+}
+
+function isIssuedSalesOrderNumber(value, source = state) {
+  const identity = salesOrderNumberIdentity(value);
+  return Boolean(identity) && issuedSalesOrderReferences(source).some((reference) => salesOrderNumberIdentity(reference) === identity);
+}
+
 export function monthlyOrderSequence(value, year, month) {
-  const compact = normalizeRefNo(value).replace(/\s+/g, "");
-  const match = compact.match(new RegExp(`^SO-?${year}${month}-?(\\d+)$`));
+  const compact = salesOrderNumberIdentity(value);
+  const match = compact.match(new RegExp(`^SO${year}${month}(\\d+)$`));
   if (!match) return 0;
   const sequence = Number(match[1]);
   return Number.isSafeInteger(sequence) && sequence > 0 ? sequence : 0;

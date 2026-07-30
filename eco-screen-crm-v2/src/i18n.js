@@ -94,7 +94,7 @@ const zh = {
   "Quotation Number": "报价号码",
   "Quotation Status": "报价状态",
   "Customer Name": "顾客名字",
-  Phone: "电话",
+  Phone: "手机号码",
   Area: "地区",
   "Appointment Date": "预约日期",
   Address: "地址",

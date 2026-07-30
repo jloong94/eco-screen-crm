@@ -44,6 +44,7 @@ const {
   duplicateArchiveActionHtml,
   findExistingOrderForQuote,
   findOrderByNumber,
+  malaysiaSalesOrderPeriod,
   monthlyOrderSequence,
   nextSalesOrderNumber,
   quotationOrderAction,
@@ -105,6 +106,7 @@ const {
   quoteDocumentHtml,
   quotationArchiveEligibility,
   quotationProjectName,
+  quotationListRowHtml,
   quotationsForTab,
   restoreQuotation
 } = await import("../src/quotations.js");
@@ -204,16 +206,62 @@ state.orders.push({ id: "new-999", orderNo: "SO2607999" });
 assert(nextSalesOrderNumber(new Date("2026-07-14T00:00:00Z")) === "SO26071000", "Numbering: sequence should continue beyond 999");
 assert(monthlyOrderSequence("SO-2607-009", "26", "07") === 9, "Numbering: old dashed format should parse");
 assert(monthlyOrderSequence("SO2607010", "26", "07") === 10, "Numbering: new compact format should parse");
+assert(malaysiaSalesOrderPeriod(new Date("2026-07-31T15:59:59.999Z")).month === "07"
+  && malaysiaSalesOrderPeriod(new Date("2026-07-31T16:00:00.000Z")).month === "08",
+"Numbering: Malaysia calendar month must control the boundary at UTC+8");
+state.orders = [{ id: "july-issued-20", orderNo: "SO2607020", status: "Confirmed" }];
+assert(nextSalesOrderNumber(new Date("2026-07-15T12:00:00.000Z")) === "SO2607021",
+"Numbering: July must continue from the highest issued SO2607 sequence");
+state.orders = [];
+state.productionJobs = [];
+state.installationJobs = [];
+state.warrantyCards = [];
+assert(nextSalesOrderNumber(new Date("2026-07-31T16:00:00.000Z")) === "SO2608001",
+"Numbering: the first unused Malaysia-August SO must be SO2608001");
+state.orders = [{ id: "august-active-1", orderNo: "SO2608001", status: "Confirmed" }];
+assert(nextSalesOrderNumber(new Date("2026-07-31T16:00:00.000Z")) === "SO2608002",
+"Numbering: an existing compact SO2608001 must force SO2608002");
+state.orders = [{ id: "august-issued-1", orderNo: "SO-2608-001", status: "cancelled_archived", isArchived: true }];
+assert(nextSalesOrderNumber(new Date("2026-07-31T16:00:00.000Z")) === "SO2608002",
+"Numbering: archived dashed-format SO2608001 must remain issued and force SO2608002");
+state.orders = [];
+state.productionJobs = [{ id: "august-production-audit", orderNo: "SO2608001", status: "duplicate_archived", isArchived: true }];
+assert(nextSalesOrderNumber(new Date("2026-07-31T16:00:00.000Z")) === "SO2608002",
+"Numbering: archived workflow audit references must prevent reuse of an issued SO");
 resetWorkflowState();
+
+const phoneListQuote = validQuote("ESQ-PHONE", "Phone Customer");
+phoneListQuote.customer.phone = "017 123 4567";
+for (const tab of ["quoted", "follow_up", "won", "lost"]) {
+  phoneListQuote.status = tab;
+  const rowHtml = quotationListRowHtml(phoneListQuote, false, tab);
+  assert(rowHtml.includes("Phone:") && rowHtml.includes('href="tel:017 123 4567"') && rowHtml.includes(">017 123 4567</a>"),
+    `Quotation phone: ${tab} list must show the exact full phone as a tel link`);
+}
+phoneListQuote.status = "deleted_archived";
+phoneListQuote.isArchived = true;
+const deletedPhoneRow = quotationListRowHtml(phoneListQuote, false, "deleted_archived");
+assert(deletedPhoneRow.includes("Phone:") && deletedPhoneRow.includes('href="tel:017 123 4567"'),
+  "Quotation phone: Deleted Quotations must show the exact full phone as a tel link");
+state.language = "zh";
+assert(t("Phone") === "手机号码" && quotationListRowHtml(phoneListQuote, false, "deleted_archived").includes("手机号码:"),
+  "Quotation phone: Chinese list label must be 手机号码");
+state.language = "en";
 
 const quoteA = validQuote("TEST-A", "Customer A");
 quoteA.items[0].unitPrice = "125.50";
 state.quotations = [quoteA];
+const quoteOnlyNextSo = nextSalesOrderNumber(new Date("2026-08-15T12:00:00.000Z"));
+nextQuoteNumber(state.quotations, new Date("2026-08-15T12:00:00.000Z"));
+assert(nextSalesOrderNumber(new Date("2026-08-15T12:00:00.000Z")) === quoteOnlyNextSo,
+  "Numbering: saving or numbering a Quotation must not consume an SO number");
 assert(!quotationOrderAction(quoteA).canConvert, "A0: Quoted quotation must hide conversion");
 const quotedConversion = await convertQuoteToOrder(quoteA.id);
 assert(!quotedConversion.ok && state.orders.length === 0, "A0: non-Won quotation must not convert");
 const wonStatus = await updateQuotationStatus(quoteA.id, "won");
 assert(wonStatus.ok && quotationOrderAction(state.quotations[0]).canConvert, "A0: saving Won should enable conversion");
+assert(nextSalesOrderNumber(new Date("2026-08-15T12:00:00.000Z")) === quoteOnlyNextSo,
+  "Numbering: changing Quotation status must not consume an SO number");
 const first = await convertQuoteToOrder(quoteA.id);
 assert(first.ok, "A: valid quotation should convert");
 assert(state.orders.length === 1, "A: exactly one order should be created");
@@ -251,8 +299,9 @@ const concurrent = await Promise.all([
 assert(concurrent.some((result) => result.ok), "C: one concurrent conversion should succeed");
 assert(state.orders.filter((order) => order.quoteId === quoteB.id).length === 1, "C: concurrent clicks must create one order only");
 assert(new Set(state.orders.map((order) => order.orderNo)).size === state.orders.length, "C: order numbers must be unique");
-const firstSequence = monthlyOrderSequence(state.orders.find((order) => order.quoteId === quoteA.id).orderNo, String(new Date().getFullYear()).slice(-2), String(new Date().getMonth() + 1).padStart(2, "0"));
-const secondSequence = monthlyOrderSequence(state.orders.find((order) => order.quoteId === quoteB.id).orderNo, String(new Date().getFullYear()).slice(-2), String(new Date().getMonth() + 1).padStart(2, "0"));
+const currentMalaysiaPeriod = malaysiaSalesOrderPeriod(new Date());
+const firstSequence = monthlyOrderSequence(state.orders.find((order) => order.quoteId === quoteA.id).orderNo, currentMalaysiaPeriod.year, currentMalaysiaPeriod.month);
+const secondSequence = monthlyOrderSequence(state.orders.find((order) => order.quoteId === quoteB.id).orderNo, currentMalaysiaPeriod.year, currentMalaysiaPeriod.month);
 assert(secondSequence === firstSequence + 1, "C: the next quotation should receive the next monthly order sequence");
 
 const emptyQuote = validQuote("TEST-EMPTY", "Empty Quote");
