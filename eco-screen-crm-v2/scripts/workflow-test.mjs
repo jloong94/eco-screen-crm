@@ -54,6 +54,7 @@ const {
   getOrderDispatchState,
   productionJobMatchesSearch,
   productionWorkStageCounts,
+  productionSheetContactDetails,
   productionSheetPrintHtml,
   productionJobsForCurrentView,
   productionJobsForDisplay,
@@ -1985,7 +1986,12 @@ const productionPrintOrder = {
   orderNumber: "SO2607999",
   quoteNumber: "ESQ-2026-PRINT",
   quotationNo: "ESQ-2026-PRINT",
+  quoteId: "quote-production-print-exact",
+  quotationId: "quote-production-print-exact",
   customer: { name: "Print & Customer", phone: "0123456789" },
+  phone: "0123456789",
+  projectName: "Order Project",
+  siteAddress: "Order Site Address",
   installationDate: "2026-07-30",
   items: []
 };
@@ -2015,10 +2021,39 @@ const productionPrintJob = {
   remark: "Check all dimensions before production.",
   items: productionPrintItems
 };
+const productionPrintSource = {
+  installationJobs: [{
+    id: "installation-production-print-exact",
+    orderId: productionPrintOrder.id,
+    phone: "0191112222",
+    projectName: "Installer Project",
+    address: "24 Installer Street, Bukit Mertajam, Penang",
+    installationDate: "2026-07-30",
+    installationRemarks: "Call customer before arrival.",
+    status: "sent_to_installer",
+    isArchived: false
+  }, {
+    id: "installation-same-so-wrong-order",
+    orderId: "order-unrelated",
+    orderNo: productionPrintOrder.orderNo,
+    phone: "0110000000",
+    address: "Wrong address selected by SO matching",
+    installationDate: "2026-08-01",
+    status: "sent_to_installer",
+    isArchived: false
+  }],
+  quotations: [{
+    id: "quote-production-print-exact",
+    orderId: productionPrintOrder.id,
+    phone: "0183334444",
+    projectName: "Quotation Project",
+    siteAddress: "Quotation Site Address"
+  }]
+};
 const productionPrintHtml = productionSheetPrintHtml(productionPrintJob, productionPrintOrder, {
   companyName: "Eco Screen Sdn Bhd",
   companyPhone: "0195763499"
-});
+}, productionPrintSource);
 assert(productionPrintHtml.includes('class="production-sheet"')
   && productionPrintHtml.includes('data-production-job-id="production-print-exact"')
   && productionPrintHtml.includes('data-order-id="order-production-print-exact"'),
@@ -2029,6 +2064,50 @@ assert(productionPrintHtml.includes("Order No: SO2607999")
   && productionPrintHtml.includes("2026-07-30")
   && productionPrintHtml.includes("In Production"),
 "AB1: Production Sheet must print the exact SO, customer, quotation, installation date and production status");
+assert(productionPrintHtml.includes("Phone")
+  && productionPrintHtml.includes('href="tel:0191112222"')
+  && productionPrintHtml.includes("Installer Project")
+  && productionPrintHtml.includes("24 Installer Street, Bukit Mertajam, Penang")
+  && productionPrintHtml.includes("Call customer before arrival.")
+  && !productionPrintHtml.includes("Wrong address selected by SO matching"),
+"AB1: Production Sheet must show the exact linked Installation contact, project, address and remark without SO-only matching");
+const productionPrintContact = productionSheetContactDetails(productionPrintJob, productionPrintOrder, productionPrintSource);
+assert(productionPrintContact.installation?.id === "installation-production-print-exact"
+  && productionPrintContact.quotation?.id === "quote-production-print-exact"
+  && productionPrintContact.phone === "0191112222"
+  && productionPrintContact.address === "24 Installer Street, Bukit Mertajam, Penang"
+  && productionPrintContact.project === "Installer Project"
+  && productionPrintContact.installationDate === "2026-07-30",
+"AB1: exact Installation fields must take priority over exact Order and Quotation fallbacks");
+const productionOrderFallback = productionSheetContactDetails(productionPrintJob, productionPrintOrder, {
+  installationJobs: [],
+  quotations: productionPrintSource.quotations
+});
+assert(productionOrderFallback.phone === "0123456789"
+  && productionOrderFallback.address === "Order Site Address"
+  && productionOrderFallback.project === "Order Project"
+  && productionOrderFallback.installationDate === "",
+"AB1: a missing exact Installation must safely fall back to exact Order fields");
+const quotationFallbackOrder = {
+  ...productionPrintOrder,
+  phone: "",
+  customer: { name: "Print & Customer", phone: "", area: "" },
+  projectName: "",
+  siteAddress: ""
+};
+const productionQuotationFallback = productionSheetContactDetails(productionPrintJob, quotationFallbackOrder, {
+  installationJobs: [],
+  quotations: productionPrintSource.quotations
+});
+const productionQuotationFallbackHtml = productionSheetPrintHtml(productionPrintJob, quotationFallbackOrder, {
+  companyName: "Eco Screen Sdn Bhd",
+  companyPhone: "0195763499"
+}, { installationJobs: [], quotations: productionPrintSource.quotations });
+assert(productionQuotationFallback.phone === "0183334444"
+  && productionQuotationFallback.address === "Quotation Site Address"
+  && productionQuotationFallback.project === "Quotation Project"
+  && productionQuotationFallbackHtml.includes("Not arranged"),
+"AB1: missing Installation and Order contact fields must fall back to the exact Quotation and show Not arranged");
 assert((productionPrintHtml.match(/data-production-item-row/g) || []).length === 3
   && productionPrintHtml.includes(">Product</th>")
   && productionPrintHtml.includes(">Installation Location</th>")
@@ -2057,14 +2136,17 @@ assert(productionPrintCss.includes("table-layout: fixed !important")
   && productionPrintCss.includes("page-break-inside: avoid")
   && productionPrintCss.includes(".production-col-remark { width: 21mm; }")
   && !productionPrintCss.includes(".production-col-handle-position")
-  && productionPrintCss.includes(".production-sheet-footer"),
+  && productionPrintCss.includes(".production-sheet-footer")
+  && productionPrintCss.includes(".production-sheet-meta > .production-sheet-meta-wide")
+  && productionPrintCss.includes(".production-sheet-phone-print")
+  && productionPrintCss.includes("white-space: nowrap"),
 "AB3: Production print CSS must fill the printable width, wrap long cells, keep rows intact and retain the signature footer");
 
 state.language = "zh";
 const chineseProductionPrintHtml = productionSheetPrintHtml(productionPrintJob, productionPrintOrder, {
   companyName: "Eco Screen Sdn Bhd",
   companyPhone: "0195763499"
-});
+}, productionPrintSource);
 assert(chineseProductionPrintHtml.includes(">生产单<")
   && chineseProductionPrintHtml.includes(">产品</th>")
   && chineseProductionPrintHtml.includes(">安装位置</th>")
@@ -2072,8 +2154,14 @@ assert(chineseProductionPrintHtml.includes(">生产单<")
   && chineseProductionPrintHtml.includes(">旧值: Sliding Right</td>")
   && chineseProductionPrintHtml.includes("制单人")
   && chineseProductionPrintHtml.includes("审核人")
+  && chineseProductionPrintHtml.includes("手机号码")
+  && chineseProductionPrintHtml.includes("地点／项目")
+  && chineseProductionPrintHtml.includes("安装地址")
+  && chineseProductionPrintHtml.includes("安装备注")
   && !chineseProductionPrintHtml.includes("Production Sheet")
   && !chineseProductionPrintHtml.includes("Customer Name")
+  && !chineseProductionPrintHtml.includes("Installation Address")
+  && !chineseProductionPrintHtml.includes("Installation Remark")
   && !chineseProductionPrintHtml.includes("Prepared by"),
 "AB4: Chinese Production Sheet must use Chinese-only interface headings while preserving unknown legacy item values");
 

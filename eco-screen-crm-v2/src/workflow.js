@@ -7405,12 +7405,127 @@ function printProduction(id) {
   openProductionSheetPrint(job, order);
 }
 
-export function productionSheetPrintHtml(job = {}, order = {}, company = state.companySettings) {
+function firstProductionSheetValue(...values) {
+  const value = values.find((candidate) => candidate !== null && candidate !== undefined && String(candidate).trim() !== "");
+  return value === undefined ? "" : String(value);
+}
+
+function exactInstallationForProductionSheet(job = {}, order = {}, source = state) {
+  const orderId = String(order.id || "").trim();
+  if (!orderId || String(job.orderId || "").trim() !== orderId) return null;
+  const exactMatches = (source.installationJobs || []).filter((record) => String(record.id || "").trim()
+    && String(record.orderId || "").trim() === orderId);
+  const forwardIds = [...new Set([
+    job.installationJobId,
+    job.installationId,
+    order.installationJobId,
+    order.installationId
+  ].map((value) => String(value || "").trim()).filter(Boolean))];
+  if (forwardIds.length > 1) return null;
+  if (forwardIds.length === 1) {
+    const forwardMatches = exactMatches.filter((record) => String(record.id) === forwardIds[0]);
+    return forwardMatches.length === 1 && isActiveWorkflowRecord(forwardMatches[0]) ? forwardMatches[0] : null;
+  }
+  const activeMatches = exactMatches.filter((record) => isActiveWorkflowRecord(record));
+  return activeMatches.length === 1 ? activeMatches[0] : null;
+}
+
+function exactQuotationForProductionSheet(job = {}, order = {}, source = state) {
+  const orderId = String(order.id || "").trim();
+  if (!orderId || String(job.orderId || "").trim() !== orderId) return null;
+  const quotations = source.quotations || [];
+  const forwardIds = [...new Set([order.quoteId, order.quotationId]
+    .map((value) => String(value || "").trim()).filter(Boolean))];
+  if (forwardIds.length > 1) return null;
+  if (forwardIds.length === 1) {
+    const forwardMatches = quotations.filter((record) => String(record.id || "").trim() === forwardIds[0]);
+    return forwardMatches.length === 1 ? forwardMatches[0] : null;
+  }
+  const reverseMatches = quotations.filter((record) => String(record.id || "").trim()
+    && [record.orderId, record.linkedOrderId].some((value) => String(value || "").trim() === orderId));
+  return reverseMatches.length === 1 ? reverseMatches[0] : null;
+}
+
+export function productionSheetContactDetails(job = {}, order = {}, source = state) {
+  const installation = exactInstallationForProductionSheet(job, order, source);
+  const quotation = exactQuotationForProductionSheet(job, order, source);
+  const phone = firstProductionSheetValue(
+    installation?.customerPhone,
+    installation?.contactPhone,
+    installation?.phone,
+    installation?.contact?.phone,
+    installation?.customer?.phone,
+    order.phone,
+    order.customerPhone,
+    order.contactPhone,
+    order.customer?.phone,
+    quotation?.phone,
+    quotation?.customerPhone,
+    quotation?.contactPhone,
+    quotation?.customer?.phone
+  );
+  const address = firstProductionSheetValue(
+    installation?.address,
+    installation?.installationAddress,
+    installation?.siteAddress,
+    order.siteAddress,
+    order.installationAddress,
+    quotation?.siteAddress,
+    quotation?.address,
+    quotation?.customer?.address
+  );
+  const project = firstProductionSheetValue(
+    installation?.projectName,
+    installation?.locationProjectName,
+    installation?.project,
+    installation?.location,
+    installation?.locationName,
+    installation?.projectLocation,
+    installation?.customer?.area,
+    order.projectName,
+    order.locationProjectName,
+    order.project,
+    order.location,
+    order.locationName,
+    order.projectLocation,
+    order.area,
+    order.customer?.area,
+    quotation?.projectName,
+    quotation?.locationProjectName,
+    quotation?.project,
+    quotation?.location,
+    quotation?.locationName,
+    quotation?.projectLocation,
+    quotation?.customer?.area
+  );
+  return {
+    installation,
+    quotation,
+    phone,
+    address,
+    project,
+    installationDate: firstProductionSheetValue(installation?.installationDate),
+    installationRemark: firstProductionSheetValue(
+      installation?.installationRemarks,
+      installation?.installationRemark,
+      installation?.installerRemark,
+      installation?.remarks,
+      installation?.remark
+    )
+  };
+}
+
+export function productionSheetPrintHtml(job = {}, order = {}, company = state.companySettings, source = state) {
   const items = Array.isArray(job.items) && job.items.length ? job.items : Array.isArray(order.items) ? order.items : [];
   const orderNumber = getOrderDisplayNo(order) || "-";
   const quotationNumber = job.quoteNumber || job.quotationNo || order.quoteNumber || order.quotationNo || "-";
   const customerName = order.customer?.name || order.customerName || job.customerName || "-";
-  const installationDate = job.installationDate || order.installationDate || "-";
+  const contact = productionSheetContactDetails(job, order, source);
+  const phone = contact.phone || "-";
+  const screenPhone = contact.phone
+    ? `<a class="production-sheet-phone-link" href="tel:${escapeHtml(contact.phone)}">${escapeHtml(contact.phone)}</a>`
+    : `<span class="production-sheet-phone-link">-</span>`;
+  const installationDate = contact.installationDate || t("Not arranged");
   return `
     <article class="production-sheet" data-production-job-id="${escapeHtml(job.id || "")}" data-order-id="${escapeHtml(order.id || "")}">
       <header class="production-sheet-header">
@@ -7426,8 +7541,12 @@ export function productionSheetPrintHtml(job = {}, order = {}, company = state.c
       </header>
       <section class="production-sheet-meta" aria-label="${t("Production details")}">
         <div><span>${t("Customer Name")}</span><strong>${escapeHtml(customerName)}</strong></div>
-        <div><span>${t("Quotation No")}</span><strong>${escapeHtml(quotationNumber)}</strong></div>
+        <div class="production-sheet-phone"><span>${t("Phone")}</span><strong>${screenPhone}<span class="production-sheet-phone-print">${escapeHtml(phone)}</span></strong></div>
+        <div><span>${t("Location / Project")}</span><strong>${escapeHtml(contact.project || "-")}</strong></div>
         <div><span>${t("Installation Date")}</span><strong>${escapeHtml(installationDate)}</strong></div>
+        <div class="production-sheet-meta-wide"><span>${t("Installation Address")}</span><strong>${escapeHtml(contact.address || "-")}</strong></div>
+        <div class="production-sheet-meta-wide"><span>${t("Installation Remark")}</span><strong>${escapeHtml(contact.installationRemark || "-")}</strong></div>
+        <div><span>${t("Quotation No")}</span><strong>${escapeHtml(quotationNumber)}</strong></div>
         <div><span>${t("Production Status")}</span><strong>${escapeHtml(statusLabel(job.status))}</strong></div>
       </section>
       <table class="production-sheet-table" aria-label="${t("Production items")}">
