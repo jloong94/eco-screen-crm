@@ -1397,6 +1397,14 @@ input:focus, select:focus, textarea:focus {
   margin: 10mm;
 }
 
+.production-sheet-phone-link {
+  white-space: nowrap;
+}
+
+.production-sheet-phone-print {
+  display: none;
+}
+
 @media print {
   body { background: white; }
   .topbar, .layout { display: none !important; }
@@ -1542,6 +1550,7 @@ input:focus, select:focus, textarea:focus {
     font-size: 13pt;
     line-height: 1.2;
     font-weight: 700;
+    white-space: nowrap;
   }
   .production-sheet-meta {
     display: grid;
@@ -1559,6 +1568,9 @@ input:focus, select:focus, textarea:focus {
     border-right: .25mm solid #000;
     border-bottom: .25mm solid #000;
   }
+  .production-sheet-meta > .production-sheet-meta-wide {
+    grid-column: 1 / -1;
+  }
   .production-sheet-meta span,
   .production-sheet-meta strong {
     display: flex;
@@ -1570,6 +1582,17 @@ input:focus, select:focus, textarea:focus {
   .production-sheet-meta span {
     border-right: .25mm solid #000;
     font-weight: 700;
+  }
+  .production-sheet-phone-link {
+    display: none !important;
+  }
+  .production-sheet-phone-print {
+    display: inline;
+    white-space: nowrap;
+  }
+  .production-sheet-meta-wide strong {
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
   .production-sheet-table {
     table-layout: fixed !important;
