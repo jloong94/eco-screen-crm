@@ -124,6 +124,7 @@ let paymentReversalPanel = null;
 let installationDispatchPreviewId = "";
 let installationRecallJobId = "";
 let warrantyPreviewCardId = "";
+let installationSearch = "";
 function defaultOrderSearch() {
   return {
     orderNumber: "",
@@ -146,6 +147,7 @@ export function resetWorkflowNavigationState(page) {
     productionSearch = "";
     showArchivedProductionDuplicates = false;
   }
+  if (page === "installation") installationSearch = "";
 }
 
 export function setOrderNavigationFilter(filter) {
@@ -160,7 +162,8 @@ export function setProductionNavigationState({ search = productionSearch, showAr
 export function workflowNavigationState() {
   return {
     orders: { ...orderSearch },
-    production: { search: productionSearch, showArchived: showArchivedProductionDuplicates }
+    production: { search: productionSearch, showArchived: showArchivedProductionDuplicates },
+    installation: { search: installationSearch }
   };
 }
 
@@ -785,6 +788,7 @@ export function attachWorkflowEvents() {
   document.querySelector("#productionTools")?.addEventListener("click", handleProductionSearchClick);
   document.querySelector("#productionTools")?.addEventListener("change", handleProductionToolsChange);
   document.querySelector("#installationList")?.addEventListener("click", handleInstallationClick);
+  document.querySelector("#installationList")?.addEventListener("input", handleInstallationSearchInput);
   document.querySelector("#installationList")?.addEventListener("change", handleInstallationChange);
 }
 
@@ -2734,9 +2738,10 @@ function failProductionDuplicateAction(message) {
 function renderInstallationJobs() {
   const list = document.querySelector("#installationList");
   if (!list) return;
-  const activeJobs = installationJobsForUser();
+  const activeJobs = installationJobsForCurrentView();
   const diagnostics = installationDispatchDiagnostics();
   list.innerHTML = `
+    ${normalizeText(role()) === "installer" ? installerInstallationSearchHtml() : ""}
     ${canScheduleInstallation() ? `<section class="installation-diagnostics">
       <span>${t("Pending Arrangement")}<strong>${diagnostics.pendingArrangement}</strong></span>
       <span>${t("Ready to Send")}<strong>${diagnostics.readyToSend}</strong></span>
@@ -2744,20 +2749,103 @@ function renderInstallationJobs() {
       <span>${t("Completed")}<strong>${diagnostics.completed}</strong></span>
       <span>${t("Missing assignedInstallerId")}<strong>${diagnostics.missingAssignedInstallerId}</strong></span>
     </section>` : ""}
-    ${activeJobs.length ? activeJobs.map((job) => installationJobCardHtml(job)).join("") : `<p class="muted-text">${t("No installation jobs yet.")}</p>`}
+    ${activeJobs.length ? activeJobs.map((job) => installationJobCardHtml(job)).join("") : `<p class="muted-text">${t(installationSearch ? "No matching installation jobs." : "No installation jobs yet.")}</p>`}
   `;
   if (activeCompletionJobId) setupSignatureCanvas(activeCompletionJobId);
 }
 
 export function installationJobsForUser(user = state.currentUser) {
-  const userRole = normalizeText(user?.role || state.role);
-  const activeJobs = state.installationJobs.filter(isActiveWorkflowRecord);
+  return installationJobsForUserFromSource(user, state);
+}
+
+function normalizeInstallationSearch(value) {
+  return String(value || "").normalize("NFKC").toLowerCase().replace(/[\s-]+/g, "");
+}
+
+function exactOrderForInstallation(job = {}, source = state) {
+  const orderId = String(job.orderId || "").trim();
+  if (!orderId) return null;
+  return (source.orders || []).find((order) => String(order.id || "").trim() === orderId) || null;
+}
+
+function firstInstallationDisplayValue(...values) {
+  const value = values.find((candidate) => candidate !== null && candidate !== undefined && String(candidate).trim());
+  return value === undefined ? "" : String(value);
+}
+
+function installationJobDisplayDetails(job = {}, source = state) {
+  const order = exactOrderForInstallation(job, source);
+  return {
+    order,
+    orderNo: firstInstallationDisplayValue(job.orderNo, job.orderNumber, order?.orderNo, order?.orderNumber),
+    customer: firstInstallationDisplayValue(job.contactPerson, job.customer?.name, order?.customer?.name, order?.customerName),
+    phone: firstInstallationDisplayValue(job.phone, job.customer?.phone, order?.phone, order?.customer?.phone),
+    project: firstInstallationDisplayValue(
+      job.projectName,
+      job.locationProjectName,
+      job.project,
+      job.location,
+      job.locationName,
+      job.projectLocation,
+      job.customer?.area,
+      order?.projectName,
+      order?.locationProjectName,
+      order?.project,
+      order?.location,
+      order?.locationName,
+      order?.projectLocation,
+      order?.area,
+      order?.customer?.area
+    ),
+    address: firstInstallationDisplayValue(
+      job.address,
+      job.installationAddress,
+      job.siteAddress,
+      job.customer?.address,
+      order?.siteAddress,
+      order?.installationAddress,
+      order?.address,
+      order?.customer?.address
+    )
+  };
+}
+
+export function installationJobMatchesSearch(job = {}, search = installationSearch, source = state) {
+  const query = normalizeInstallationSearch(search);
+  if (!query) return true;
+  const details = installationJobDisplayDetails(job, source);
+  return [details.orderNo, details.customer, details.phone, details.project, details.address]
+    .some((value) => normalizeInstallationSearch(value).includes(query));
+}
+
+export function installationJobsForCurrentView(user = state.currentUser, search = installationSearch, source = state) {
+  const visibleJobs = installationJobsForUserFromSource(user, source);
+  if (normalizeText(user?.role || source.role) !== "installer") return visibleJobs;
+  return visibleJobs.filter((job) => installationJobMatchesSearch(job, search, source));
+}
+
+function installationJobsForUserFromSource(user = state.currentUser, source = state) {
+  const userRole = normalizeText(user?.role || source.role);
+  const activeJobs = (source.installationJobs || []).filter(isActiveWorkflowRecord);
   if (["boss", "admin", "secretary"].includes(userRole)) return activeJobs;
   if (userRole !== "installer") return [];
   const exactInstallerId = String(user?.userId || "").trim();
   if (!exactInstallerId) return [];
   return activeJobs.filter((job) => ["sent_to_installer", "completed"].includes(installationDispatchStage(job))
     && String(job.assignedInstallerId || "").trim() === exactInstallerId);
+}
+
+export function setInstallationSearch(value = "") {
+  installationSearch = String(value || "");
+  return installationSearch;
+}
+
+function installerInstallationSearchHtml() {
+  const placeholder = t("Search SO number, customer or phone");
+  return `<section class="installer-installation-search" aria-label="${escapeHtml(placeholder)}">
+    <label><span>${escapeHtml(placeholder)}</span><input type="search" data-installer-installation-search value="${escapeHtml(installationSearch)}" placeholder="${escapeHtml(placeholder)}" /></label>
+    <div class="actions"><button class="btn primary" type="button" data-installation-search-action="search">${t("Search")}</button><button class="btn" type="button" data-installation-search-action="clear">${t("Clear Search")}</button></div>
+  </section>`;
 }
 
 export function installationDispatchDiagnostics() {
@@ -2789,6 +2877,10 @@ function installationDispatchLabel(job) {
 
 function installationJobCardHtml(job) {
   const stage = installationDispatchStage(job);
+  const details = installationJobDisplayDetails(job);
+  const phone = details.phone
+    ? `<a class="installation-phone-link" href="tel:${escapeHtml(details.phone)}">${escapeHtml(details.phone)}</a>`
+    : "-";
   const existingWarranty = existingWarrantyForInstallation(job.id);
   const warrantyPreview = warrantyPreviewCardId
     ? state.warrantyCards.find((card) => String(card.id || "") === warrantyPreviewCardId && String(card.installationId || "") === String(job.id || ""))
@@ -2798,11 +2890,11 @@ function installationJobCardHtml(job) {
       <div class="card-head">
         <div>
           <strong>${escapeHtml(job.installationNumber || job.id)}</strong>
-          <p class="muted-text">${t("Order")}: ${escapeHtml(job.orderNo || job.orderNumber || "-")} | ${escapeHtml(job.customer?.name || job.contactPerson || "-")}</p>
+          <p class="muted-text">${t("Order")}: ${escapeHtml(details.orderNo || "-")} | ${escapeHtml(details.customer || "-")}</p>
           <p class="muted-text">${t("Quote")}: ${job.quoteNumber || job.quotationNo || "-"}</p>
-          <p class="muted-text">${escapeHtml(job.phone || job.customer?.phone || "-")} | ${escapeHtml(job.address || job.customer?.address || "-")}</p>
+          <p class="muted-text installation-card-contact">${phone} | ${escapeHtml(details.project || "-")} | ${escapeHtml(details.address || "-")}</p>
         </div>
-        <div><span class="pill">${escapeHtml(installationDispatchLabel(job))}</span><span class="pill">${money(getRemainingBalance(findOrder(job.orderId) || {}, job))} ${t("Remaining Balance")}</span></div>
+        <div><span class="pill">${t(installationDispatchLabel(job))}</span><span class="pill">${money(getRemainingBalance(findOrder(job.orderId) || {}, job))} ${t("Remaining Balance")}</span></div>
       </div>
       ${canScheduleInstallation() ? installationArrangementHtml(job, stage) : installationAssignedSummaryHtml(job)}
       ${itemsSummary(job.items)}
@@ -2844,7 +2936,11 @@ function installationArrangementHtml(job, stage) {
 }
 
 function installationAssignedSummaryHtml(job) {
-  return `<div class="installation-assigned-summary"><span>${t("Date / Time")}<strong>${escapeHtml([job.installationDate, job.installationTime].filter(Boolean).join(" ") || "-")}</strong></span><span>${t("Assigned Installer")}<strong>${escapeHtml(job.assignedInstallerName || "-")}</strong></span><span>${t("Address")}<strong>${escapeHtml(job.address || job.customer?.address || "-")}</strong></span><span>${t("Phone")}<strong>${escapeHtml(job.phone || job.customer?.phone || "-")}</strong></span></div>`;
+  const details = installationJobDisplayDetails(job);
+  const phone = details.phone
+    ? `<a class="installation-phone-link" href="tel:${escapeHtml(details.phone)}">${escapeHtml(details.phone)}</a>`
+    : "-";
+  return `<div class="installation-assigned-summary"><span>${t("SO Number")}<strong>${escapeHtml(details.orderNo || "-")}</strong></span><span>${t("Customer")}<strong>${escapeHtml(details.customer || "-")}</strong></span><span>${t("Phone")}<strong>${phone}</strong></span><span>${t("Date / Time")}<strong>${escapeHtml([job.installationDate, job.installationTime].filter(Boolean).join(" ") || "-")}</strong></span><span>${t("Location / Project")}<strong>${escapeHtml(details.project || "-")}</strong></span><span>${t("Address")}<strong>${escapeHtml(details.address || "-")}</strong></span><span>${t("Status")}<strong>${t(installationDispatchLabel(job))}</strong></span><span>${t("Assigned Installer")}<strong>${escapeHtml(job.assignedInstallerName || "-")}</strong></span></div>`;
 }
 
 function installerOptionsHtml(selectedId) {
@@ -6567,6 +6663,18 @@ export async function markProductionStatus(jobId, status) {
 }
 
 function handleInstallationClick(event) {
+  const searchAction = event.target.dataset.installationSearchAction;
+  if (searchAction === "search") {
+    const input = event.target.closest("#installationList")?.querySelector("[data-installer-installation-search]");
+    setInstallationSearch(input?.value || "");
+    renderInstallationJobs();
+    return;
+  }
+  if (searchAction === "clear") {
+    setInstallationSearch("");
+    renderInstallationJobs();
+    return;
+  }
   const printId = event.target.dataset.printInstallation;
   const viewId = event.target.dataset.viewInstallation;
   const whatsappId = event.target.dataset.whatsappInstallation;
@@ -6611,6 +6719,11 @@ function handleInstallationClick(event) {
   if (regenerateWarrantyId) generateWarrantyCard(regenerateWarrantyId, { regenerate: true });
   if (printWarrantyCardId) printWarrantyCardById(printWarrantyCardId);
   if (closeWarrantyPreviewId) closeWarrantyPreview();
+}
+
+function handleInstallationSearchInput(event) {
+  if (!event.target.matches("[data-installer-installation-search]")) return;
+  setInstallationSearch(event.target.value);
 }
 
 function saveInstallationArrangementFromPanel(jobId, button) {

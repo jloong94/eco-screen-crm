@@ -999,6 +999,42 @@ input:focus, select:focus, textarea:focus {
 .installation-diagnostics strong,
 .installation-assigned-summary strong { color: var(--ink); overflow-wrap: anywhere; }
 .installation-diagnostics strong { font-size: 22px; }
+.installer-installation-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  max-width: 100%;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--soft);
+}
+.installer-installation-search label {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+.installer-installation-search input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+}
+.installer-installation-search .actions {
+  flex-wrap: wrap;
+  margin: 0;
+}
+.installation-phone-link {
+  display: inline-block;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.installation-card-contact {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .installation-arrangement,
 .installation-dispatch-preview,
 .warranty-card-preview {
@@ -1367,6 +1403,8 @@ input:focus, select:focus, textarea:focus {
   .ads-live-preview { grid-template-columns: 1fr; }
   .progress-columns, .progress-meta, .photo-grid, .media-preview-grid { grid-template-columns: 1fr; }
   .installation-diagnostics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .installer-installation-search { grid-template-columns: minmax(0, 1fr); }
+  .installer-installation-search .actions .btn { flex: 1 1 140px; }
   .installation-assigned-summary { grid-template-columns: 1fr; }
 }
 

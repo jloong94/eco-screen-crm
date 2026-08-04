@@ -74,12 +74,15 @@ const {
   resetWorkflowNavigationState,
   setOrderNavigationFilter,
   setProductionNavigationState,
+  setInstallationSearch,
   workflowNavigationState,
   ordersForDisplay,
   normalizeProductionStatus,
   getOrderPaymentSummary,
   generateWarrantyCard,
   installationDispatchDiagnostics,
+  installationJobMatchesSearch,
+  installationJobsForCurrentView,
   installationJobsForUser,
   nextWarrantyCardNumber,
   recallInstallationFromInstaller,
@@ -1693,6 +1696,97 @@ assert(installationJobsForUser({ userId: "installer-exact-a", role: "Installer" 
 const diagnostics = installationDispatchDiagnostics();
 assert(diagnostics.completed === 1 && diagnostics.missingAssignedInstallerId === 0, "Z5: manager diagnostics must count active dispatch states without migrating records");
 
+const installerSearchUser = { userId: "installer-search-exact", role: "Installer" };
+const installerSearchOrder = {
+  id: "order-installer-search",
+  orderNo: "SO-2607-020",
+  orderNumber: "SO-2607-020",
+  customer: { name: "Search Customer", phone: "012-345 6789", area: "Taman Search Project", address: "Order Search Address" },
+  projectName: "Taman Search Project",
+  siteAddress: "Order Search Address"
+};
+const installerSearchSource = {
+  role: "Installer",
+  orders: [installerSearchOrder],
+  installationJobs: [{
+    id: "installation-search-sent",
+    orderId: installerSearchOrder.id,
+    orderNo: installerSearchOrder.orderNo,
+    assignedInstallerId: installerSearchUser.userId,
+    status: "sent_to_installer",
+    customer: { name: "Search Customer", phone: "012-345 6789" },
+    phone: "012-345 6789",
+    projectName: "Taman Search Project",
+    address: "Exact Installation Search Address",
+    isArchived: false
+  }, {
+    id: "installation-search-completed",
+    orderId: "order-search-completed",
+    orderNo: "SO2607021",
+    assignedInstallerId: installerSearchUser.userId,
+    status: "completed",
+    contactPerson: "Second Assigned Customer",
+    phone: "0199990000",
+    address: "Second Assigned Address",
+    isArchived: false
+  }, {
+    id: "installation-search-other-installer",
+    orderId: "order-search-other",
+    orderNo: "SO2607020",
+    assignedInstallerId: "installer-search-other",
+    status: "sent_to_installer",
+    customer: { name: "Search Customer" },
+    phone: "0123456789",
+    address: "Exact Installation Search Address",
+    isArchived: false
+  }, {
+    id: "installation-search-pending",
+    orderId: "order-search-pending",
+    orderNo: "SO2607020",
+    assignedInstallerId: installerSearchUser.userId,
+    status: "pending_arrangement",
+    customer: { name: "Search Customer" },
+    isArchived: false
+  }, {
+    id: "installation-search-ready",
+    orderId: "order-search-ready",
+    orderNo: "SO2607020",
+    assignedInstallerId: installerSearchUser.userId,
+    status: "ready_to_send",
+    customer: { name: "Search Customer" },
+    isArchived: false
+  }, {
+    id: "installation-search-archived",
+    orderId: "order-search-archived",
+    orderNo: "SO2607020",
+    assignedInstallerId: installerSearchUser.userId,
+    status: "sent_to_installer",
+    customer: { name: "Search Customer" },
+    isArchived: true
+  }]
+};
+assert(installationJobsForCurrentView(installerSearchUser, "SO2607020", installerSearchSource).map((job) => job.id).join(",") === "installation-search-sent",
+"Z5A: normalized SO search must return only the exact Installer's already-visible sent job");
+assert(installationJobsForCurrentView(installerSearchUser, "search customer", installerSearchSource).map((job) => job.id).join(",") === "installation-search-sent"
+  && installationJobsForCurrentView(installerSearchUser, "0123456789", installerSearchSource).map((job) => job.id).join(",") === "installation-search-sent",
+"Z5A: Installer customer and normalized phone search must work without exposing another Installer's matching job");
+assert(installationJobMatchesSearch(installerSearchSource.installationJobs[0], "taman search project", installerSearchSource)
+  && installationJobMatchesSearch(installerSearchSource.installationJobs[0], "installation search address", installerSearchSource),
+"Z5A: Installer search must include Location / Project and installation address");
+assert(installationJobsForCurrentView(installerSearchUser, "", installerSearchSource).map((job) => job.id).sort().join(",")
+  === ["installation-search-completed", "installation-search-sent"].sort().join(","),
+"Z5A: the unfiltered Installer list must contain only assigned sent/completed active jobs");
+setInstallationSearch("Second Assigned Customer");
+assert(installationJobsForCurrentView(installerSearchUser, undefined, installerSearchSource).map((job) => job.id).join(",") === "installation-search-completed",
+"Z5A: applied Installer search must filter the current assigned list");
+setInstallationSearch("");
+assert(installationJobsForCurrentView(installerSearchUser, undefined, installerSearchSource).length === 2,
+"Z5A: Clear Search must restore every assigned sent/completed Installation");
+setInstallationSearch("retained search");
+resetWorkflowNavigationState("installation");
+assert(workflowNavigationState().installation.search === "",
+"Z5A: opening Installation from navigation must reset retained Installer search");
+
 const incompleteWarrantyJob = createInstallationJobFromOrder(dispatchOrder);
 incompleteWarrantyJob.id = "installation-incomplete-warranty";
 state.installationJobs.push(incompleteWarrantyJob);
@@ -2696,6 +2790,21 @@ assert(!ambiguousActiveReferenceBlocked.ok && ambiguousActiveReferenceBlocked.me
 "AE18: an active desired-number Job without the exact correct Order relationship must block reassignment");
 
 const quotationSource = await readFile(new URL("../src/quotations.js", import.meta.url), "utf8");
+const installerSearchWorkflowSource = await readFile(new URL("../src/workflow.js", import.meta.url), "utf8");
+const installerSearchCss = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
+assert(installerSearchWorkflowSource.includes('data-installer-installation-search')
+  && installerSearchWorkflowSource.includes('data-installation-search-action="search"')
+  && installerSearchWorkflowSource.includes('data-installation-search-action="clear"')
+  && installerSearchWorkflowSource.includes('class="installation-phone-link" href="tel:')
+  && installerSearchWorkflowSource.includes('normalizeText(role()) === "installer"'),
+"Z5B: Installer-only Installation UI must render Search, Clear Search and tappable phone controls");
+assert(installerSearchCss.includes(".installer-installation-search")
+  && installerSearchCss.includes("grid-template-columns: minmax(0, 1fr)")
+  && installerSearchCss.includes(".installer-installation-search input")
+  && installerSearchCss.includes("width: 100%")
+  && installerSearchCss.includes(".installation-phone-link")
+  && installerSearchCss.includes("white-space: nowrap"),
+"Z5B: Installer search must use a full-width mobile-safe field, wrapping buttons and non-wrapping phone links");
 assert(quotationSource.includes("canonicalSelectOptions(COLOR_VALUES")
   && quotationSource.includes("canonicalSelectOptions(OPENING_DIRECTION_VALUES")
   && !quotationSource.includes('data-field="handlePosition"')
