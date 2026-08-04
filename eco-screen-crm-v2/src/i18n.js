@@ -325,6 +325,8 @@ const zh = {
   "Production Job IDs": "生产单 ID",
   "Installation Job IDs": "安装单 ID",
   "Search SO Order No, Customer, Phone or Quotation No": "搜索 SO 订单号码、顾客、电话或报价号码",
+  "Search SO number, customer or phone": "搜索SO号码、顾客或手机号码",
+  "No matching installation jobs.": "找不到符合条件的安装工作。",
   "SO2607006, customer, phone or quotation": "SO2607006、顾客、电话或报价",
   "Preview only. Compare all differences and select the Production Job with the correct/latest progress.": "仅供预览。请比较所有差异，并选择进度正确或最新的生产单。",
   Differences: "差异",
