@@ -85,6 +85,11 @@ const {
   installationJobsForCurrentView,
   installationJobsForUser,
   nextWarrantyCardNumber,
+  uniqueWarrantyCards,
+  warrantyCardsForDisplay,
+  warrantyRecordDetails,
+  warrantyStatusForCard,
+  warrantySummaryCounts,
   recallInstallationFromInstaller,
   saveInstallationArrangement,
   scanProductionDispatchIntegrity,
@@ -133,7 +138,7 @@ const {
   uniqueActiveOrders,
   uniqueActiveProductionJobs
 } = await import("../src/workflowIntegrity.js");
-const { canDuplicateQuotation, isBossOrAdmin } = await import("../src/permissions.js");
+const { canAccessPage, canDuplicateQuotation, isBossOrAdmin } = await import("../src/permissions.js");
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -1828,6 +1833,51 @@ assert(regeneratedWarranty.ok && regeneratedWarranty.regenerated && state.warran
 const nextWarrantyNo = nextWarrantyCardNumber(new Date());
 assert(/^WC-\d{4}-\d{4}$/.test(nextWarrantyNo) && nextWarrantyNo !== originalWarrantyNo, "Z8: new Warranty Card numbers must be readable and unique");
 
+const warrantyPageNow = new Date("2026-08-05T04:00:00.000Z");
+const warrantyPageSource = {
+  orders: [
+    { id: "warranty-order-exact", orderNo: "SO-2607-018", customer: { name: "Exact Warranty Customer", phone: "012-345 6789" }, projectName: "Order Project", siteAddress: "Order Address" },
+    { id: "warranty-order-wrong", orderNo: "SO-2607-018", customer: { name: "Wrong Same SO Customer", phone: "0199999999" }, projectName: "Wrong Project", siteAddress: "Wrong Address" }
+  ],
+  installationJobs: [
+    { id: "warranty-installation-exact", orderId: "warranty-order-exact", projectName: "Exact Installation Project", address: "Exact Installation Address", completionDate: "2026-07-31" },
+    { id: "warranty-installation-wrong", orderId: "warranty-order-wrong", projectName: "Wrong Installation Project", address: "Wrong Installation Address", completionDate: "2026-07-30" }
+  ]
+};
+const warrantyPageCards = [
+  { id: "warranty-page-active", warrantyCardNo: "WC-2607-0018", orderId: "warranty-order-exact", installationId: "warranty-installation-exact", customerName: "Exact Warranty Customer", customerPhone: "012-345 6789", orderNo: "SO-2607-018", warrantyStartDate: "2026-07-31", warrantyExpiryDate: "2027-07-31", updatedAt: "2026-08-05T01:00:00.000Z" },
+  { id: "warranty-page-active", warrantyCardNo: "WC-OLD-DUPLICATE", orderId: "warranty-order-wrong", installationId: "warranty-installation-wrong", warrantyExpiryDate: "2027-07-31", updatedAt: "2026-08-04T01:00:00.000Z" },
+  { id: "warranty-page-soon", warrantyCardNo: "WC-2607-0019", orderId: "warranty-order-exact", installationId: "warranty-installation-exact", customerName: "Soon Customer", warrantyExpiryDate: "2026-09-01", updatedAt: "2026-08-05T02:00:00.000Z" },
+  { id: "warranty-page-expired", warrantyCardNo: "WC-2607-0020", orderId: "warranty-order-exact", installationId: "warranty-installation-exact", customerName: "Expired Customer", warrantyExpiryDate: "2026-07-01", updatedAt: "2026-08-05T03:00:00.000Z" },
+  { id: "warranty-page-unverified", warrantyCardNo: "WC-2607-0021", orderId: "warranty-order-exact", installationId: "warranty-installation-exact", customerName: "Unverified Customer", warrantyExpiryDate: "", updatedAt: "2026-08-05T04:00:00.000Z" }
+];
+const warrantyUnique = uniqueWarrantyCards(warrantyPageCards);
+assert(warrantyUnique.length === 4 && warrantyUnique.find((card) => card.id === "warranty-page-active").warrantyCardNo === "WC-2607-0018",
+  "Z9: Warranty page must deduplicate by exact Warranty stable ID and retain the latest record");
+const warrantyExactDetails = warrantyRecordDetails(warrantyPageCards[0], warrantyPageSource);
+assert(warrantyExactDetails.order.id === "warranty-order-exact"
+  && warrantyExactDetails.installation.id === "warranty-installation-exact"
+  && warrantyExactDetails.project === "Exact Installation Project"
+  && warrantyExactDetails.address === "Exact Installation Address"
+  && warrantyExactDetails.completedAt === "2026-07-31",
+"Z9: Warranty page must resolve Order and Installation only through exact stable IDs");
+assert(warrantyCardsForDisplay(warrantyPageCards, "wc 2607-0018", "", warrantyPageSource, warrantyPageNow).map((card) => card.id).join(",") === "warranty-page-active"
+  && warrantyCardsForDisplay(warrantyPageCards, "so2607018", "", warrantyPageSource, warrantyPageNow).some((card) => card.id === "warranty-page-active")
+  && warrantyCardsForDisplay(warrantyPageCards, "exact warranty customer", "", warrantyPageSource, warrantyPageNow).some((card) => card.id === "warranty-page-active")
+  && warrantyCardsForDisplay(warrantyPageCards, "0123456789", "", warrantyPageSource, warrantyPageNow).some((card) => card.id === "warranty-page-active")
+  && warrantyCardsForDisplay(warrantyPageCards, "exact installation project", "", warrantyPageSource, warrantyPageNow).some((card) => card.id === "warranty-page-active")
+  && warrantyCardsForDisplay(warrantyPageCards, "exact installation address", "", warrantyPageSource, warrantyPageNow).some((card) => card.id === "warranty-page-active"),
+"Z9: Warranty search must support normalized Warranty, SO, customer, phone, project and address values");
+const warrantyCounts = warrantySummaryCounts(warrantyPageCards, warrantyPageNow);
+assert(warrantyCounts.active === 2 && warrantyCounts.expiring_soon === 1 && warrantyCounts.expired === 1 && warrantyCounts.all === 4
+  && warrantyStatusForCard(warrantyPageCards[3], warrantyPageNow) === "expired"
+  && warrantyStatusForCard(warrantyPageCards[4], warrantyPageNow) === "unverified"
+  && warrantyCardsForDisplay(warrantyPageCards, "", "expiring_soon", warrantyPageSource, warrantyPageNow).map((card) => card.id).join(",") === "warranty-page-soon",
+"Z9: Malaysia-date Warranty summary and selected-card filters must classify active, expiring, expired and unverified records correctly");
+assert(canAccessPage("Boss", "warranty") && canAccessPage("Admin", "warranty") && canAccessPage("Secretary", "warranty")
+  && !canAccessPage("Installer", "warranty") && !canAccessPage("Sales", "warranty"),
+"Z9: only Boss, Admin and Secretary must receive Warranty page access");
+
 state.currentUser = { userId: "boss-count-test", username: "boss-count-test", name: "Boss Count Test", role: "Boss", active: true };
 state.role = "Boss";
 state.installationJobs = [];
@@ -2792,6 +2842,7 @@ assert(!ambiguousActiveReferenceBlocked.ok && ambiguousActiveReferenceBlocked.me
 const quotationSource = await readFile(new URL("../src/quotations.js", import.meta.url), "utf8");
 const installerSearchWorkflowSource = await readFile(new URL("../src/workflow.js", import.meta.url), "utf8");
 const installerSearchCss = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
+const mainSource = await readFile(new URL("../src/main.js", import.meta.url), "utf8");
 assert(installerSearchWorkflowSource.includes('data-installer-installation-search')
   && installerSearchWorkflowSource.includes('data-installation-search-action="search"')
   && installerSearchWorkflowSource.includes('data-installation-search-action="clear"')
@@ -2805,6 +2856,20 @@ assert(installerSearchCss.includes(".installer-installation-search")
   && installerSearchCss.includes(".installation-phone-link")
   && installerSearchCss.includes("white-space: nowrap"),
 "Z5B: Installer search must use a full-width mobile-safe field, wrapping buttons and non-wrapping phone links");
+assert(mainSource.includes('state.currentPage === "warranty"')
+  && mainSource.includes('id="warrantyList"')
+  && installerSearchWorkflowSource.includes('data-warranty-search')
+  && installerSearchWorkflowSource.includes('data-warranty-status-filter')
+  && installerSearchWorkflowSource.includes('class="warranty-phone-link" href="tel:')
+  && installerSearchWorkflowSource.includes('data-view-warranty-order')
+  && installerSearchWorkflowSource.includes('data-view-warranty-installation'),
+"Z9: independent Warranty page must expose search, status cards, exact-link actions and a tappable phone without generating records");
+assert(installerSearchCss.includes(".warranty-search")
+  && installerSearchCss.includes(".warranty-record-grid")
+  && installerSearchCss.includes(".warranty-phone-link")
+  && installerSearchCss.includes("white-space: nowrap")
+  && installerSearchCss.includes("grid-template-columns: minmax(0, 1fr)"),
+"Z9: Warranty page must retain readable responsive cards and avoid mobile horizontal overflow");
 assert(quotationSource.includes("canonicalSelectOptions(COLOR_VALUES")
   && quotationSource.includes("canonicalSelectOptions(OPENING_DIRECTION_VALUES")
   && !quotationSource.includes('data-field="handlePosition"')
@@ -2860,6 +2925,7 @@ console.log([
   ,"Normalized legacy payment ledger, historical payment entry, reversal and stale-cloud protection: passed"
   ,"Installation pending/ready/send/recall/completed exact-ID dispatch control: passed"
   ,"Warranty validation, exact links, unique numbering, reuse, regeneration and mobile preview: passed"
+  ,"Independent Warranty page, exact relationships, search, Malaysia-date filters and access control: passed"
   ,"Unique active Dashboard counts, Orders navigation reset and category filters: passed"
   ,"Unique active Production visibility, status aliases and navigation reset: passed"
   ,"Separate Order dispatch board, Production work stages and safe exact-ID integrity repair: passed"
