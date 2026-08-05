@@ -112,6 +112,7 @@ function currentPageHtml() {
   if (state.currentPage === "orders") return ordersPageHtml();
   if (state.currentPage === "production") return productionPageHtml();
   if (state.currentPage === "installation") return installationPageHtml();
+  if (state.currentPage === "warranty") return warrantyPageHtml();
   if (state.currentPage === "products") return productManagementPageHtml();
   if (state.currentPage === "users") return usersPageHtml();
   return `<section class="panel page-panel"><p class="muted-text">${t("You do not have permission to access this page.")}</p></section>`;
@@ -274,6 +275,21 @@ function installationPageHtml() {
   `;
 }
 
+function warrantyPageHtml() {
+  return `
+    <section class="panel page-panel workflow-panel warranty-page" data-page-panel="warranty">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">${t("Customer Records")}</p>
+          <h2>${t("Warranty")}</h2>
+        </div>
+        <span class="pill" id="workflowStatus">${t("Ready")}</span>
+      </div>
+      <div id="warrantyList" class="workflow-list"></div>
+    </section>
+  `;
+}
+
 function productManagementPageHtml() {
   return `
     <section class="panel page-panel" data-page-panel="products">
@@ -327,7 +343,7 @@ function renderShell() {
     renderAddProductForm();
     renderProducts();
   }
-  if (["dashboard", "orders", "production", "installation"].includes(state.currentPage)) {
+  if (["dashboard", "orders", "production", "installation", "warranty"].includes(state.currentPage)) {
     attachWorkflowEvents();
     renderWorkflowModules();
   }

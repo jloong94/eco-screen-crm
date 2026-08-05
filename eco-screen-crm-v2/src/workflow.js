@@ -127,6 +127,8 @@ let installationRecallJobId = "";
 let warrantyPreviewCardId = "";
 let installationSearch = "";
 let installationStatusFilter = "";
+let warrantySearch = "";
+let warrantyStatusFilter = "";
 function defaultOrderSearch() {
   return {
     orderNumber: "",
@@ -154,6 +156,10 @@ export function resetWorkflowNavigationState(page) {
     installationSearch = "";
     installationStatusFilter = "";
   }
+  if (page === "warranty") {
+    warrantySearch = "";
+    warrantyStatusFilter = "";
+  }
 }
 
 export function setOrderNavigationFilter(filter) {
@@ -170,7 +176,8 @@ export function workflowNavigationState() {
   return {
     orders: { ...orderSearch },
     production: { search: productionSearch, status: productionStatusFilter, showArchived: showArchivedProductionDuplicates },
-    installation: { search: installationSearch, status: installationStatusFilter }
+    installation: { search: installationSearch, status: installationStatusFilter },
+    warranty: { search: warrantySearch, status: warrantyStatusFilter }
   };
 }
 
@@ -779,6 +786,7 @@ export function renderWorkflowModules() {
   renderOrders();
   renderProductionJobs();
   renderInstallationJobs();
+  renderWarrantyPage();
 }
 
 export function attachWorkflowEvents() {
@@ -798,6 +806,9 @@ export function attachWorkflowEvents() {
   document.querySelector("#installationList")?.addEventListener("input", handleInstallationSearchInput);
   document.querySelector("#installationList")?.addEventListener("keydown", handleInstallationSearchKeydown);
   document.querySelector("#installationList")?.addEventListener("change", handleInstallationChange);
+  document.querySelector("#warrantyList")?.addEventListener("input", handleWarrantySearchInput);
+  document.querySelector("#warrantyList")?.addEventListener("keydown", handleWarrantySearchKeydown);
+  document.querySelector("#warrantyList")?.addEventListener("click", handleWarrantyClick);
 }
 
 export function renderOrders() {
@@ -6787,6 +6798,77 @@ function handleInstallationSearchKeydown(event) {
   renderInstallationJobs();
 }
 
+function handleWarrantySearchInput(event) {
+  if (!event.target.matches("[data-warranty-search]")) return;
+  warrantySearch = String(event.target.value || "");
+  renderWarrantyPage();
+  const input = document.querySelector?.("[data-warranty-search]");
+  input?.focus();
+  input?.setSelectionRange(warrantySearch.length, warrantySearch.length);
+}
+
+function handleWarrantySearchKeydown(event) {
+  if (event.key !== "Enter" || !event.target.matches("[data-warranty-search]")) return;
+  event.preventDefault();
+  warrantySearch = String(event.target.value || "");
+  renderWarrantyPage();
+}
+
+function handleWarrantyClick(event) {
+  const searchAction = event.target.dataset.warrantySearchAction;
+  if (searchAction === "search") {
+    warrantySearch = String(event.target.closest("#warrantyList")?.querySelector("[data-warranty-search]")?.value || "");
+    renderWarrantyPage();
+    return;
+  }
+  if (searchAction === "clear") {
+    warrantySearch = "";
+    warrantyStatusFilter = "";
+    renderWarrantyPage();
+    return;
+  }
+  const statusFilter = event.target.closest?.("[data-warranty-status-filter]")?.dataset.warrantyStatusFilter;
+  if (statusFilter) {
+    warrantyStatusFilter = warrantyStatusFilter === statusFilter ? "" : statusFilter;
+    renderWarrantyPage();
+    return;
+  }
+  const viewCardId = event.target.dataset.viewWarranty;
+  const printCardId = event.target.dataset.printWarrantyCard;
+  const closePreviewId = event.target.dataset.closeWarrantyPreview;
+  const viewOrderCardId = event.target.dataset.viewWarrantyOrder;
+  const viewInstallationCardId = event.target.dataset.viewWarrantyInstallation;
+  if (viewCardId) viewExistingWarrantyCard(viewCardId);
+  if (printCardId) printWarrantyCardById(printCardId);
+  if (closePreviewId) closeWarrantyPreview();
+  if (viewOrderCardId) openWarrantyOrder(viewOrderCardId);
+  if (viewInstallationCardId) openWarrantyInstallation(viewInstallationCardId);
+}
+
+function openWarrantyOrder(cardId) {
+  const card = state.warrantyCards.find((row) => String(row.id || "") === String(cardId || ""));
+  const exactOrderId = String(card?.orderId || "").trim();
+  const order = exactOrderId ? state.orders.find((row) => String(row.id || "").trim() === exactOrderId) : null;
+  if (!card || !order) return failInstallationAction("The exact related Order stable ID was not found.");
+  openOrderInOrders(order, `Order opened: ${getOrderDisplayNo(order)}`);
+  return { ok: true, orderId: order.id };
+}
+
+function openWarrantyInstallation(cardId) {
+  const card = state.warrantyCards.find((row) => String(row.id || "") === String(cardId || ""));
+  const exactInstallationId = String(card?.installationId || "").trim();
+  const installation = exactInstallationId ? state.installationJobs.find((row) => String(row.id || "").trim() === exactInstallationId) : null;
+  if (!card || !installation) return failInstallationAction("The exact related Installation stable ID was not found.");
+  const navigation = document.querySelector?.('[data-page="installation"]');
+  if (navigation && state.currentPage !== "installation") navigation.click();
+  else renderInstallationJobs();
+  setTimeout(() => {
+    document.querySelector?.(`[data-installation-card="${installation.id}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    showWorkflowMessage(`Installation opened: ${installation.installationNumber || installation.id}`, "success");
+  }, 50);
+  return { ok: true, installationId: installation.id };
+}
+
 function saveInstallationArrangementFromPanel(jobId, button) {
   const panel = button.closest("[data-installation-arrangement]");
   if (!panel) return failInstallationAction("Installation arrangement form is unavailable.");
@@ -7380,6 +7462,181 @@ function existingWarrantyForInstallation(installationId) {
   return state.warrantyCards.find((card) => card.status !== "deleted" && String(card.installationId || "") === exactId) || null;
 }
 
+function normalizeWarrantySearch(value) {
+  return String(value || "").normalize("NFKC").toLowerCase().replace(/[\s-]+/g, "");
+}
+
+function firstWarrantyDisplayValue(...values) {
+  const value = values.find((candidate) => candidate !== null && candidate !== undefined && String(candidate).trim());
+  return value === undefined ? "" : String(value);
+}
+
+function malaysiaDateKey(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kuala_Lumpur",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const part = (type) => parts.find((row) => row.type === type)?.value || "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+function addDaysToDateKey(dateKey, days) {
+  const date = new Date(`${dateKey}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return "";
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+export function uniqueWarrantyCards(cards = state.warrantyCards) {
+  const unique = new Map();
+  (cards || []).forEach((card) => {
+    const id = String(card?.id || "").trim();
+    if (!id || String(card.status || "").trim().toLowerCase() === "deleted") return;
+    const existing = unique.get(id);
+    if (!existing || String(card.updatedAt || card.generatedAt || card.createdAt || "") >= String(existing.updatedAt || existing.generatedAt || existing.createdAt || "")) {
+      unique.set(id, card);
+    }
+  });
+  return [...unique.values()];
+}
+
+export function warrantyRecordDetails(card = {}, source = state) {
+  const exactOrderId = String(card.orderId || "").trim();
+  const exactInstallationId = String(card.installationId || "").trim();
+  const order = exactOrderId ? (source.orders || []).find((row) => String(row.id || "").trim() === exactOrderId) || null : null;
+  const installation = exactInstallationId ? (source.installationJobs || []).find((row) => String(row.id || "").trim() === exactInstallationId) || null : null;
+  return {
+    order,
+    installation,
+    warrantyNo: firstWarrantyDisplayValue(card.warrantyCardNo, card.warrantyNo),
+    orderNo: firstWarrantyDisplayValue(card.orderNo, card.orderNumber, order?.orderNo, order?.orderNumber),
+    customer: firstWarrantyDisplayValue(card.customerName, card.customer?.name, installation?.contactPerson, installation?.customer?.name, order?.customer?.name, order?.customerName),
+    phone: firstWarrantyDisplayValue(card.customerPhone, card.customer?.phone, installation?.phone, installation?.customer?.phone, order?.phone, order?.customer?.phone),
+    project: firstWarrantyDisplayValue(
+      installation?.projectName,
+      installation?.locationProjectName,
+      installation?.project,
+      installation?.location,
+      order?.projectName,
+      order?.locationProjectName,
+      order?.project,
+      order?.location,
+      card.projectName,
+      card.locationProjectName,
+      card.project,
+      card.location
+    ),
+    address: firstWarrantyDisplayValue(
+      installation?.address,
+      installation?.installationAddress,
+      installation?.siteAddress,
+      order?.siteAddress,
+      order?.installationAddress,
+      order?.address,
+      card.address,
+      card.siteAddress
+    ),
+    completedAt: firstWarrantyDisplayValue(installation?.completionDate, installation?.completedAt, card.installationCompletedAt),
+    startDate: firstWarrantyDisplayValue(card.warrantyStartDate, card.startDate),
+    expiryDate: firstWarrantyDisplayValue(card.warrantyExpiryDate, card.expiryDate)
+  };
+}
+
+export function warrantyStatusForCard(card = {}, now = new Date()) {
+  const expiry = warrantyRecordDetails(card).expiryDate.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(expiry) || Number.isNaN(new Date(`${expiry}T00:00:00Z`).getTime())) return "unverified";
+  const today = malaysiaDateKey(now);
+  if (expiry < today) return "expired";
+  if (expiry <= addDaysToDateKey(today, 90)) return "expiring_soon";
+  return "active";
+}
+
+function warrantyMatchesStatus(card, filter, now) {
+  if (!filter || filter === "all") return true;
+  const status = warrantyStatusForCard(card, now);
+  if (filter === "active") return status === "active" || status === "expiring_soon";
+  return status === filter;
+}
+
+export function warrantyCardsForDisplay(cards = state.warrantyCards, search = warrantySearch, status = warrantyStatusFilter, source = state, now = new Date()) {
+  const query = normalizeWarrantySearch(search);
+  return uniqueWarrantyCards(cards)
+    .filter((card) => warrantyMatchesStatus(card, status, now))
+    .filter((card) => {
+      if (!query) return true;
+      const details = warrantyRecordDetails(card, source);
+      return [details.warrantyNo, details.orderNo, details.customer, details.phone, details.project, details.address]
+        .some((value) => normalizeWarrantySearch(value).includes(query));
+    })
+    .sort((left, right) => String(right.updatedAt || right.generatedAt || right.createdAt || "").localeCompare(String(left.updatedAt || left.generatedAt || left.createdAt || "")));
+}
+
+export function warrantySummaryCounts(cards = state.warrantyCards, now = new Date()) {
+  const unique = uniqueWarrantyCards(cards);
+  return {
+    active: unique.filter((card) => warrantyMatchesStatus(card, "active", now)).length,
+    expiring_soon: unique.filter((card) => warrantyStatusForCard(card, now) === "expiring_soon").length,
+    expired: unique.filter((card) => warrantyStatusForCard(card, now) === "expired").length,
+    all: unique.length
+  };
+}
+
+function warrantyStatusLabel(status) {
+  if (status === "active") return t("Active Warranty");
+  if (status === "expiring_soon") return t("Expiring Soon");
+  if (status === "expired") return t("Expired");
+  return t("Unverified");
+}
+
+function warrantyRecordHtml(card) {
+  const details = warrantyRecordDetails(card);
+  const status = warrantyStatusForCard(card);
+  const phoneHref = String(details.phone || "").replace(/[^\d+]/g, "");
+  return `<article class="warranty-record-card" data-warranty-record="${escapeHtml(card.id)}">
+    <div class="warranty-record-grid">
+      <span>${t("Warranty Card number")}<strong class="warranty-reference">${escapeHtml(details.warrantyNo || "-")}</strong></span>
+      <span>${t("Customer Name")}<strong>${escapeHtml(details.customer || "-")}</strong></span>
+      <span>${t("Phone")}<strong>${details.phone ? `<a class="warranty-phone-link" href="tel:${escapeHtml(phoneHref)}">${escapeHtml(details.phone)}</a>` : "-"}</strong></span>
+      <span>${t("SO Number")}<strong class="warranty-reference">${escapeHtml(details.orderNo || "-")}</strong></span>
+      <span>${t("Location / Project")}<strong>${escapeHtml(details.project || "-")}</strong></span>
+      <span class="warranty-address">${t("Installation Address")}<strong>${escapeHtml(details.address || "-")}</strong></span>
+      <span>${t("Installation Completed Date")}<strong>${escapeHtml(details.completedAt || "-")}</strong></span>
+      <span>${t("Warranty Start")}<strong>${escapeHtml(details.startDate || "-")}</strong></span>
+      <span>${t("Warranty Expiry")}<strong>${escapeHtml(details.expiryDate || "-")}</strong></span>
+      <span>${t("Warranty Status")}<strong>${warrantyStatusLabel(status)}</strong></span>
+    </div>
+    <div class="actions warranty-record-actions">
+      <button class="btn" type="button" data-view-warranty="${escapeHtml(card.id)}">${t("View Warranty Card")}</button>
+      <button class="btn" type="button" data-print-warranty-card="${escapeHtml(card.id)}">${t("Print")}</button>
+      <button class="btn" type="button" data-view-warranty-order="${escapeHtml(card.id)}" ${details.order ? "" : "disabled"}>${t("View Order")}</button>
+      <button class="btn" type="button" data-view-warranty-installation="${escapeHtml(card.id)}" ${details.installation ? "" : "disabled"}>${t("View Installation")}</button>
+    </div>
+  </article>`;
+}
+
+export function renderWarrantyPage() {
+  const list = document.querySelector?.("#warrantyList");
+  if (!list) return;
+  const cards = warrantyCardsForDisplay();
+  const counts = warrantySummaryCounts();
+  const placeholder = t("Search warranty number, SO, customer or phone");
+  const preview = warrantyPreviewCardId ? state.warrantyCards.find((card) => String(card.id || "") === warrantyPreviewCardId) : null;
+  const filters = [["active", "Active Warranty"], ["expiring_soon", "Expiring Soon"], ["expired", "Expired"], ["all", "All Warranty"]];
+  list.innerHTML = `
+    <div class="progress-summary-grid warranty-summary-grid" aria-label="${t("Warranty Status")}">
+      ${filters.map(([filter, label]) => `<button class="metric-card progress-summary-card ${warrantyStatusFilter === filter ? "active" : ""}" type="button" data-warranty-status-filter="${filter}" aria-pressed="${warrantyStatusFilter === filter}"><span>${t(label)}</span><strong>${counts[filter]}</strong></button>`).join("")}
+    </div>
+    <section class="warranty-search" role="search" aria-label="${escapeHtml(placeholder)}">
+      <label><span>${escapeHtml(placeholder)}</span><input type="search" data-warranty-search value="${escapeHtml(warrantySearch)}" placeholder="${escapeHtml(placeholder)}" autocomplete="off" /></label>
+      <div class="actions"><button class="btn primary" type="button" data-warranty-search-action="search">${t("Search")}</button><button class="btn" type="button" data-warranty-search-action="clear">${t("Clear Search")}</button></div>
+    </section>
+    ${preview ? warrantyCardPreviewHtml(preview) : ""}
+    <div class="warranty-record-list">${cards.length ? cards.map(warrantyRecordHtml).join("") : `<p class="muted-text">${t(warrantySearch || warrantyStatusFilter ? "No matching Warranty Cards." : "No Warranty Cards yet.")}</p>`}</div>
+  `;
+}
+
 export function nextWarrantyCardNumber(date = new Date()) {
   const prefix = `WC-${String(date.getFullYear()).slice(-2)}${String(date.getMonth() + 1).padStart(2, "0")}-`;
   const used = new Set(state.warrantyCards.map((card) => normalizeRefNo(card.warrantyCardNo || card.warrantyNo)).filter(Boolean));
@@ -7424,12 +7681,14 @@ function viewExistingWarrantyCard(cardId) {
   if (!card) return failInstallationAction("The exact Warranty Card stable ID was not found.");
   warrantyPreviewCardId = String(card.id);
   renderInstallationJobs();
+  renderWarrantyPage();
   showWorkflowMessage(`Warranty Card opened: ${card.warrantyCardNo || card.warrantyNo}`, "success");
 }
 
 function closeWarrantyPreview() {
   warrantyPreviewCardId = "";
   renderInstallationJobs();
+  renderWarrantyPage();
 }
 
 export function warrantyCardPreviewHtml(card = {}) {
