@@ -796,6 +796,7 @@ export function attachWorkflowEvents() {
   document.querySelector("#productionTools")?.addEventListener("change", handleProductionToolsChange);
   document.querySelector("#installationList")?.addEventListener("click", handleInstallationClick);
   document.querySelector("#installationList")?.addEventListener("input", handleInstallationSearchInput);
+  document.querySelector("#installationList")?.addEventListener("keydown", handleInstallationSearchKeydown);
   document.querySelector("#installationList")?.addEventListener("change", handleInstallationChange);
 }
 
@@ -2875,8 +2876,8 @@ function installerInstallationSummaryHtml() {
 
 function installerInstallationSearchHtml() {
   const placeholder = t("Search SO number, customer or phone");
-  return `<section class="installer-installation-search" aria-label="${escapeHtml(placeholder)}">
-    <label><span>${escapeHtml(placeholder)}</span><input type="search" data-installer-installation-search value="${escapeHtml(installationSearch)}" placeholder="${escapeHtml(placeholder)}" /></label>
+  return `<section class="installer-installation-search" role="search" aria-label="${escapeHtml(placeholder)}">
+    <label class="installer-installation-search-field"><span>${escapeHtml(placeholder)}</span><input type="search" data-installer-installation-search value="${escapeHtml(installationSearch)}" placeholder="${escapeHtml(placeholder)}" autocomplete="off" /></label>
     <div class="actions"><button class="btn primary" type="button" data-installation-search-action="search">${t("Search")}</button><button class="btn" type="button" data-installation-search-action="clear">${t("Clear Search")}</button></div>
   </section>`;
 }
@@ -6773,6 +6774,17 @@ function handleInstallationClick(event) {
 function handleInstallationSearchInput(event) {
   if (!event.target.matches("[data-installer-installation-search]")) return;
   setInstallationSearch(event.target.value);
+  renderInstallationJobs();
+  const input = document.querySelector?.("[data-installer-installation-search]");
+  input?.focus();
+  input?.setSelectionRange(installationSearch.length, installationSearch.length);
+}
+
+function handleInstallationSearchKeydown(event) {
+  if (event.key !== "Enter" || !event.target.matches("[data-installer-installation-search]")) return;
+  event.preventDefault();
+  setInstallationSearch(event.target.value);
+  renderInstallationJobs();
 }
 
 function saveInstallationArrangementFromPanel(jobId, button) {
