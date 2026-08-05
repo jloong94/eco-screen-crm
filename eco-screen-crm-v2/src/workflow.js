@@ -107,6 +107,7 @@ let duplicateScanResult = null;
 let duplicateArchiveBusy = false;
 const duplicateMainSelections = new Map();
 let productionSearch = "";
+let productionStatusFilter = "";
 let productionDuplicateScanVisible = false;
 let productionDuplicateScanResult = null;
 let productionDuplicateArchiveBusy = false;
@@ -125,6 +126,7 @@ let installationDispatchPreviewId = "";
 let installationRecallJobId = "";
 let warrantyPreviewCardId = "";
 let installationSearch = "";
+let installationStatusFilter = "";
 function defaultOrderSearch() {
   return {
     orderNumber: "",
@@ -145,25 +147,30 @@ export function resetWorkflowNavigationState(page) {
   if (page === "orders") orderSearch = defaultOrderSearch();
   if (page === "production") {
     productionSearch = "";
+    productionStatusFilter = "";
     showArchivedProductionDuplicates = false;
   }
-  if (page === "installation") installationSearch = "";
+  if (page === "installation") {
+    installationSearch = "";
+    installationStatusFilter = "";
+  }
 }
 
 export function setOrderNavigationFilter(filter) {
   orderSearch = { ...orderSearch, filter: String(filter || "all"), status: "", page: 1, highlightId: "" };
 }
 
-export function setProductionNavigationState({ search = productionSearch, showArchived = showArchivedProductionDuplicates } = {}) {
+export function setProductionNavigationState({ search = productionSearch, status = productionStatusFilter, showArchived = showArchivedProductionDuplicates } = {}) {
   productionSearch = String(search || "");
+  productionStatusFilter = productionStatuses.includes(String(status || "")) ? String(status) : "";
   showArchivedProductionDuplicates = Boolean(showArchived);
 }
 
 export function workflowNavigationState() {
   return {
     orders: { ...orderSearch },
-    production: { search: productionSearch, showArchived: showArchivedProductionDuplicates },
-    installation: { search: installationSearch }
+    production: { search: productionSearch, status: productionStatusFilter, showArchived: showArchivedProductionDuplicates },
+    installation: { search: installationSearch, status: installationStatusFilter }
   };
 }
 
@@ -2242,7 +2249,7 @@ function renderProductionTools() {
   tools.innerHTML = `
     <section class="order-tools production-tools">
       <div class="progress-summary-grid production-stage-summary" aria-label="${t("Production Work Stages")}">
-        ${productionStatuses.map((status) => `<div class="metric-card"><span>${statusLabel(status)}</span><strong>${stageCounts[status]}</strong></div>`).join("")}
+        ${productionStatuses.map((status) => `<button class="metric-card progress-summary-card ${productionStatusFilter === status ? "active" : ""}" type="button" data-production-status-filter="${status}" aria-pressed="${productionStatusFilter === status}"><span>${statusLabel(status)}</span><strong>${stageCounts[status]}</strong></button>`).join("")}
       </div>
       <label>${t("Search SO Order No, Customer, Phone or Quotation No")}
         <input data-production-search value="${escapeHtml(productionSearch)}" placeholder="${t("SO2607006, customer, phone or quotation")}" />
@@ -2263,7 +2270,11 @@ export function productionJobsForDisplay(jobs = state.productionJobs, showArchiv
 }
 
 export function productionJobsForCurrentView() {
-  return productionJobsForDisplay().filter((job) => productionJobMatchesSearch(job));
+  return productionJobsForDisplay().filter((job) => productionJobMatchesSearch(job) && productionJobMatchesStatusFilter(job));
+}
+
+export function productionJobMatchesStatusFilter(job = {}, status = productionStatusFilter) {
+  return !status || normalizeProductionStatus(job.status) === status;
 }
 
 export function linkedOrderForProduction(job = {}) {
@@ -2741,7 +2752,7 @@ function renderInstallationJobs() {
   const activeJobs = installationJobsForCurrentView();
   const diagnostics = installationDispatchDiagnostics();
   list.innerHTML = `
-    ${normalizeText(role()) === "installer" ? installerInstallationSearchHtml() : ""}
+    ${normalizeText(role()) === "installer" ? `${installerInstallationSummaryHtml()}${installerInstallationSearchHtml()}` : ""}
     ${canScheduleInstallation() ? `<section class="installation-diagnostics">
       <span>${t("Pending Arrangement")}<strong>${diagnostics.pendingArrangement}</strong></span>
       <span>${t("Ready to Send")}<strong>${diagnostics.readyToSend}</strong></span>
@@ -2749,7 +2760,7 @@ function renderInstallationJobs() {
       <span>${t("Completed")}<strong>${diagnostics.completed}</strong></span>
       <span>${t("Missing assignedInstallerId")}<strong>${diagnostics.missingAssignedInstallerId}</strong></span>
     </section>` : ""}
-    ${activeJobs.length ? activeJobs.map((job) => installationJobCardHtml(job)).join("") : `<p class="muted-text">${t(installationSearch ? "No matching installation jobs." : "No installation jobs yet.")}</p>`}
+    ${activeJobs.length ? activeJobs.map((job) => installationJobCardHtml(job)).join("") : `<p class="muted-text">${t(installationSearch || installationStatusFilter ? "No matching installation jobs." : "No installation jobs yet.")}</p>`}
   `;
   if (activeCompletionJobId) setupSignatureCanvas(activeCompletionJobId);
 }
@@ -2818,10 +2829,16 @@ export function installationJobMatchesSearch(job = {}, search = installationSear
     .some((value) => normalizeInstallationSearch(value).includes(query));
 }
 
-export function installationJobsForCurrentView(user = state.currentUser, search = installationSearch, source = state) {
+export function installationJobsForCurrentView(user = state.currentUser, search = installationSearch, source = state, status = installationStatusFilter) {
   const visibleJobs = installationJobsForUserFromSource(user, source);
   if (normalizeText(user?.role || source.role) !== "installer") return visibleJobs;
-  return visibleJobs.filter((job) => installationJobMatchesSearch(job, search, source));
+  return visibleJobs.filter((job) => installationJobMatchesSearch(job, search, source) && installationJobMatchesStatusFilter(job, status));
+}
+
+export function installationJobMatchesStatusFilter(job = {}, status = installationStatusFilter) {
+  if (!status) return true;
+  const stage = installationDispatchStage(job);
+  return status === "pending" ? stage === "sent_to_installer" : status === "completed" && stage === "completed";
 }
 
 function installationJobsForUserFromSource(user = state.currentUser, source = state) {
@@ -2838,6 +2855,22 @@ function installationJobsForUserFromSource(user = state.currentUser, source = st
 export function setInstallationSearch(value = "") {
   installationSearch = String(value || "");
   return installationSearch;
+}
+
+function setInstallationStatusFilter(value = "") {
+  installationStatusFilter = ["pending", "completed"].includes(String(value || "")) ? String(value) : "";
+  return installationStatusFilter;
+}
+
+function installerInstallationSummaryHtml() {
+  const visibleJobs = installationJobsForUserFromSource(state.currentUser, state);
+  const counts = {
+    pending: visibleJobs.filter((job) => installationDispatchStage(job) === "sent_to_installer").length,
+    completed: visibleJobs.filter((job) => installationDispatchStage(job) === "completed").length
+  };
+  return `<div class="progress-summary-grid installer-stage-summary" aria-label="${t("Installation Status")}">
+    ${[["pending", "Pending Installation"], ["completed", "Completed"]].map(([status, label]) => `<button class="metric-card progress-summary-card ${installationStatusFilter === status ? "active" : ""}" type="button" data-installer-installation-status-filter="${status}" aria-pressed="${installationStatusFilter === status}"><span>${t(label)}</span><strong>${counts[status]}</strong></button>`).join("")}
+  </div>`;
 }
 
 function installerInstallationSearchHtml() {
@@ -6556,7 +6589,16 @@ function handleProductionSearch(event) {
 
 function handleProductionSearchClick(event) {
   if (event.target.matches("[data-production-search-clear]")) {
-    setProductionNavigationState({ search: "" });
+    setProductionNavigationState({ search: "", status: "" });
+    renderProductionJobs();
+    return;
+  }
+  const statusFilter = event.target.closest?.("[data-production-status-filter]")?.dataset.productionStatusFilter;
+  if (statusFilter) {
+    setProductionNavigationState({
+      status: productionStatusFilter === statusFilter ? "" : statusFilter,
+      showArchived: false
+    });
     renderProductionJobs();
     return;
   }
@@ -6579,7 +6621,7 @@ function handleProductionSearchClick(event) {
   }
   if (tool === "archived") {
     if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
-    setProductionNavigationState({ showArchived: !showArchivedProductionDuplicates });
+    setProductionNavigationState({ status: "", showArchived: !showArchivedProductionDuplicates });
     renderProductionJobs();
   }
   if (archiveGroupId) archiveProductionDuplicateGroupFromPanel(archiveGroupId, event.target);
@@ -6672,6 +6714,13 @@ function handleInstallationClick(event) {
   }
   if (searchAction === "clear") {
     setInstallationSearch("");
+    setInstallationStatusFilter("");
+    renderInstallationJobs();
+    return;
+  }
+  const statusFilter = event.target.closest?.("[data-installer-installation-status-filter]")?.dataset.installerInstallationStatusFilter;
+  if (statusFilter) {
+    setInstallationStatusFilter(installationStatusFilter === statusFilter ? "" : statusFilter);
     renderInstallationJobs();
     return;
   }
