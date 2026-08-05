@@ -573,6 +573,8 @@ const zh = {
   "New Orders": "新订单",
   "In Production": "生产中",
   "Waiting Installation": "等待安装",
+  "Pending Installation": "待安装",
+  "Installation Status": "安装状态",
   "Pending Collection": "等待收款",
   "Monthly Summary": "每月总结",
   "This Month": "这个月",
