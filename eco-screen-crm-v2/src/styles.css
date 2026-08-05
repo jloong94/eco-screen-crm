@@ -1004,11 +1004,13 @@ input:focus, select:focus, textarea:focus {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
   align-items: end;
+  box-sizing: border-box;
+  width: 100%;
   max-width: 100%;
   padding: 12px;
-  border: 1px solid var(--line);
+  border: 2px solid var(--brand);
   border-radius: 12px;
-  background: var(--soft);
+  background: white;
 }
 .installer-installation-search label {
   display: grid;
@@ -1016,9 +1018,13 @@ input:focus, select:focus, textarea:focus {
   gap: 6px;
 }
 .installer-installation-search input {
+  display: block;
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
+  min-height: 48px;
+  background: white;
+  color: var(--ink);
 }
 .installer-installation-search .actions {
   flex-wrap: wrap;
