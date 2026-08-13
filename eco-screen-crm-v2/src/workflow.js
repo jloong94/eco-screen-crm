@@ -6202,8 +6202,11 @@ export function buildLegacyOrderPlan(values = {}, options = {}) {
   if (salespersonId && !salesperson) return { ok: false, message: "The exact selected Sales/Boss/Admin staff stable ID was not found or is inactive." };
   if (commissionTreatment === "include" && !salesperson) return { ok: false, message: "Select an exact Salesperson before including this Legacy Order in commission." };
   const firstValidPaymentDate = String(values.firstValidPaymentDate || "").trim();
-  if (commissionTreatment === "include" && !/^\d{4}-\d{2}-\d{2}$/.test(firstValidPaymentDate)) {
-    return { ok: false, message: "First Valid Payment Date is required when commission is included." };
+  const installationStatus = String(values.installationStatus || "not_arranged").trim();
+  const installationCompletedDate = String(values.installationCompletedDate || "").trim();
+  if (commissionTreatment === "include"
+    && (normalizeWorkflowStatus(installationStatus) !== "completed" || !malaysiaCalendarDate(installationCompletedDate))) {
+    return { ok: false, message: "A completed Installation status and valid Installation Completed Date are required when commission is included." };
   }
   const now = String(options.now || new Date().toISOString());
   const actor = String(options.actor || state.currentUser?.userId || currentActor()).trim();
@@ -6230,8 +6233,8 @@ export function buildLegacyOrderPlan(values = {}, options = {}) {
     amountPaid: number("amountPaid"),
     balance: number("balance"),
     firstValidPaymentDate,
-    installationStatus: String(values.installationStatus || "not_arranged").trim(),
-    installationCompletedDate: String(values.installationCompletedDate || "").trim(),
+    installationStatus,
+    installationCompletedDate,
     remark: String(values.remark || "").trim(),
     commissionTreatment,
     updatedAt: now,
@@ -6403,8 +6406,9 @@ export function monthlyCommissionSales(orders = [], monthValue = "", options = {
     if (!orderId || !selectedMonth) return;
     if (isLegacyOrder(order)) {
       if (order.commissionTreatment !== "include") return;
-      const firstPaymentDate = malaysiaPaymentDate({ paymentDate: order.firstValidPaymentDate });
-      if (!firstPaymentDate || firstPaymentDate.slice(0, 7) !== selectedMonth) return;
+      if (normalizeWorkflowStatus(order.installationStatus) !== "completed") return;
+      const completedDate = malaysiaCalendarDate(order.installationCompletedDate || order.legacyCompletedAt || order.completedAt);
+      if (!completedDate || completedDate.slice(0, 7) !== selectedMonth) return;
       const orderTotal = normalizedFinalOrderTotal({ total: order.orderTotal });
       if (orderTotal === null) {
         invalidTotals.push(orderId);
@@ -6418,20 +6422,16 @@ export function monthlyCommissionSales(orders = [], monthValue = "", options = {
         salespersonId: salesperson.id,
         salespersonName: salesperson.name,
         orderTotal,
-        firstPaymentDate,
-        firstPaymentAmount: positiveNumber(order.amountPaid),
+        completedDate,
         currentPaidAmount: positiveNumber(order.amountPaid),
         currentBalance: positiveNumber(order.balance),
         source: "legacy_manual"
       });
       return;
     }
-    const firstPayment = getOrderPaymentSummary(order).activePayments
-      .map((payment) => ({ payment, date: malaysiaPaymentDate(payment) }))
-      .filter((entry) => entry.date)
-      .sort((left, right) => left.date.localeCompare(right.date)
-        || String(paymentStableId(left.payment)).localeCompare(String(paymentStableId(right.payment))))[0];
-    if (!firstPayment || firstPayment.date.slice(0, 7) !== selectedMonth) return;
+    if (normalizeWorkflowStatus(order.status) !== "completed") return;
+    const completedDate = malaysiaCalendarDate(order.completedAt);
+    if (!completedDate || completedDate.slice(0, 7) !== selectedMonth) return;
 
     const orderTotal = normalizedFinalOrderTotal(order);
     if (orderTotal === null) {
@@ -6449,8 +6449,7 @@ export function monthlyCommissionSales(orders = [], monthValue = "", options = {
       salespersonId: salesperson.id,
       salespersonName: salesperson.name,
       orderTotal,
-      firstPaymentDate: firstPayment.date,
-      firstPaymentAmount: positiveNumber(firstPayment.payment.amount),
+      completedDate,
       currentPaidAmount: paymentSummary.totalPaid,
       currentBalance: roundMoneyValue(orderTotal - paymentSummary.totalPaid)
     });
@@ -6480,12 +6479,7 @@ export function monthlyCommissionSales(orders = [], monthValue = "", options = {
   };
 }
 
-function malaysiaPaymentDate(payment = {}) {
-  const rawValue = payment.paymentDate
-    ?? payment.actualPaymentDate
-    ?? payment.paidAt
-    ?? payment.date
-    ?? payment.createdAt;
+function malaysiaCalendarDate(rawValue) {
   if (typeof rawValue === "string") {
     const value = rawValue.trim();
     if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
