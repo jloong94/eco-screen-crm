@@ -2592,7 +2592,8 @@ const commissionOrders = [
   {
     id: "commission-order-b",
     orderNo: "SO2608002",
-    status: "Sent to Production",
+    status: "Completed",
+    completedAt: "2026-08-04T08:00:00.000Z",
     finalTotal: 2500,
     total: 9999,
     customer: { name: "Commission Customer B" },
@@ -2607,6 +2608,7 @@ const commissionOrders = [
     id: "commission-order-boundary",
     orderNo: "SO2608003",
     status: "Completed",
+    completedAt: "2026-07-31T16:30:00.000Z",
     grandTotal: 1200,
     customer: { name: "Malaysia Boundary" },
     payments: [{ id: "payment-boundary", amount: 200, createdAt: "2026-07-31T16:30:00.000Z", status: "active" }],
@@ -2614,7 +2616,8 @@ const commissionOrders = [
   },
   {
     id: "commission-order-earlier-month",
-    status: "Confirmed",
+    status: "Completed",
+    completedAt: "2026-07-31",
     total: 8000,
     payments: [
       { id: "payment-earlier", amount: 1000, paymentDate: "2026-07-31", status: "active" },
@@ -2632,7 +2635,8 @@ const commissionOrders = [
   },
   {
     id: "commission-order-invalid-total",
-    status: "Confirmed",
+    status: "Completed",
+    completedAt: "2026-08-05",
     total: "invalid",
     payments: [{ id: "payment-invalid-total", amount: 100, paymentDate: "2026-08-05", status: "active" }],
     updatedAt: "2026-08-05T08:00:00.000Z"
@@ -2659,20 +2663,25 @@ const augustCommission = monthlyCommissionSales(commissionOrders, "2026-08", {
     salespersonName: "Sales One"
   }]
 });
-assert(augustCommission.total === 13700 && augustCommission.orderCount === 3,
-  "AD6: Monthly Commission Sales must count each eligible Order's full normalized total once, never its payment amount");
-assert(augustCommission.rows.find((row) => row.orderId === "commission-order-a")?.firstPaymentAmount === 3000
+assert(augustCommission.total === 3700 && augustCommission.orderCount === 2,
+  "AD6: Monthly Commission Sales must count each completed Order's full normalized total once in its Malaysia completion month");
+assert(!augustCommission.rows.some((row) => row.orderId === "commission-order-a")
   && !augustCommission.rows.some((row) => row.orderId === "commission-order-earlier-month")
   && !augustCommission.rows.some((row) => row.orderId === "commission-order-archived")
   && !augustCommission.rows.some((row) => row.orderId === "commission-order-void-only"),
-"AD6: later payments, archived Orders, reversed/void payments and Orders first paid in another month must not inflate commission sales");
-assert(augustCommission.rows.find((row) => row.orderId === "commission-order-b")?.firstPaymentDate === "2026-08-04"
-  && augustCommission.rows.find((row) => row.orderId === "commission-order-boundary")?.firstPaymentDate === "2026-08-01",
-"AD6: a reversed first payment must fall through to the next valid payment and timestamp dates must use Asia/Kuala_Lumpur");
-assert(augustCommission.bySalesperson.find((group) => group.salespersonId === "salesperson-exact-1")?.total === 12500
+"AD6: deposits, later payments, archived Orders and non-completed Orders must not affect commission sales");
+assert(augustCommission.rows.find((row) => row.orderId === "commission-order-b")?.completedDate === "2026-08-04"
+  && augustCommission.rows.find((row) => row.orderId === "commission-order-boundary")?.completedDate === "2026-08-01",
+"AD6: valid completedAt timestamps must use Asia/Kuala_Lumpur, including month boundaries");
+assert(augustCommission.bySalesperson.find((group) => group.salespersonId === "salesperson-exact-1")?.total === 2500
   && augustCommission.bySalesperson.find((group) => group.salespersonId === "")?.total === 1200
   && augustCommission.invalidTotals.join(",") === "commission-order-invalid-total",
 "AD6: salesperson grouping must use the exact stable ID and report missing normalized totals without counting them");
+const septemberCommission = monthlyCommissionSales(commissionOrders.map((order) => order.id === "commission-order-a" && order.updatedAt === "2026-08-03T08:00:00.000Z"
+  ? { ...order, status: "Completed", completedAt: "2026-09-02T08:00:00.000Z", updatedAt: "2026-09-02T08:00:00.000Z" }
+  : order), "2026-09");
+assert(septemberCommission.total === 10000 && septemberCommission.rows[0]?.orderId === "commission-order-a",
+  "AD6: a previously deposited Order must contribute its full value only in the later month when the exact Order becomes completed");
 
 resetWorkflowState();
 const salespersonBoss = { userId: "boss-salesperson-assignment", username: "boss-salesperson", name: "Boss Assignment", role: "Boss", active: true };
@@ -2691,7 +2700,8 @@ const salespersonAssignmentOrder = {
   id: "order-salesperson-assignment",
   orderNo: "SO2608099",
   orderNumber: "SO2608099",
-  status: "Confirmed",
+  status: "Completed",
+  completedAt: "2026-08-08T08:00:00.000Z",
   customer: { name: "Assignment Customer", phone: "0123456789" },
   items: [{ id: "assignment-item", productName: "Roller", quantity: 1 }],
   total: 10000,
@@ -2832,12 +2842,12 @@ const legacyTabOrders = ordersForDisplay(state.orders);
 assert(allOperationalOrders.length === 1 && allOperationalOrders[0].id === "current-order-for-legacy-test"
   && legacyTabOrders.length === 1 && legacyTabOrders[0].id === savedLegacy.id,
 "AF3B: All Orders must contain normal CRM Orders only, while the Legacy Orders tab contains active source=legacy_manual records only");
-const includedLegacyCommission = monthlyCommissionSales(state.orders, "2026-08");
+const includedLegacyCommission = monthlyCommissionSales(state.orders, "2025-12");
 assert(includedLegacyCommission.total === 5000 && includedLegacyCommission.orderCount === 1
   && includedLegacyCommission.rows[0].source === "legacy_manual"
-  && includedLegacyCommission.rows[0].firstPaymentDate === "2026-08-09"
+  && includedLegacyCommission.rows[0].completedDate === "2025-12-05"
   && includedLegacyCommission.bySalesperson[0].salespersonId === legacySalesperson.userId,
-"AF4: an included Legacy Order must count its full Order total once in the Malaysia month of its first valid payment and group by exact salesperson ID");
+"AF4: an included completed Legacy Order must count its full Order total once in its completion month and group by exact salesperson ID");
 const alreadyCommissionedResult = await saveLegacyOrder({ ...legacyValues, commissionTreatment: "already_commissioned", remark: "Edited only as legacy" }, {
   orderId: savedLegacy.id,
   now: "2026-08-12T04:00:00.000Z",
@@ -3241,10 +3251,10 @@ const installerSearchCss = await readFile(new URL("../src/styles.css", import.me
 const mainSource = await readFile(new URL("../src/main.js", import.meta.url), "utf8");
 assert(mainSource.includes('data-monthly-commission-toggle')
   && mainSource.includes('t("Monthly Commission Sales")')
-  && mainSource.includes('t("First Valid Payment Date")')
+  && mainSource.includes('t("Completion Date")')
   && mainSource.includes('t("Current Paid Amount")')
   && mainSource.includes('timeZone: "Asia/Kuala_Lumpur"'),
-"AD6: Dashboard must expose a separate clickable Monthly Commission Sales card and detailed Malaysia-month payment fields");
+"AD6: Dashboard must expose a separate clickable Monthly Commission Sales card and detailed Malaysia completion fields");
 assert(installerSearchWorkflowSource.includes('t("Salesperson Unassigned")')
   && installerSearchWorkflowSource.includes('data-assign-salesperson=')
   && installerSearchWorkflowSource.includes('data-salesperson-assignment-select')
@@ -3350,7 +3360,7 @@ console.log([
   ,"Transactional Send to Production and Production/Order status synchronization: passed"
   ,"Boss/Admin Return to Follow Up exact-link archive, financial preservation and later reconversion: passed"
   ,"Normalized legacy payment ledger, historical payment entry, reversal and stale-cloud protection: passed"
-  ,"Monthly Commission Sales full-Order first-valid-payment calculation and salesperson grouping: passed"
+  ,"Monthly Commission Sales completed-Order calculation and salesperson grouping: passed"
   ,"Boss/Admin exact Order salesperson assignment, audit fields and protected workflow payloads: passed"
   ,"Legacy Order entry, search, commission treatment, count isolation and safe archive: passed"
   ,"Orders Waiting to Production and Waiting to Installer exact-dispatch quick views: passed"

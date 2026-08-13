@@ -1299,14 +1299,14 @@ function monthlyCommissionDetailsHtml(summary) {
     ? summary.bySalesperson.map((group) => `<tr><td>${escapeHtml(group.salespersonName || t("Unassigned"))}</td><td>${escapeHtml(group.salespersonId || t("Missing stable ID"))}</td><td>${group.orderCount}</td><td>${money(group.total)}</td></tr>`).join("")
     : `<tr><td colspan="4">${t("No commission-eligible Orders for this month.")}</td></tr>`;
   const orderRows = summary.rows.length
-    ? summary.rows.map((row) => `<tr><td>${escapeHtml(row.orderNo || "-")}</td><td>${escapeHtml(row.customer || "-")}</td><td>${escapeHtml(row.salespersonName || t("Unassigned"))}</td><td>${money(row.orderTotal)}</td><td>${escapeHtml(row.firstPaymentDate)}</td><td>${money(row.firstPaymentAmount)}</td><td>${money(row.currentPaidAmount)}</td><td>${money(row.currentBalance)}</td></tr>`).join("")
-    : `<tr><td colspan="8">${t("No commission-eligible Orders for this month.")}</td></tr>`;
+    ? summary.rows.map((row) => `<tr><td>${escapeHtml(row.orderNo || "-")}</td><td>${escapeHtml(row.customer || "-")}</td><td>${escapeHtml(row.salespersonName || t("Unassigned"))}</td><td>${money(row.orderTotal)}</td><td>${escapeHtml(row.completedDate)}</td><td>${money(row.currentPaidAmount)}</td><td>${money(row.currentBalance)}</td></tr>`).join("")
+    : `<tr><td colspan="7">${t("No commission-eligible Orders for this month.")}</td></tr>`;
   return `
     <section class="monthly-commission-details" aria-label="${t("Monthly Commission Sales")}">
       <h3>${t("Salesperson Breakdown")}</h3>
       <div class="table-wrap"><table><thead><tr><th>${t("Salesperson")}</th><th>${t("Salesperson stable ID")}</th><th>${t("Orders")}</th><th>${t("Order Total")}</th></tr></thead><tbody>${salespersonRows}</tbody></table></div>
       <h3>${t("Commission-eligible Orders")}</h3>
-      <div class="table-wrap"><table><thead><tr><th>${t("SO number")}</th><th>${t("Customer")}</th><th>${t("Salesperson")}</th><th>${t("Order Total")}</th><th>${t("First Valid Payment Date")}</th><th>${t("First Payment Amount")}</th><th>${t("Current Paid Amount")}</th><th>${t("Current Balance")}</th></tr></thead><tbody>${orderRows}</tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>${t("SO number")}</th><th>${t("Customer")}</th><th>${t("Salesperson")}</th><th>${t("Order Total")}</th><th>${t("Completion Date")}</th><th>${t("Current Paid Amount")}</th><th>${t("Current Balance")}</th></tr></thead><tbody>${orderRows}</tbody></table></div>
       ${summary.invalidTotals.length ? `<p class="warning-text">${t("Orders with missing or invalid totals")}: ${escapeHtml(summary.invalidTotals.join(", "))}</p>` : ""}
     </section>
   `;
