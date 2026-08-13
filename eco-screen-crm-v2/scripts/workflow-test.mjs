@@ -80,8 +80,13 @@ const {
   normalizeProductionStatus,
   getOrderPaymentSummary,
   assignOrderSalesperson,
+  archiveLegacyOrder,
+  buildArchiveLegacyOrderPlan,
+  buildLegacyOrderPlan,
   eligibleSalespersonUsers,
+  legacyOrderMatchesSearch,
   monthlyCommissionSales,
+  saveLegacyOrder,
   generateWarrantyCard,
   installationDispatchDiagnostics,
   installationJobMatchesSearch,
@@ -138,6 +143,7 @@ const {
   isActiveWorkflowRecord,
   normalizedFinalOrderTotal,
   normalizeWorkflowStatus,
+  uniqueActiveBusinessOrders,
   uniqueActiveOrders,
   uniqueActiveProductionJobs
 } = await import("../src/workflowIntegrity.js");
@@ -2761,6 +2767,101 @@ assert(!deniedSalespersonAssignment.ok && state.orders[0].salespersonId === exac
   "AD7: non-Boss/Admin roles must not assign or bulk-change Order salespeople");
 
 resetWorkflowState();
+const legacySecretary = { userId: "secretary-legacy", name: "Legacy Secretary", role: "Secretary", active: true };
+const legacyBoss = { userId: "boss-legacy", name: "Legacy Boss", role: "Boss", active: true };
+const legacySalesperson = { userId: "sales-legacy", name: "Legacy Sales", role: "Sales", active: true };
+state.users = [legacySecretary, legacyBoss, legacySalesperson];
+state.currentUser = legacySecretary;
+state.role = "Secretary";
+state.orders = [{ id: "current-order-for-legacy-test", orderNo: "SO2608001", orderNumber: "SO2608001", status: "Confirmed", total: 1200, createdAt: "2026-08-01T02:00:00.000Z" }];
+const legacySoBefore = nextSalesOrderNumber(new Date("2026-08-12T02:00:00.000Z"));
+const legacyValues = {
+  originalOrderDate: "2025-11-20",
+  originalOrderNo: "OLD-2025-118",
+  customerName: "Legacy Customer",
+  phone: "012-345 6789",
+  projectLocation: "Legacy Project",
+  installationAddress: "24 Legacy Street",
+  salespersonId: legacySalesperson.userId,
+  itemSummary: "Three security screens",
+  orderTotal: "5000",
+  amountPaid: "2000",
+  balance: "3000",
+  firstValidPaymentDate: "2026-08-09",
+  installationStatus: "completed",
+  installationCompletedDate: "2025-12-05",
+  remark: "Imported from paper file",
+  commissionTreatment: "include"
+};
+const legacyPlan = buildLegacyOrderPlan(legacyValues, {
+  id: "legacy-order-test-exact",
+  now: "2026-08-12T03:00:00.000Z",
+  actor: legacySecretary.userId
+});
+const plannedLegacy = legacyPlan.nextState.orders.find((order) => order.id === "legacy-order-test-exact");
+assert(legacyPlan.ok && plannedLegacy.source === "legacy_manual" && plannedLegacy.status === "legacy_record"
+  && plannedLegacy.salespersonId === legacySalesperson.userId && plannedLegacy.salespersonName === legacySalesperson.name
+  && !plannedLegacy.orderNo && !plannedLegacy.orderNumber && !plannedLegacy.quoteId && !plannedLegacy.productionJobId && !plannedLegacy.installationJobId,
+"AF1: Secretary legacy entry must create a unique source-tagged record without SO, Quotation, Production or Installation links");
+assert(legacyOrderMatchesSearch(plannedLegacy, "OLD-2025")
+  && legacyOrderMatchesSearch(plannedLegacy, "legacy customer")
+  && legacyOrderMatchesSearch(plannedLegacy, "012-345")
+  && legacyOrderMatchesSearch(plannedLegacy, "Legacy Project")
+  && legacyOrderMatchesSearch(plannedLegacy, "24 Legacy Street"),
+"AF2: Legacy Orders must be searchable by original number, customer, phone, project and installation address");
+const savedLegacyResult = await saveLegacyOrder(legacyValues, {
+  id: "legacy-order-test-exact",
+  now: "2026-08-12T03:00:00.000Z",
+  actor: legacySecretary.userId,
+  downloadBackup: false
+});
+const savedLegacy = state.orders.find((order) => order.id === "legacy-order-test-exact");
+assert(savedLegacyResult.ok && savedLegacy?.originalOrderDate === "2025-11-20"
+  && state.quotations.length === 0 && state.productionJobs.length === 0 && state.installationJobs.length === 0
+  && uniqueActiveBusinessOrders(state.orders).length === 1
+  && nextSalesOrderNumber(new Date("2026-08-12T02:00:00.000Z")) === legacySoBefore,
+"AF3: saving a Legacy Order must not change current business Order counts, create workflow records or consume an SO number");
+setOrderNavigationFilter("all");
+const allOperationalOrders = ordersForDisplay(state.orders);
+setOrderNavigationFilter("legacy");
+const legacyTabOrders = ordersForDisplay(state.orders);
+assert(allOperationalOrders.length === 1 && allOperationalOrders[0].id === "current-order-for-legacy-test"
+  && legacyTabOrders.length === 1 && legacyTabOrders[0].id === savedLegacy.id,
+"AF3B: All Orders must contain normal CRM Orders only, while the Legacy Orders tab contains active source=legacy_manual records only");
+const includedLegacyCommission = monthlyCommissionSales(state.orders, "2026-08");
+assert(includedLegacyCommission.total === 5000 && includedLegacyCommission.orderCount === 1
+  && includedLegacyCommission.rows[0].source === "legacy_manual"
+  && includedLegacyCommission.rows[0].firstPaymentDate === "2026-08-09"
+  && includedLegacyCommission.bySalesperson[0].salespersonId === legacySalesperson.userId,
+"AF4: an included Legacy Order must count its full Order total once in the Malaysia month of its first valid payment and group by exact salesperson ID");
+const alreadyCommissionedResult = await saveLegacyOrder({ ...legacyValues, commissionTreatment: "already_commissioned", remark: "Edited only as legacy" }, {
+  orderId: savedLegacy.id,
+  now: "2026-08-12T04:00:00.000Z",
+  actor: legacySecretary.userId,
+  downloadBackup: false
+});
+assert(alreadyCommissionedResult.ok
+  && state.orders.find((order) => order.id === savedLegacy.id)?.originalOrderNo === "OLD-2025-118"
+  && monthlyCommissionSales(state.orders, "2026-08").total === 0,
+"AF5: Secretary may edit the exact Legacy Order, while already-commissioned records never enter Monthly Commission Sales");
+const archivePlan = buildArchiveLegacyOrderPlan(savedLegacy.id, "Paper record retired", { now: "2026-08-12T05:00:00.000Z", actor: legacyBoss.userId });
+assert(archivePlan.ok && archivePlan.nextState.orders.find((order) => order.id === savedLegacy.id)?.status === "legacy_archived"
+  && archivePlan.nextState.orders.find((order) => order.id === savedLegacy.id)?.isArchived === true,
+"AF6: Legacy archive must target one exact stable ID and preserve it as a safe audit record");
+state.currentUser = legacyBoss;
+state.role = "Boss";
+const archivedLegacyResult = await archiveLegacyOrder(savedLegacy.id, "Paper record retired", {
+  now: "2026-08-12T05:00:00.000Z",
+  actor: legacyBoss.userId,
+  downloadBackup: false
+});
+const archivedLegacy = state.orders.find((order) => order.id === savedLegacy.id);
+assert(archivedLegacyResult.ok && archivedLegacy.isArchived === true && archivedLegacy.status === "legacy_archived"
+  && archivedLegacy.statusBeforeArchive === "legacy_record" && archivedLegacy.originalOrderNo === "OLD-2025-118"
+  && archivedLegacy.customerName === "Legacy Customer" && archivedLegacy.orderTotal === 5000,
+"AF7: Boss/Admin safe archive must preserve the full Legacy Order and never hard-delete it");
+
+resetWorkflowState();
 state.currentUser = { userId: "boss-so-reassign", username: "boss-so-reassign", name: "Boss SO Reassign", role: "Boss", active: true };
 state.role = "Boss";
 const reassignCorrectQuote = {
@@ -3054,6 +3155,15 @@ assert(installerSearchWorkflowSource.includes('t("Salesperson Unassigned")')
   && installerSearchWorkflowSource.includes('data-save-salesperson-assignment=')
   && installerSearchWorkflowSource.includes('downloadOrderActionBackup(plan)'),
 "AD7: active Order cards must show the unassigned label and a Boss/Admin exact-ID assignment panel backed up before save");
+assert(installerSearchWorkflowSource.includes('data-order-tool="add-legacy-order"')
+  && installerSearchWorkflowSource.includes('data-legacy-field="originalOrderDate"')
+  && installerSearchWorkflowSource.includes('class="legacy-order-badge"')
+  && installerSearchWorkflowSource.includes('source: "legacy_manual"')
+  && installerSearchWorkflowSource.includes('status: "legacy_archived"')
+  && installerSearchWorkflowSource.includes('{ id: "legacy", label: "Legacy Orders" }')
+  && installerSearchWorkflowSource.includes('filter.id === "legacy" ? ` <strong>${legacyOrderCount}</strong>`')
+  && mainSource.includes("uniqueActiveBusinessOrders(state.orders)"),
+"AF8: Orders UI must expose a counted Legacy Orders tab plus create/edit/archive controls while current-Order metrics stay isolated");
 assert(installerSearchWorkflowSource.includes('data-installer-installation-search')
   && installerSearchWorkflowSource.includes('data-installation-search-action="search"')
   && installerSearchWorkflowSource.includes('data-installation-search-action="clear"')
@@ -3136,6 +3246,7 @@ console.log([
   ,"Normalized legacy payment ledger, historical payment entry, reversal and stale-cloud protection: passed"
   ,"Monthly Commission Sales full-Order first-valid-payment calculation and salesperson grouping: passed"
   ,"Boss/Admin exact Order salesperson assignment, audit fields and protected workflow payloads: passed"
+  ,"Legacy Order entry, search, commission treatment, count isolation and safe archive: passed"
   ,"Installation pending/ready/send/recall/completed exact-ID dispatch control: passed"
   ,"Warranty validation, exact links, unique numbering, reuse, regeneration and mobile preview: passed"
   ,"Independent Warranty page, exact relationships, search, Malaysia-date filters and access control: passed"
