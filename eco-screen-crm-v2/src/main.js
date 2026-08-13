@@ -19,7 +19,7 @@ import {
 } from "./state.js";
 import { itemWithCalculatedTotals, money, quoteTotals, toNumber } from "./calculations.js";
 import { attachWorkflowEvents, getQuotationDisplayNo, monthlyCommissionSales, nextSalesOrderNumber, renderWorkflowModules, resetWorkflowNavigationState } from "./workflow.js";
-import { normalizedFinalOrderTotal, uniqueActiveOrders } from "./workflowIntegrity.js";
+import { normalizedFinalOrderTotal, uniqueActiveBusinessOrders } from "./workflowIntegrity.js";
 import { t } from "./i18n.js";
 import { canAccessPage, defaultPageForRole, isBossOrAdmin, pageDefinitions, role } from "./permissions.js";
 import { cloudCollections, cloudConfigurationIssue, isCloudConfigured, safeSyncWithCloud, syncFromCloud, syncToCloud } from "./cloudSync.js";
@@ -124,7 +124,7 @@ function isCurrentPage(page) {
 }
 
 function dashboardPageHtml() {
-  const activeOrders = uniqueActiveOrders(state.orders);
+  const activeOrders = uniqueActiveBusinessOrders(state.orders);
   const totalSales = activeOrders.reduce((sum, order) => sum + (normalizedFinalOrderTotal(order) ?? 0), 0);
   const activeQuotationCount = state.quotations.filter((quote) => quote.isArchived !== true && String(quote.status || "").trim().toLowerCase() !== "deleted_archived").length;
   return `
@@ -1189,7 +1189,7 @@ function attachMonthlySummaryEvents() {
 }
 
 function monthlySummary(monthValue) {
-  const rows = uniqueActiveOrders(state.orders).filter((order) => isOrderInMonth(order, monthValue));
+  const rows = uniqueActiveBusinessOrders(state.orders).filter((order) => isOrderInMonth(order, monthValue));
   return rows.reduce((summary, order) => {
     const total = normalizedFinalOrderTotal(order) ?? 0;
     const collected = totalCollectedForOrder(order);

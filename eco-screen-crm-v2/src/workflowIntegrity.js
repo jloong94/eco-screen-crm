@@ -61,6 +61,10 @@ export function uniqueActiveOrders(orders = []) {
   return uniqueLatestByStableId(Array.isArray(orders) ? orders : []).filter(isActiveOrderRecord);
 }
 
+export function uniqueActiveBusinessOrders(orders = []) {
+  return uniqueActiveOrders(orders).filter((order) => String(order?.source || "").trim().toLowerCase() !== "legacy_manual");
+}
+
 export function uniqueActiveProductionJobs(productionJobs = []) {
   return uniqueLatestByStableId(Array.isArray(productionJobs) ? productionJobs : []).filter(isActiveWorkflowRecord);
 }
