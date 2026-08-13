@@ -87,6 +87,8 @@ const warrantyTerms = [
 ];
 const orderFilters = [
   { id: "all", label: "All Orders" },
+  { id: "waiting-production", label: "Waiting to Production" },
+  { id: "waiting-installer", label: "Waiting to Installer" },
   { id: "legacy", label: "Legacy Orders" },
   { id: "pending", label: "Pending" },
   { id: "production", label: "Production" },
@@ -139,6 +141,7 @@ function defaultOrderSearch() {
     orderNumber: "",
     customerName: "",
     phone: "",
+    projectAddress: "",
     filter: "all",
     status: "",
     installationDate: "",
@@ -825,13 +828,17 @@ export function renderOrders() {
 function renderOrderList() {
   const list = document.querySelector("#orderList");
   if (!list) return;
+  if (orderSearch.filter === "waiting-installer") {
+    renderWaitingInstallerList(list);
+    return;
+  }
   const orders = sortedOrders(ordersForDisplay());
   const totalPages = Math.max(1, Math.ceil(orders.length / 20));
   orderSearch.page = Math.min(Math.max(1, Number(orderSearch.page || 1)), totalPages);
   const pageRows = orders.slice((orderSearch.page - 1) * 20, orderSearch.page * 20);
   list.innerHTML = `
     <div class="compact-order-list">
-      ${pageRows.length ? pageRows.map((order) => renderCompactOrderRow(order)).join("") : `<p class="muted-text">${state.orders.length ? t("No order found") : t("No orders yet. Convert a saved quote to create an order.")}</p>`}
+      ${pageRows.length ? pageRows.map((order) => orderSearch.filter === "waiting-production" ? renderWaitingProductionRow(order) : renderCompactOrderRow(order)).join("") : `<p class="muted-text">${state.orders.length ? t("No order found") : t("No orders yet. Convert a saved quote to create an order.")}</p>`}
     </div>
     <div class="pagination-row">
       <button class="btn" type="button" data-order-page="${orderSearch.page - 1}" ${orderSearch.page <= 1 ? "disabled" : ""}>${t("Previous")}</button>
@@ -872,12 +879,22 @@ function renderOrderTools() {
   if (!tools) return;
   const visibleFilters = orderFilters.filter((filter) => filter.id !== "duplicate-archived" || isBossOrAdmin());
   const legacyOrderCount = uniqueActiveOrders(state.orders).filter(isLegacyOrder).length;
+  const waitingProductionCount = waitingToProductionOrders().length;
+  const waitingInstallerCount = waitingToInstallerJobs().length;
+  const quickViewCount = (filterId) => filterId === "waiting-production"
+    ? waitingProductionCount
+    : filterId === "waiting-installer"
+      ? waitingInstallerCount
+      : filterId === "legacy"
+        ? legacyOrderCount
+        : null;
   tools.innerHTML = `
     <section class="order-tools">
       <div class="form-grid compact">
       <label>${t("Search SO Order No / Quotation No")}<input data-order-search="orderNumber" value="${orderSearch.orderNumber}" placeholder="${t("SO2607001 or quotation number")}" /></label>
       <label>${t("Search Customer Name")}<input data-order-search="customerName" value="${orderSearch.customerName}" placeholder="${t("Customer name")}" /></label>
         <label>${t("Search Phone Number")}<input data-order-search="phone" value="${orderSearch.phone}" placeholder="0123456789" /></label>
+      <label>${t("Search Project / Address")}<input data-order-search="projectAddress" value="${orderSearch.projectAddress}" placeholder="${t("Project or address")}" /></label>
       <label>${t("Status")}<select data-order-search="status"><option value="">${t("All status")}</option>${visibleFilters.map((filter) => `<option value="${filter.id}" ${orderSearch.status === filter.id ? "selected" : ""}>${t(filter.label)}</option>`).join("")}</select></label>
         <label>${t("Installation Date")}<input type="date" data-order-search="installationDate" value="${orderSearch.installationDate}" /></label>
       <label>${t("Sort by")}<select data-order-search="sort">
@@ -896,7 +913,7 @@ function renderOrderTools() {
       ${isBossOrAdmin() ? `<button class="btn" type="button" data-order-tool="reassign-so-number">${t("Reassign SO Number")}</button>` : ""}
       </div>
       <div class="filter-tabs">
-        ${visibleFilters.map((filter) => `<button class="filter-tab ${orderSearch.filter === filter.id ? "active" : ""}" type="button" data-order-filter="${filter.id}">${t(filter.label)}${filter.id === "legacy" ? ` <strong>${legacyOrderCount}</strong>` : ""}</button>`).join("")}
+        ${visibleFilters.map((filter) => `<button class="filter-tab ${orderSearch.filter === filter.id ? "active" : ""}" type="button" data-order-filter="${filter.id}">${t(filter.label)}${quickViewCount(filter.id) === null ? "" : ` <strong>${quickViewCount(filter.id)}</strong>`}</button>`).join("")}
       </div>
       ${duplicateOrderPanelHtml()}
       ${workflowIntegrityPanelHtml()}
@@ -1232,6 +1249,96 @@ function renderCompactOrderRow(order) {
       ${editingOrderId === order.id && orderEditorDraft ? orderItemEditorHtml(orderEditorDraft) : ""}
     </article>
   `;
+}
+
+export function waitingToProductionOrders(source = state) {
+  return uniqueActiveBusinessOrders(source.orders || []).filter((order) => {
+    if (normalizeWorkflowStatus(order.status) !== "confirmed") return false;
+    const orderId = String(order.id || "").trim();
+    if (!orderId) return false;
+    return getOrderDispatchState(order) === "waiting-to-send";
+  });
+}
+
+export function waitingToInstallerJobs(source = state) {
+  const activeOrderIds = new Set(uniqueActiveBusinessOrders(source.orders || []).map((order) => String(order.id || "").trim()));
+  const uniqueJobs = new Map();
+  (Array.isArray(source.installationJobs) ? source.installationJobs : []).forEach((job) => {
+    const jobId = String(job?.id || "").trim();
+    if (!jobId || !isActiveWorkflowRecord(job)) return;
+    const current = uniqueJobs.get(jobId);
+    const timestamp = Date.parse(job.updatedAt || job.createdAt || "") || 0;
+    const currentTimestamp = Date.parse(current?.updatedAt || current?.createdAt || "") || 0;
+    if (!current || timestamp >= currentTimestamp) uniqueJobs.set(jobId, job);
+  });
+  return [...uniqueJobs.values()].filter((job) => {
+    const status = normalizeWorkflowStatus(job.status);
+    const orderId = String(job.orderId || "").trim();
+    return ["pending_arrangement", "ready_to_send"].includes(status) && orderId && activeOrderIds.has(orderId);
+  });
+}
+
+function renderWaitingProductionRow(order) {
+  const phone = order.customer?.phone || order.phone || "";
+  const project = order.projectName || order.locationProjectName || order.projectLocation || order.area || order.customer?.area || "";
+  const address = order.siteAddress || order.installationAddress || order.address || order.customer?.address || "";
+  return `
+    <article class="compact-order-row quick-view-row" data-order-card="${escapeHtml(order.id)}" data-order-id="${escapeHtml(order.id)}">
+      <div><strong>${escapeHtml(getOrderDisplayNo(order) || "-")}</strong><span>${escapeHtml(order.customer?.name || order.customerName || "-")}</span><span>${phone ? `<a href="tel:${escapeHtml(String(phone).replace(/[^+\d]/g, ""))}">${escapeHtml(phone)}</a>` : "-"}</span></div>
+      <div><span>${escapeHtml(project || "-")}</span><span>${escapeHtml(address || "-")}</span></div>
+      <div><span>${t("Production Status")}: ${statusLabel(getOrderProductionStatus(order))}</span><span>${t("Dispatch Status")}: ${t("Waiting to Production")}</span></div>
+      <div class="actions"><button class="btn" type="button" data-view-order="${escapeHtml(order.id)}">${t("View Order")}</button>${canSendOrder() ? `<button class="btn primary" type="button" data-send-production="${escapeHtml(order.id)}">${t("Send to Production")}</button>` : ""}</div>
+    </article>
+  `;
+}
+
+function renderWaitingInstallerList(list) {
+  const allRows = waitingToInstallerJobs().filter((job) => waitingInstallerJobMatchesSearch(job));
+  const totalPages = Math.max(1, Math.ceil(allRows.length / 20));
+  orderSearch.page = Math.min(Math.max(1, Number(orderSearch.page || 1)), totalPages);
+  const pageRows = allRows.slice((orderSearch.page - 1) * 20, orderSearch.page * 20);
+  list.innerHTML = `
+    <div class="compact-order-list waiting-installer-list">
+      ${pageRows.length ? pageRows.map(renderWaitingInstallerRow).join("") : `<p class="muted-text">${t("No Installation jobs are waiting to be sent.")}</p>`}
+    </div>
+    <div class="pagination-row">
+      <button class="btn" type="button" data-order-page="${orderSearch.page - 1}" ${orderSearch.page <= 1 ? "disabled" : ""}>${t("Previous")}</button>
+      <span>${allRows.length} ${t("installation jobs")} | ${t("Page")} ${orderSearch.page} / ${totalPages}</span>
+      <button class="btn" type="button" data-order-page="${orderSearch.page + 1}" ${orderSearch.page >= totalPages ? "disabled" : ""}>${t("Next")}</button>
+    </div>
+  `;
+}
+
+function renderWaitingInstallerRow(job) {
+  const details = installationJobDisplayDetails(job);
+  const order = details.order;
+  const exactProduction = uniqueActiveProductionJobs(state.productionJobs).find((production) => String(production.orderId || "") === String(job.orderId || ""));
+  const productionStatus = exactProduction?.status || order?.productionStatus || "not_produced";
+  const phone = details.phone
+    ? `<a class="installation-phone-link" href="tel:${escapeHtml(String(details.phone).replace(/[^+\d]/g, ""))}">${escapeHtml(details.phone)}</a>`
+    : "-";
+  return `
+    <article class="compact-order-row quick-view-row" data-waiting-installation-id="${escapeHtml(job.id)}">
+      <div><strong>${escapeHtml(details.orderNo || "-")}</strong><span>${escapeHtml(details.customer || "-")}</span><span>${phone}</span></div>
+      <div><span>${escapeHtml(details.project || "-")}</span><span>${escapeHtml(details.address || "-")}</span></div>
+      <div><span>${t("Production Status")}: ${statusLabel(normalizeProductionStatus(productionStatus))}</span><span>${t("Installation Date")}: ${escapeHtml(job.installationDate || t("Not arranged"))}</span></div>
+      <div><span>${t("Assigned Installer")}: ${escapeHtml(job.assignedInstallerName || "-")}</span><span>${t("Dispatch Status")}: ${t(installationDispatchLabel(job))}</span></div>
+      <div class="actions">
+        <button class="btn" type="button" data-quick-view-installation="${escapeHtml(job.id)}">${t("View Installation")}</button>
+        ${canScheduleInstallation() ? `<button class="btn" type="button" data-quick-arrange-installation="${escapeHtml(job.id)}">${t("Arrange Installation")}</button><button class="btn primary" type="button" data-quick-send-installation="${escapeHtml(job.id)}">${t("Send to Installer")}</button>` : ""}
+      </div>
+    </article>
+  `;
+}
+
+export function waitingInstallerJobMatchesSearch(job, search = orderSearch, source = state) {
+  const details = installationJobDisplayDetails(job, source);
+  const broadValues = [details.orderNo, details.customer, details.phone, details.project, details.address];
+  const matches = (query, values) => !query || values.some((value) => normalizeInstallationSearch(value).includes(normalizeInstallationSearch(query)));
+  return matches(search.orderNumber, broadValues)
+    && matches(search.customerName, [details.customer])
+    && matches(search.phone, [details.phone])
+    && matches(search.projectAddress, [details.project, details.address]);
 }
 
 function renderLegacyOrderRow(order) {
@@ -1594,18 +1701,48 @@ export function ordersForDisplay(orders = state.orders) {
   return source.filter((order) => matchesOrderFilter(order) && matchesOrderSearch(order));
 }
 
+export function waitingProductionOrderMatchesSearch(order = {}, search = {}) {
+  const orderNo = getOrderDisplayNo(order);
+  const customer = order.customer?.name || order.customerName || "";
+  const phone = order.customer?.phone || order.phone || "";
+  const project = [order.projectName, order.locationProjectName, order.projectLocation, order.area, order.customer?.area].filter(Boolean).join(" ");
+  const address = [order.siteAddress, order.installationAddress, order.address, order.customer?.address].filter(Boolean).join(" ");
+  const matches = (query, values) => !query || values.some((value) => normalizeInstallationSearch(value).includes(normalizeInstallationSearch(query)));
+  return matches(search.orderNumber, [orderNo, customer, phone, project, address])
+    && matches(search.customerName, [customer])
+    && matches(search.phone, [phone])
+    && matches(search.projectAddress, [project, address]);
+}
+
 function matchesOrderSearch(order) {
   const orderNumber = normalizeText(isLegacyOrder(order) ? order.originalOrderNo : getOrderDisplayNo(order));
   const quotationNumber = normalizeText(order.quoteNumber || order.quotationNo || order.quoteNo);
   const customerName = normalizeText(order.customer?.name || order.customerName);
   const phone = normalizeText(order.customer?.phone || order.phone);
+  const projectAddress = normalizeText([
+    order.projectName,
+    order.locationProjectName,
+    order.projectLocation,
+    order.area,
+    order.customer?.area,
+    order.siteAddress,
+    order.installationAddress,
+    order.address,
+    order.customer?.address
+  ].filter(Boolean).join(" "));
   const broadLegacyMatch = !isLegacyOrder(order) || !orderSearch.orderNumber || legacyOrderMatchesSearch(order, orderSearch.orderNumber);
   const installationJob = getOrderInstallationJob(order);
   const installDate = installationJob?.installationDate || order.installationDate || "";
+  if (orderSearch.filter === "waiting-production") {
+    return waitingProductionOrderMatchesSearch(order, orderSearch)
+      && (!orderSearch.status || matchesOrderNavigationFilter(order, orderSearch.status))
+      && (!orderSearch.installationDate || installDate === orderSearch.installationDate);
+  }
   return broadLegacyMatch
     && (!orderSearch.orderNumber || isLegacyOrder(order) || orderNumber.includes(normalizeText(orderSearch.orderNumber)) || quotationNumber.includes(normalizeText(orderSearch.orderNumber)))
     && (!orderSearch.customerName || customerName.includes(normalizeText(orderSearch.customerName)))
     && (!orderSearch.phone || phone.includes(normalizeText(orderSearch.phone)))
+    && (!orderSearch.projectAddress || projectAddress.includes(normalizeText(orderSearch.projectAddress)))
     && (!orderSearch.status || matchesOrderNavigationFilter(order, orderSearch.status))
     && (!orderSearch.installationDate || installDate === orderSearch.installationDate);
 }
@@ -1619,6 +1756,8 @@ function matchesOrderNavigationFilter(order, filter) {
   if (!isActiveOrderRecord(order)) return false;
   if (filter === "legacy") return isLegacyOrder(order);
   if (isLegacyOrder(order)) return false;
+  if (filter === "waiting-production") return waitingToProductionOrders().some((candidate) => String(candidate.id || "") === String(order.id || ""));
+  if (filter === "waiting-installer") return false;
   if (filter === "all") return true;
   if (filter === "pending" || filter === "waiting-to-send") return getOrderDispatchState(order) === "waiting-to-send";
   if (filter === "production" || filter === "sent-to-production") return getOrderDispatchState(order) === "sent-to-production";
@@ -2221,7 +2360,8 @@ export function getOrderDispatchState(order = {}) {
     "pending_collection",
     "touch_up"
   ]);
-  return order.sentToProduction === true || sentStatuses.has(orderStatus)
+  const hasSentAudit = Number.isFinite(Date.parse(String(order.sentToProductionAt || "")));
+  return order.sentToProduction === true || hasSentAudit || sentStatuses.has(orderStatus)
     ? "sent-to-production"
     : "waiting-to-send";
 }
@@ -3298,6 +3438,9 @@ function handleOrderClick(event) {
   const cancelSalespersonAssignmentId = event.target.dataset.cancelSalespersonAssignment;
   const editLegacyOrderId = event.target.dataset.editLegacyOrder;
   const archiveLegacyOrderId = event.target.dataset.archiveLegacyOrder;
+  const quickViewInstallationId = event.target.dataset.quickViewInstallation;
+  const quickArrangeInstallationId = event.target.dataset.quickArrangeInstallation;
+  const quickSendInstallationId = event.target.dataset.quickSendInstallation;
   if (page) {
     orderSearch = { ...orderSearch, page: Number(page) || 1 };
     renderOrderList();
@@ -3333,6 +3476,24 @@ function handleOrderClick(event) {
   if (cancelSalespersonAssignmentId) closeSalespersonAssignmentPanel();
   if (editLegacyOrderId) openLegacyOrderEditor(editLegacyOrderId);
   if (archiveLegacyOrderId) archiveLegacyOrderFromCard(archiveLegacyOrderId, event.target);
+  if (quickViewInstallationId) openQuickInstallation(quickViewInstallationId);
+  if (quickArrangeInstallationId) openQuickInstallation(quickArrangeInstallationId);
+  if (quickSendInstallationId) openQuickInstallation(quickSendInstallationId, true);
+}
+
+function openQuickInstallation(jobId, previewSend = false) {
+  const exactJobId = String(jobId || "").trim();
+  const job = waitingToInstallerJobs().find((candidate) => String(candidate.id || "") === exactJobId);
+  if (!job) return failInstallationAction("The exact active Installation is no longer waiting to be sent.");
+  if (previewSend && !canScheduleInstallation()) return failInstallationAction("Permission denied: only Boss, Admin or Secretary can send Installation.");
+  const navigation = document.querySelector?.('[data-page="installation"]');
+  if (!navigation) return failInstallationAction("You do not have permission to access Installation.");
+  navigation.click();
+  setTimeout(() => {
+    if (previewSend) previewInstallationDispatch(exactJobId);
+    document.querySelector?.(`[data-installation-card="${exactJobId}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, 50);
+  return { ok: true, installationId: exactJobId, previewSend };
 }
 
 export function legacyOrderMatchesSearch(order = {}, query = "") {

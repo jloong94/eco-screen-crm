@@ -87,6 +87,10 @@ const {
   legacyOrderMatchesSearch,
   monthlyCommissionSales,
   saveLegacyOrder,
+  waitingInstallerJobMatchesSearch,
+  waitingProductionOrderMatchesSearch,
+  waitingToInstallerJobs,
+  waitingToProductionOrders,
   generateWarrantyCard,
   installationDispatchDiagnostics,
   installationJobMatchesSearch,
@@ -2862,6 +2866,97 @@ assert(archivedLegacyResult.ok && archivedLegacy.isArchived === true && archived
 "AF7: Boss/Admin safe archive must preserve the full Legacy Order and never hard-delete it");
 
 resetWorkflowState();
+const quickViewBoss = { userId: "boss-quick-views", name: "Quick View Boss", role: "Boss", active: true };
+const quickViewInstaller = { userId: "installer-quick-views", name: "Quick Installer", role: "Installer", active: true };
+state.currentUser = quickViewBoss;
+state.role = "Boss";
+state.users = [quickViewBoss, quickViewInstaller];
+const waitingProductionOrder = {
+  id: "order-waiting-production",
+  orderNo: "SO2608101",
+  orderNumber: "SO2608101",
+  status: "Confirmed",
+  productionStatus: "in_production",
+  customer: { name: "Waiting Production Customer", phone: "012-810 1001", area: "Quick Project", address: "101 Quick Street" },
+  items: [{ productName: "Security Screen", quantity: 1 }],
+  total: 1000,
+  updatedAt: "2026-08-13T01:00:00.000Z"
+};
+const linkedProductionOrder = { ...waitingProductionOrder, id: "order-has-exact-production", orderNo: "SO2608102", orderNumber: "SO2608102", productionStatus: "not_produced" };
+state.orders = [
+  waitingProductionOrder,
+  linkedProductionOrder,
+  { ...waitingProductionOrder, id: "order-already-sent", orderNo: "SO2608103", status: "Sent to Production", sentToProduction: true },
+  { ...waitingProductionOrder, id: "order-sent-audit-only", orderNo: "SO2608107", sentToProductionAt: "2026-08-13T01:30:00.000Z" },
+  { ...waitingProductionOrder, id: "order-follow-up-quick", orderNo: "SO2608104", status: "follow_up" },
+  { ...waitingProductionOrder, id: "order-archived-quick", orderNo: "SO2608105", status: "cancelled_archived", isArchived: true },
+  { ...waitingProductionOrder, id: "legacy-order-quick", orderNo: "", orderNumber: "", originalOrderNo: "OLD-QUICK", source: "legacy_manual", status: "legacy_record" }
+];
+state.productionJobs = [{ id: "production-exact-quick", orderId: linkedProductionOrder.id, status: "not_produced", updatedAt: "2026-08-13T02:00:00.000Z" }];
+const waitingProductionRows = waitingToProductionOrders();
+assert(waitingProductionRows.length === 2
+  && waitingProductionRows.some((order) => order.id === waitingProductionOrder.id)
+  && waitingProductionRows.some((order) => order.id === linkedProductionOrder.id)
+  && !waitingProductionRows.some((order) => order.id === "order-sent-audit-only"),
+"AG1: Waiting to Production must use explicit dispatch evidence, never Production Job existence alone, and exclude sent, legacy, follow-up and archived records");
+assert(waitingProductionOrderMatchesSearch(waitingProductionOrder, { orderNumber: "so-2608-101" })
+  && waitingProductionOrderMatchesSearch(waitingProductionOrder, { orderNumber: "waiting production" })
+  && waitingProductionOrderMatchesSearch(waitingProductionOrder, { phone: "0128101001" })
+  && waitingProductionOrderMatchesSearch(waitingProductionOrder, { projectAddress: "quick street" }),
+"AG2: Waiting to Production search must support normalized SO, customer, phone, project and address without changing stored values");
+const sentFromQuickView = await sendOrderToProduction(waitingProductionOrder.id);
+assert(sentFromQuickView.ok && !waitingToProductionOrders().some((order) => order.id === waitingProductionOrder.id),
+"AG3: an Order must disappear from Waiting to Production immediately after the existing Send to Production action succeeds");
+
+const waitingInstallerOrder = state.orders.find((order) => order.id === waitingProductionOrder.id);
+const secondInstallerOrder = { ...waitingProductionOrder, id: "order-waiting-installer-two", orderNo: "SO2608106", orderNumber: "SO2608106", status: "Sent to Production", sentToProduction: true };
+state.orders.push(secondInstallerOrder);
+const quickPendingInstallation = {
+  id: "installation-pending-quick",
+  orderId: waitingInstallerOrder.id,
+  orderNo: waitingInstallerOrder.orderNo,
+  status: "pending_arrangement",
+  customer: { name: "Waiting Production Customer", phone: "012-810 1001" },
+  projectName: "Quick Project",
+  address: "101 Quick Street",
+  updatedAt: "2026-08-13T03:00:00.000Z"
+};
+const quickReadyInstallation = {
+  id: "installation-ready-quick",
+  orderId: secondInstallerOrder.id,
+  orderNo: secondInstallerOrder.orderNo,
+  status: "ready_to_send",
+  customer: { name: "Ready Installer Customer", phone: "012-810-1006" },
+  projectName: "Ready Project",
+  address: "106 Ready Avenue",
+  installationDate: "2026-08-20",
+  assignedInstallerId: quickViewInstaller.userId,
+  assignedInstallerName: quickViewInstaller.name,
+  updatedAt: "2026-08-13T04:00:00.000Z"
+};
+state.installationJobs = [
+  quickPendingInstallation,
+  quickReadyInstallation,
+  { ...quickPendingInstallation, id: "installation-sent-quick", status: "sent_to_installer" },
+  { ...quickPendingInstallation, id: "installation-completed-quick", status: "completed" },
+  { ...quickPendingInstallation, id: "installation-archived-quick", isArchived: true },
+  { ...quickPendingInstallation, id: "installation-wrong-order-quick", orderId: "missing-order-id" },
+  { ...quickPendingInstallation, id: "installation-legacy-link-quick", orderId: "legacy-order-quick" }
+];
+const waitingInstallerRows = waitingToInstallerJobs();
+assert(waitingInstallerRows.map((job) => job.id).sort().join(",") === "installation-pending-quick,installation-ready-quick",
+"AG4: Waiting to Installer must use exact active normal Order links and only pending_arrangement/ready_to_send active Installation records");
+assert(waitingInstallerJobMatchesSearch(quickReadyInstallation, { orderNumber: "SO-2608-106" }, state)
+  && waitingInstallerJobMatchesSearch(quickReadyInstallation, { orderNumber: "ready installer" }, state)
+  && waitingInstallerJobMatchesSearch(quickReadyInstallation, { phone: "0128101006" }, state)
+  && waitingInstallerJobMatchesSearch(quickReadyInstallation, { projectAddress: "ready avenue" }, state),
+"AG5: Waiting to Installer search must support normalized SO, customer, phone, project and address through the exact linked record");
+const sentInstallerFromQuickView = await sendInstallationToInstaller(quickReadyInstallation.id);
+assert(sentInstallerFromQuickView.ok && !waitingToInstallerJobs().some((job) => job.id === quickReadyInstallation.id)
+  && waitingToInstallerJobs().some((job) => job.id === quickPendingInstallation.id),
+"AG6: an Installation must disappear from Waiting to Installer after the existing exact-ID Send to Installer action succeeds");
+
+resetWorkflowState();
 state.currentUser = { userId: "boss-so-reassign", username: "boss-so-reassign", name: "Boss SO Reassign", role: "Boss", active: true };
 state.role = "Boss";
 const reassignCorrectQuote = {
@@ -3161,9 +3256,19 @@ assert(installerSearchWorkflowSource.includes('data-order-tool="add-legacy-order
   && installerSearchWorkflowSource.includes('source: "legacy_manual"')
   && installerSearchWorkflowSource.includes('status: "legacy_archived"')
   && installerSearchWorkflowSource.includes('{ id: "legacy", label: "Legacy Orders" }')
-  && installerSearchWorkflowSource.includes('filter.id === "legacy" ? ` <strong>${legacyOrderCount}</strong>`')
+  && installerSearchWorkflowSource.includes('? legacyOrderCount')
+  && installerSearchWorkflowSource.includes('quickViewCount(filter.id)')
   && mainSource.includes("uniqueActiveBusinessOrders(state.orders)"),
 "AF8: Orders UI must expose a counted Legacy Orders tab plus create/edit/archive controls while current-Order metrics stay isolated");
+assert(installerSearchWorkflowSource.includes('{ id: "waiting-production", label: "Waiting to Production" }')
+  && installerSearchWorkflowSource.includes('{ id: "waiting-installer", label: "Waiting to Installer" }')
+  && installerSearchWorkflowSource.includes('data-quick-view-installation=')
+  && installerSearchWorkflowSource.includes('data-quick-arrange-installation=')
+  && installerSearchWorkflowSource.includes('data-quick-send-installation=')
+  && installerSearchWorkflowSource.includes('data-send-production=')
+  && installerSearchWorkflowSource.includes('quickViewCount(filter.id)')
+  && installerSearchWorkflowSource.includes('t("Search Project / Address")'),
+"AG7: Orders must expose counted Waiting to Production/Installer tabs, broad search and only the approved existing operational actions");
 assert(installerSearchWorkflowSource.includes('data-installer-installation-search')
   && installerSearchWorkflowSource.includes('data-installation-search-action="search"')
   && installerSearchWorkflowSource.includes('data-installation-search-action="clear"')
@@ -3247,6 +3352,7 @@ console.log([
   ,"Monthly Commission Sales full-Order first-valid-payment calculation and salesperson grouping: passed"
   ,"Boss/Admin exact Order salesperson assignment, audit fields and protected workflow payloads: passed"
   ,"Legacy Order entry, search, commission treatment, count isolation and safe archive: passed"
+  ,"Orders Waiting to Production and Waiting to Installer exact-dispatch quick views: passed"
   ,"Installation pending/ready/send/recall/completed exact-ID dispatch control: passed"
   ,"Warranty validation, exact links, unique numbering, reuse, regeneration and mobile preview: passed"
   ,"Independent Warranty page, exact relationships, search, Malaysia-date filters and access control: passed"
