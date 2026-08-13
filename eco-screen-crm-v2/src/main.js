@@ -18,7 +18,7 @@ import {
   updateCloudStatus
 } from "./state.js";
 import { itemWithCalculatedTotals, money, quoteTotals, toNumber } from "./calculations.js";
-import { attachWorkflowEvents, getQuotationDisplayNo, nextSalesOrderNumber, renderWorkflowModules, resetWorkflowNavigationState } from "./workflow.js";
+import { attachWorkflowEvents, getQuotationDisplayNo, monthlyCommissionSales, nextSalesOrderNumber, renderWorkflowModules, resetWorkflowNavigationState } from "./workflow.js";
 import { normalizedFinalOrderTotal, uniqueActiveOrders } from "./workflowIntegrity.js";
 import { t } from "./i18n.js";
 import { canAccessPage, defaultPageForRole, isBossOrAdmin, pageDefinitions, role } from "./permissions.js";
@@ -26,6 +26,7 @@ import { cloudCollections, cloudConfigurationIssue, isCloudConfigured, safeSyncW
 
 let cloudHydrated = false;
 let monthlySummaryMonth = currentMonthValue();
+let monthlyCommissionDetailVisible = false;
 
 function appHtml() {
   if (!state.currentUser) return renderLoginCard();
@@ -1168,14 +1169,21 @@ function setRebuildOrdersStatus(message, type = "info") {
 function attachMonthlySummaryEvents() {
   document.querySelector("[data-month-preset='this']")?.addEventListener("click", () => {
     monthlySummaryMonth = currentMonthValue();
+    monthlyCommissionDetailVisible = false;
     renderShell();
   });
   document.querySelector("[data-month-preset='last']")?.addEventListener("click", () => {
     monthlySummaryMonth = monthOffsetValue(-1);
+    monthlyCommissionDetailVisible = false;
     renderShell();
   });
   document.querySelector("#monthlySummaryMonth")?.addEventListener("change", (event) => {
     monthlySummaryMonth = event.target.value || currentMonthValue();
+    monthlyCommissionDetailVisible = false;
+    renderShell();
+  });
+  document.querySelector("[data-monthly-commission-toggle]")?.addEventListener("click", () => {
+    monthlyCommissionDetailVisible = !monthlyCommissionDetailVisible;
     renderShell();
   });
 }
@@ -1241,18 +1249,25 @@ function isOrderInMonth(order, monthValue) {
 }
 
 function currentMonthValue() {
-  return new Date().toISOString().slice(0, 7);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kuala_Lumpur",
+    year: "numeric",
+    month: "2-digit"
+  }).formatToParts(new Date());
+  const part = (type) => parts.find((entry) => entry.type === type)?.value || "";
+  return `${part("year")}-${part("month")}`;
 }
 
 function monthOffsetValue(offset) {
-  const date = new Date();
-  date.setMonth(date.getMonth() + offset);
-  return date.toISOString().slice(0, 7);
+  const [year, month] = currentMonthValue().split("-").map(Number);
+  const shifted = new Date(Date.UTC(year, month - 1 + offset, 1));
+  return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
 function monthlySummaryHtml() {
   if (!["Boss", "Admin", "Secretary"].includes(role())) return "";
   const summary = monthlySummary(monthlySummaryMonth);
+  const commission = monthlyCommissionSales(state.orders, monthlySummaryMonth, { quotations: state.quotations });
   return `
     <section class="panel monthly-summary-panel">
       <div class="panel-head">
@@ -1272,7 +1287,27 @@ function monthlySummaryHtml() {
         <div class="metric-card"><span>${t("Outstanding Balance")}</span><strong>${money(summary.outstanding)}</strong><small>${summary.activeOrdersCount} ${t("active orders")}</small></div>
         <div class="metric-card"><span>${t("Pending Collection")}</span><strong>${money(summary.pendingCollection)}</strong><small>${summary.pendingCollectionCount} ${t("pending")}</small></div>
         <div class="metric-card"><span>${t("Completed Orders")}</span><strong>${money(summary.completedAmount)}</strong><small>${summary.completedCount} ${t("completed")}</small></div>
+        <button class="metric-card progress-summary-card ${monthlyCommissionDetailVisible ? "active" : ""}" type="button" data-monthly-commission-toggle aria-pressed="${monthlyCommissionDetailVisible}" aria-expanded="${monthlyCommissionDetailVisible}"><span>${t("Monthly Commission Sales")}</span><strong>${money(commission.total)}</strong><small>${commission.orderCount} ${t("commission-eligible orders")}</small></button>
       </div>
+      ${monthlyCommissionDetailVisible ? monthlyCommissionDetailsHtml(commission) : ""}
+    </section>
+  `;
+}
+
+function monthlyCommissionDetailsHtml(summary) {
+  const salespersonRows = summary.bySalesperson.length
+    ? summary.bySalesperson.map((group) => `<tr><td>${escapeHtml(group.salespersonName || t("Unassigned"))}</td><td>${escapeHtml(group.salespersonId || t("Missing stable ID"))}</td><td>${group.orderCount}</td><td>${money(group.total)}</td></tr>`).join("")
+    : `<tr><td colspan="4">${t("No commission-eligible Orders for this month.")}</td></tr>`;
+  const orderRows = summary.rows.length
+    ? summary.rows.map((row) => `<tr><td>${escapeHtml(row.orderNo || "-")}</td><td>${escapeHtml(row.customer || "-")}</td><td>${escapeHtml(row.salespersonName || t("Unassigned"))}</td><td>${money(row.orderTotal)}</td><td>${escapeHtml(row.firstPaymentDate)}</td><td>${money(row.firstPaymentAmount)}</td><td>${money(row.currentPaidAmount)}</td><td>${money(row.currentBalance)}</td></tr>`).join("")
+    : `<tr><td colspan="8">${t("No commission-eligible Orders for this month.")}</td></tr>`;
+  return `
+    <section class="monthly-commission-details" aria-label="${t("Monthly Commission Sales")}">
+      <h3>${t("Salesperson Breakdown")}</h3>
+      <div class="table-wrap"><table><thead><tr><th>${t("Salesperson")}</th><th>${t("Salesperson stable ID")}</th><th>${t("Orders")}</th><th>${t("Order Total")}</th></tr></thead><tbody>${salespersonRows}</tbody></table></div>
+      <h3>${t("Commission-eligible Orders")}</h3>
+      <div class="table-wrap"><table><thead><tr><th>${t("SO number")}</th><th>${t("Customer")}</th><th>${t("Salesperson")}</th><th>${t("Order Total")}</th><th>${t("First Valid Payment Date")}</th><th>${t("First Payment Amount")}</th><th>${t("Current Paid Amount")}</th><th>${t("Current Balance")}</th></tr></thead><tbody>${orderRows}</tbody></table></div>
+      ${summary.invalidTotals.length ? `<p class="warning-text">${t("Orders with missing or invalid totals")}: ${escapeHtml(summary.invalidTotals.join(", "))}</p>` : ""}
     </section>
   `;
 }

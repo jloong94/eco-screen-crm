@@ -770,6 +770,16 @@ input:focus, select:focus, textarea:focus {
   border-color: var(--brand);
   box-shadow: 0 0 0 3px rgba(22, 163, 74, .14);
 }
+.monthly-commission-details {
+  margin-top: 16px;
+}
+.monthly-commission-details .table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.monthly-commission-details table {
+  min-width: 760px;
+}
 .compact-order-list {
   display: grid;
   gap: 8px;

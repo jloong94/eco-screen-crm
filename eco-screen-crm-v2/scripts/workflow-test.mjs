@@ -79,6 +79,9 @@ const {
   ordersForDisplay,
   normalizeProductionStatus,
   getOrderPaymentSummary,
+  assignOrderSalesperson,
+  eligibleSalespersonUsers,
+  monthlyCommissionSales,
   generateWarrantyCard,
   installationDispatchDiagnostics,
   installationJobMatchesSearch,
@@ -2561,6 +2564,202 @@ assert(uniqueSalesOrders.length === 3 && calculatedTotalSales === 3200
   && uniqueSalesOrders.filter((order) => normalizedFinalOrderTotal(order) === null).map((order) => order.id).join(",") === "sales-invalid",
 "AD5: Total Sales must use one prioritized final amount for each unique active Order and ignore archived records, duplicates, payments, deposits and balances");
 
+const commissionOrders = [
+  {
+    id: "commission-order-a",
+    orderNo: "SO2608001",
+    status: "Confirmed",
+    total: 10000,
+    customer: { name: "Commission Customer A" },
+    salespersonId: "salesperson-exact-1",
+    salespersonName: "Sales One",
+    payments: [
+      { id: "payment-a-deposit", amount: 3000, paymentDate: "2026-08-03", status: "active" },
+      { id: "payment-a-final", amount: 7000, paymentDate: "2026-09-02", status: "active" }
+    ],
+    updatedAt: "2026-08-03T08:00:00.000Z"
+  },
+  {
+    id: "commission-order-b",
+    orderNo: "SO2608002",
+    status: "Sent to Production",
+    finalTotal: 2500,
+    total: 9999,
+    customer: { name: "Commission Customer B" },
+    quoteId: "commission-quote-b",
+    payments: [
+      { id: "payment-b-reversed", amount: 500, paymentDate: "2026-07-30", status: "reversed" },
+      { id: "payment-b-valid", amount: 500, paymentDate: "2026-08-04", status: "active" }
+    ],
+    updatedAt: "2026-08-04T08:00:00.000Z"
+  },
+  {
+    id: "commission-order-boundary",
+    orderNo: "SO2608003",
+    status: "Completed",
+    grandTotal: 1200,
+    customer: { name: "Malaysia Boundary" },
+    payments: [{ id: "payment-boundary", amount: 200, createdAt: "2026-07-31T16:30:00.000Z", status: "active" }],
+    updatedAt: "2026-08-01T01:00:00.000Z"
+  },
+  {
+    id: "commission-order-earlier-month",
+    status: "Confirmed",
+    total: 8000,
+    payments: [
+      { id: "payment-earlier", amount: 1000, paymentDate: "2026-07-31", status: "active" },
+      { id: "payment-later", amount: 7000, paymentDate: "2026-08-10", status: "active" }
+    ],
+    updatedAt: "2026-08-10T08:00:00.000Z"
+  },
+  {
+    id: "commission-order-archived",
+    status: "cancelled_archived",
+    isArchived: true,
+    total: 50000,
+    payments: [{ id: "payment-archived", amount: 100, paymentDate: "2026-08-01", status: "active" }],
+    updatedAt: "2026-08-01T08:00:00.000Z"
+  },
+  {
+    id: "commission-order-invalid-total",
+    status: "Confirmed",
+    total: "invalid",
+    payments: [{ id: "payment-invalid-total", amount: 100, paymentDate: "2026-08-05", status: "active" }],
+    updatedAt: "2026-08-05T08:00:00.000Z"
+  },
+  {
+    id: "commission-order-void-only",
+    status: "Confirmed",
+    total: 4000,
+    payments: [{ id: "payment-void", amount: 100, paymentDate: "2026-08-05", status: "void" }],
+    updatedAt: "2026-08-05T08:00:00.000Z"
+  },
+  {
+    id: "commission-order-a",
+    status: "Confirmed",
+    total: 99999,
+    payments: [{ id: "payment-old-duplicate", amount: 99999, paymentDate: "2026-08-01", status: "active" }],
+    updatedAt: "2026-08-01T08:00:00.000Z"
+  }
+];
+const augustCommission = monthlyCommissionSales(commissionOrders, "2026-08", {
+  quotations: [{
+    id: "commission-quote-b",
+    salespersonId: "salesperson-exact-1",
+    salespersonName: "Sales One"
+  }]
+});
+assert(augustCommission.total === 13700 && augustCommission.orderCount === 3,
+  "AD6: Monthly Commission Sales must count each eligible Order's full normalized total once, never its payment amount");
+assert(augustCommission.rows.find((row) => row.orderId === "commission-order-a")?.firstPaymentAmount === 3000
+  && !augustCommission.rows.some((row) => row.orderId === "commission-order-earlier-month")
+  && !augustCommission.rows.some((row) => row.orderId === "commission-order-archived")
+  && !augustCommission.rows.some((row) => row.orderId === "commission-order-void-only"),
+"AD6: later payments, archived Orders, reversed/void payments and Orders first paid in another month must not inflate commission sales");
+assert(augustCommission.rows.find((row) => row.orderId === "commission-order-b")?.firstPaymentDate === "2026-08-04"
+  && augustCommission.rows.find((row) => row.orderId === "commission-order-boundary")?.firstPaymentDate === "2026-08-01",
+"AD6: a reversed first payment must fall through to the next valid payment and timestamp dates must use Asia/Kuala_Lumpur");
+assert(augustCommission.bySalesperson.find((group) => group.salespersonId === "salesperson-exact-1")?.total === 12500
+  && augustCommission.bySalesperson.find((group) => group.salespersonId === "")?.total === 1200
+  && augustCommission.invalidTotals.join(",") === "commission-order-invalid-total",
+"AD6: salesperson grouping must use the exact stable ID and report missing normalized totals without counting them");
+
+resetWorkflowState();
+const salespersonBoss = { userId: "boss-salesperson-assignment", username: "boss-salesperson", name: "Boss Assignment", role: "Boss", active: true };
+const exactSalesperson = { userId: "salesperson-assignment-exact", username: "sales-exact", name: "Exact Sales", role: "sAlEs", active: true };
+state.currentUser = salespersonBoss;
+state.role = "Boss";
+state.users = [
+  salespersonBoss,
+  exactSalesperson,
+  { userId: "admin-assignment-exact", name: "Admin Assignment", role: "Admin", active: true },
+  { userId: "inactive-salesperson", name: "Inactive Sales", role: "Sales", active: false },
+  { userId: "secretary-not-eligible", name: "Secretary", role: "Secretary", active: true },
+  { userId: "installer-not-eligible", name: "Installer", role: "Installer", active: true }
+];
+const salespersonAssignmentOrder = {
+  id: "order-salesperson-assignment",
+  orderNo: "SO2608099",
+  orderNumber: "SO2608099",
+  status: "Confirmed",
+  customer: { name: "Assignment Customer", phone: "0123456789" },
+  items: [{ id: "assignment-item", productName: "Roller", quantity: 1 }],
+  total: 10000,
+  deposit: 3000,
+  balance: 7000,
+  payments: [{ id: "assignment-payment", amount: 3000, paymentDate: "2026-08-08", status: "active" }],
+  quoteId: "quote-salesperson-assignment",
+  productionJobId: "production-salesperson-assignment",
+  installationJobId: "installation-salesperson-assignment",
+  updatedAt: "2026-08-08T08:00:00.000Z"
+};
+state.orders = [salespersonAssignmentOrder];
+state.quotations = [{ id: "quote-salesperson-assignment", orderId: salespersonAssignmentOrder.id, total: 10000 }];
+state.productionJobs = [{ id: "production-salesperson-assignment", orderId: salespersonAssignmentOrder.id, status: "not_produced" }];
+state.installationJobs = [{ id: "installation-salesperson-assignment", orderId: salespersonAssignmentOrder.id, status: "pending_arrangement" }];
+const eligibleSalespeople = eligibleSalespersonUsers(state.users);
+assert(eligibleSalespeople.map((user) => user.userId).sort().join(",") === "admin-assignment-exact,boss-salesperson-assignment,salesperson-assignment-exact",
+  "AD7: salesperson selector must include only active Sales, Boss and Admin accounts using exact user IDs");
+const assignmentProtectedBefore = JSON.stringify({
+  orderNo: salespersonAssignmentOrder.orderNo,
+  orderNumber: salespersonAssignmentOrder.orderNumber,
+  customer: salespersonAssignmentOrder.customer,
+  items: salespersonAssignmentOrder.items,
+  total: salespersonAssignmentOrder.total,
+  deposit: salespersonAssignmentOrder.deposit,
+  balance: salespersonAssignmentOrder.balance,
+  payments: salespersonAssignmentOrder.payments,
+  quoteId: salespersonAssignmentOrder.quoteId,
+  productionJobId: salespersonAssignmentOrder.productionJobId,
+  installationJobId: salespersonAssignmentOrder.installationJobId,
+  quotations: state.quotations,
+  productionJobs: state.productionJobs,
+  installationJobs: state.installationJobs
+});
+const salespersonAssignmentResult = await assignOrderSalesperson({
+  orderId: salespersonAssignmentOrder.id,
+  salespersonId: exactSalesperson.userId
+}, {
+  now: "2026-08-08T09:00:00.000Z",
+  assignedBy: salespersonBoss.userId,
+  downloadBackup: false
+});
+const assignedOrder = state.orders.find((order) => order.id === salespersonAssignmentOrder.id);
+assert(salespersonAssignmentResult.ok
+  && assignedOrder.salespersonId === exactSalesperson.userId
+  && assignedOrder.salespersonName === exactSalesperson.name
+  && assignedOrder.salespersonAssignedAt === "2026-08-08T09:00:00.000Z"
+  && assignedOrder.salespersonAssignedBy === salespersonBoss.userId
+  && assignedOrder.previousSalespersonId === "",
+"AD7: Boss/Admin must assign one exact active salesperson ID and display name with complete audit fields");
+assert(JSON.stringify({
+  orderNo: assignedOrder.orderNo,
+  orderNumber: assignedOrder.orderNumber,
+  customer: assignedOrder.customer,
+  items: assignedOrder.items,
+  total: assignedOrder.total,
+  deposit: assignedOrder.deposit,
+  balance: assignedOrder.balance,
+  payments: assignedOrder.payments,
+  quoteId: assignedOrder.quoteId,
+  productionJobId: assignedOrder.productionJobId,
+  installationJobId: assignedOrder.installationJobId,
+  quotations: state.quotations,
+  productionJobs: state.productionJobs,
+  installationJobs: state.installationJobs
+}) === assignmentProtectedBefore,
+"AD7: salesperson assignment must not change SO, customer, items, financials, payments or linked workflow records");
+const assignedCommission = monthlyCommissionSales(state.orders, "2026-08", { quotations: state.quotations });
+assert(assignedCommission.bySalesperson.length === 1
+  && assignedCommission.bySalesperson[0].salespersonId === exactSalesperson.userId
+  && assignedCommission.bySalesperson[0].total === 10000,
+"AD7: Monthly Commission Sales breakdown must recalculate automatically from the assigned exact salesperson ID");
+state.currentUser = exactSalesperson;
+state.role = "Sales";
+const deniedSalespersonAssignment = await assignOrderSalesperson({ orderId: assignedOrder.id, salespersonId: salespersonBoss.userId }, { downloadBackup: false });
+assert(!deniedSalespersonAssignment.ok && state.orders[0].salespersonId === exactSalesperson.userId,
+  "AD7: non-Boss/Admin roles must not assign or bulk-change Order salespeople");
+
 resetWorkflowState();
 state.currentUser = { userId: "boss-so-reassign", username: "boss-so-reassign", name: "Boss SO Reassign", role: "Boss", active: true };
 state.role = "Boss";
@@ -2843,6 +3042,18 @@ const quotationSource = await readFile(new URL("../src/quotations.js", import.me
 const installerSearchWorkflowSource = await readFile(new URL("../src/workflow.js", import.meta.url), "utf8");
 const installerSearchCss = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
 const mainSource = await readFile(new URL("../src/main.js", import.meta.url), "utf8");
+assert(mainSource.includes('data-monthly-commission-toggle')
+  && mainSource.includes('t("Monthly Commission Sales")')
+  && mainSource.includes('t("First Valid Payment Date")')
+  && mainSource.includes('t("Current Paid Amount")')
+  && mainSource.includes('timeZone: "Asia/Kuala_Lumpur"'),
+"AD6: Dashboard must expose a separate clickable Monthly Commission Sales card and detailed Malaysia-month payment fields");
+assert(installerSearchWorkflowSource.includes('t("Salesperson Unassigned")')
+  && installerSearchWorkflowSource.includes('data-assign-salesperson=')
+  && installerSearchWorkflowSource.includes('data-salesperson-assignment-select')
+  && installerSearchWorkflowSource.includes('data-save-salesperson-assignment=')
+  && installerSearchWorkflowSource.includes('downloadOrderActionBackup(plan)'),
+"AD7: active Order cards must show the unassigned label and a Boss/Admin exact-ID assignment panel backed up before save");
 assert(installerSearchWorkflowSource.includes('data-installer-installation-search')
   && installerSearchWorkflowSource.includes('data-installation-search-action="search"')
   && installerSearchWorkflowSource.includes('data-installation-search-action="clear"')
@@ -2923,6 +3134,8 @@ console.log([
   ,"Transactional Send to Production and Production/Order status synchronization: passed"
   ,"Boss/Admin Return to Follow Up exact-link archive, financial preservation and later reconversion: passed"
   ,"Normalized legacy payment ledger, historical payment entry, reversal and stale-cloud protection: passed"
+  ,"Monthly Commission Sales full-Order first-valid-payment calculation and salesperson grouping: passed"
+  ,"Boss/Admin exact Order salesperson assignment, audit fields and protected workflow payloads: passed"
   ,"Installation pending/ready/send/recall/completed exact-ID dispatch control: passed"
   ,"Warranty validation, exact links, unique numbering, reuse, regeneration and mobile preview: passed"
   ,"Independent Warranty page, exact relationships, search, Malaysia-date filters and access control: passed"

@@ -46,6 +46,7 @@ import {
   isActiveOrderRecord,
   isActiveWorkflowRecord,
   normalizeWorkflowStatus,
+  normalizedFinalOrderTotal,
   scanWorkflowIntegrity as scanWorkflowIntegrityRecords,
   uniqueActiveOrders,
   uniqueActiveProductionJobs
@@ -122,6 +123,7 @@ let soNumberReassignment = null;
 let returnToFollowUpPanel = null;
 let paymentPanel = null;
 let paymentReversalPanel = null;
+let salespersonAssignmentOrderId = "";
 let installationDispatchPreviewId = "";
 let installationRecallJobId = "";
 let warrantyPreviewCardId = "";
@@ -1158,9 +1160,11 @@ function duplicateOrderDetails(member) {
 function renderCompactOrderRow(order) {
   const productionJob = getOrderProductionJob(order);
   const installationJob = getOrderInstallationJob(order);
+  const quotation = state.quotations.find((quote) => String(quote.id || "") === String(order.quoteId || order.quotationId || ""));
+  const salesperson = exactOrderSalesperson(order, quotation);
   return `
     <article class="compact-order-row ${orderSearch.highlightId === order.id ? "highlight-card" : ""}" data-order-card="${escapeHtml(order.id)}" data-order-id="${escapeHtml(order.id)}">
-      <div><strong>${getOrderDisplayNo(order)}</strong><span>${t("Quote")}: ${order.quoteNumber || order.quotationNo || "-"} | ${order.customer?.name || "-"} | ${order.customer?.phone || "-"}</span></div>
+      <div><strong>${getOrderDisplayNo(order)}</strong><span>${t("Quote")}: ${order.quoteNumber || order.quotationNo || "-"} | ${order.customer?.name || "-"} | ${order.customer?.phone || "-"}</span><span>${salesperson.id ? `${t("Salesperson")}: ${escapeHtml(salesperson.name || salesperson.id)}` : t("Salesperson Unassigned")}</span></div>
       <div><span>${order.customer?.area || "-"}</span><span>${order.installationDate || installationJob?.installationDate || "-"}</span></div>
       <div><span>${t("Production")}: ${statusLabel(getOrderProductionStatus(order, productionJob))}</span><span>${t("Installation")}: ${statusLabel(getOrderInstallationStatus(order, installationJob))}</span></div>
       <div><span>${t("Remaining Balance")}: ${money(getRemainingBalance(order, installationJob))}</span><span>${t("Updated")}: ${formatShortDate(order.updatedAt || order.createdAt)}</span></div>
@@ -1195,6 +1199,7 @@ function orderActionsHtml(order) {
       ${isBossOrAdmin() ? `<button class="btn" type="button" data-edit-order-number="${order.id}">${editingOrderNumberId === order.id ? t("Cancel Order Number Edit") : t("Edit Order Number")}</button>` : ""}
       ${bossActiveOrder ? `<button class="btn" type="button" data-return-follow-up="${escapeHtml(order.id)}">${t("Return to Follow Up")}</button>` : ""}
       ${bossActiveOrder ? `<button class="btn" type="button" data-record-payment="${escapeHtml(order.id)}">${t("Record Payment / Add Deposit")}</button>` : ""}
+      ${bossActiveOrder ? `<button class="btn" type="button" data-assign-salesperson="${escapeHtml(order.id)}">${t("Assign Salesperson")}</button>` : ""}
     </div>
     ${canSendOrder() ? orderStatusActionHtml(order) : ""}
     ${editingOrderNumberId === order.id && isBossOrAdmin() ? orderNumberEditorHtml(order) : ""}
@@ -1202,6 +1207,30 @@ function orderActionsHtml(order) {
     ${returnToFollowUpPanel?.orderId === order.id ? returnToFollowUpPanelHtml(order) : ""}
     ${paymentPanel?.orderId === order.id ? recordPaymentPanelHtml(order) : ""}
     ${paymentReversalPanel?.orderId === order.id ? reversePaymentPanelHtml(order) : ""}
+    ${salespersonAssignmentOrderId === order.id ? salespersonAssignmentPanelHtml(order) : ""}
+  `;
+}
+
+function salespersonAssignmentPanelHtml(order) {
+  const quotation = state.quotations.find((quote) => String(quote.id || "") === String(order.quoteId || order.quotationId || ""));
+  const currentSalesperson = exactOrderSalesperson(order, quotation);
+  const options = eligibleSalespersonUsers(state.users);
+  return `
+    <section class="order-action-panel" data-salesperson-assignment-panel="${escapeHtml(order.id)}">
+      <div class="section-head">
+        <div><h3>${t("Assign Salesperson")}</h3><p class="muted-text">${t("Assign one existing active staff account using its exact stable ID.")}</p></div>
+        <button class="btn" type="button" data-cancel-salesperson-assignment="${escapeHtml(order.id)}">${t("Close")}</button>
+      </div>
+      <p><strong>${t("Order")}: ${escapeHtml(getOrderDisplayNo(order) || "-")}</strong> | ${escapeHtml(order.customer?.name || order.customerName || "-")}</p>
+      <label>${t("Select Salesperson")}
+        <select data-salesperson-assignment-select>
+          <option value="">${t("Select Salesperson")}</option>
+          ${options.map((user) => `<option value="${escapeHtml(user.userId)}" ${user.userId === currentSalesperson.id ? "selected" : ""}>${escapeHtml(user.name)} (${escapeHtml(user.role)})</option>`).join("")}
+        </select>
+      </label>
+      <p class="muted-text">${t("A full JSON backup is downloaded before saving. Only the exact selected Order salesperson and audit fields change.")}</p>
+      <button class="btn primary" type="button" data-save-salesperson-assignment="${escapeHtml(order.id)}">${t("Save Assignment")}</button>
+    </section>
   `;
 }
 
@@ -3184,6 +3213,9 @@ function handleOrderClick(event) {
   const previewReversePaymentId = event.target.dataset.previewReversePayment;
   const confirmReversePaymentId = event.target.dataset.confirmReversePayment;
   const cancelReversePaymentId = event.target.dataset.cancelReversePayment;
+  const assignSalespersonId = event.target.dataset.assignSalesperson;
+  const saveSalespersonAssignmentId = event.target.dataset.saveSalespersonAssignment;
+  const cancelSalespersonAssignmentId = event.target.dataset.cancelSalespersonAssignment;
   if (page) {
     orderSearch = { ...orderSearch, page: Number(page) || 1 };
     renderOrderList();
@@ -3214,6 +3246,35 @@ function handleOrderClick(event) {
   if (previewReversePaymentId) previewReversePayment(previewReversePaymentId, event.target);
   if (confirmReversePaymentId) confirmReversePayment(confirmReversePaymentId, event.target);
   if (cancelReversePaymentId) closeReversePaymentPanel();
+  if (assignSalespersonId) openSalespersonAssignmentPanel(assignSalespersonId);
+  if (saveSalespersonAssignmentId) saveSalespersonAssignment(saveSalespersonAssignmentId, event.target);
+  if (cancelSalespersonAssignmentId) closeSalespersonAssignmentPanel();
+}
+
+function openSalespersonAssignmentPanel(orderId) {
+  if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+  const order = findOrder(orderId);
+  if (!order || !isActiveOrderRecord(order)) return showWorkflowMessage("Active Order not found.", "error");
+  returnToFollowUpPanel = null;
+  paymentPanel = null;
+  paymentReversalPanel = null;
+  salespersonAssignmentOrderId = String(order.id);
+  renderOrderList();
+}
+
+function closeSalespersonAssignmentPanel() {
+  salespersonAssignmentOrderId = "";
+  renderOrderList();
+}
+
+async function saveSalespersonAssignment(orderId, button) {
+  if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+  const panel = button.closest("[data-salesperson-assignment-panel]");
+  const salespersonId = String(panel?.querySelector("[data-salesperson-assignment-select]")?.value || "").trim();
+  setOrderActionBusy(button, t("Saving..."));
+  const result = await assignOrderSalesperson({ orderId, salespersonId });
+  if (result.ok) salespersonAssignmentOrderId = "";
+  renderOrders();
 }
 
 function openReturnToFollowUpPanel(orderId) {
@@ -5794,6 +5855,207 @@ export function getOrderPaymentSummary(order = {}) {
   };
 }
 
+export function eligibleSalespersonUsers(users = state.users) {
+  const eligibleRoles = new Set(["sales", "boss", "admin"]);
+  const seen = new Set();
+  return (Array.isArray(users) ? users : []).reduce((rows, user) => {
+    const userId = String(user?.userId || "").trim();
+    const normalizedRole = normalizeText(user?.role);
+    if (!userId || seen.has(userId) || user?.active === false || !eligibleRoles.has(normalizedRole)) return rows;
+    seen.add(userId);
+    rows.push({
+      userId,
+      name: String(user.name || user.displayName || user.username || userId).trim(),
+      role: String(user.role || "").trim()
+    });
+    return rows;
+  }, []);
+}
+
+export function buildAssignOrderSalespersonPlan(values = {}, options = {}) {
+  const orderId = String(values.orderId || "").trim();
+  const salespersonId = String(values.salespersonId || "").trim();
+  if (!orderId || !salespersonId) return { ok: false, message: "Select one exact Order and one Salesperson." };
+  const exactOrders = state.orders.filter((order) => String(order?.id || "").trim() === orderId && isActiveOrderRecord(order));
+  if (exactOrders.length !== 1) return { ok: false, message: "The exact active Order stable ID was not found or is ambiguous." };
+  const salesperson = eligibleSalespersonUsers(state.users).find((user) => user.userId === salespersonId);
+  if (!salesperson) return { ok: false, message: "The exact selected Sales/Boss/Admin staff stable ID was not found or is inactive." };
+
+  const order = exactOrders[0];
+  const quotation = state.quotations.find((quote) => String(quote.id || "") === String(order.quoteId || order.quotationId || ""));
+  const previousSalesperson = exactOrderSalesperson(order, quotation);
+  const now = String(options.now || new Date().toISOString());
+  const assignedBy = String(options.assignedBy || state.currentUser?.userId || currentActor()).trim();
+  const updatedOrder = {
+    ...order,
+    salespersonId: salesperson.userId,
+    salespersonName: salesperson.name,
+    salespersonAssignedAt: now,
+    salespersonAssignedBy: assignedBy,
+    previousSalespersonId: previousSalesperson.id,
+    updatedAt: now
+  };
+  if (!orderUnchangedOutsideSalespersonAssignment(order, updatedOrder)) {
+    return { ok: false, message: "Safety check failed: non-salesperson Order fields would change." };
+  }
+  const changes = [];
+  recordFieldChanges(changes, "orders", order, updatedOrder);
+  return {
+    ok: true,
+    action: "assign-salesperson",
+    orderId,
+    salespersonId: salesperson.userId,
+    salespersonName: salesperson.name,
+    changes,
+    nextState: {
+      quotations: state.quotations,
+      orders: state.orders.map((row) => row === order ? updatedOrder : row),
+      productionJobs: state.productionJobs,
+      installationJobs: state.installationJobs,
+      warrantyCards: state.warrantyCards
+    }
+  };
+}
+
+export async function assignOrderSalesperson(values = {}, options = {}) {
+  if (!isBossOrAdmin()) return failOrderUpdate("Permission denied: your role cannot perform this action.");
+  const plan = buildAssignOrderSalespersonPlan(values, options);
+  if (!plan.ok) return failOrderUpdate(plan.message);
+  if (options.downloadBackup !== false && !downloadOrderActionBackup(plan)) {
+    return failOrderUpdate("Full JSON backup download failed. Salesperson was not assigned.");
+  }
+  return commitOrderActionPlan(plan, {
+    local: "Salesperson assignment saved locally. Syncing cloud...",
+    success: "Salesperson assigned successfully.",
+    cloudFailure: "Salesperson assignment saved locally but cloud sync failed"
+  });
+}
+
+function orderUnchangedOutsideSalespersonAssignment(before, after) {
+  const allowed = new Set([
+    "salespersonId",
+    "salespersonName",
+    "salespersonAssignedAt",
+    "salespersonAssignedBy",
+    "previousSalespersonId",
+    "updatedAt"
+  ]);
+  const keys = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
+  return [...keys].every((field) => allowed.has(field) || JSON.stringify(before?.[field]) === JSON.stringify(after?.[field]));
+}
+
+export function monthlyCommissionSales(orders = [], monthValue = "", options = {}) {
+  const selectedMonth = /^\d{4}-\d{2}$/.test(String(monthValue || "")) ? String(monthValue) : "";
+  const quotations = Array.isArray(options.quotations) ? options.quotations : [];
+  const quotationById = new Map(quotations
+    .filter((quotation) => String(quotation?.id || "").trim())
+    .map((quotation) => [String(quotation.id), quotation]));
+  const rows = [];
+  const invalidTotals = [];
+
+  uniqueActiveOrders(orders).forEach((order) => {
+    const orderId = String(order?.id || "").trim();
+    if (!orderId || !selectedMonth) return;
+    const firstPayment = getOrderPaymentSummary(order).activePayments
+      .map((payment) => ({ payment, date: malaysiaPaymentDate(payment) }))
+      .filter((entry) => entry.date)
+      .sort((left, right) => left.date.localeCompare(right.date)
+        || String(paymentStableId(left.payment)).localeCompare(String(paymentStableId(right.payment))))[0];
+    if (!firstPayment || firstPayment.date.slice(0, 7) !== selectedMonth) return;
+
+    const orderTotal = normalizedFinalOrderTotal(order);
+    if (orderTotal === null) {
+      invalidTotals.push(orderId);
+      return;
+    }
+    const paymentSummary = getOrderPaymentSummary(order);
+    const quotationId = String(order.quoteId || order.quotationId || "").trim();
+    const quotation = quotationById.get(quotationId);
+    const salesperson = exactOrderSalesperson(order, quotation);
+    rows.push({
+      orderId,
+      orderNo: String(order.orderNo || order.orderNumber || "").trim(),
+      customer: String(order.customer?.name || order.customerName || order.customer || "").trim(),
+      salespersonId: salesperson.id,
+      salespersonName: salesperson.name,
+      orderTotal,
+      firstPaymentDate: firstPayment.date,
+      firstPaymentAmount: positiveNumber(firstPayment.payment.amount),
+      currentPaidAmount: paymentSummary.totalPaid,
+      currentBalance: roundMoneyValue(orderTotal - paymentSummary.totalPaid)
+    });
+  });
+
+  const salespersonGroups = new Map();
+  rows.forEach((row) => {
+    const key = row.salespersonId || "__unassigned__";
+    const existing = salespersonGroups.get(key) || {
+      salespersonId: row.salespersonId,
+      salespersonName: row.salespersonName,
+      orderCount: 0,
+      total: 0
+    };
+    existing.orderCount += 1;
+    existing.total = roundMoneyValue(existing.total + row.orderTotal);
+    salespersonGroups.set(key, existing);
+  });
+
+  return {
+    month: selectedMonth,
+    total: roundMoneyValue(rows.reduce((sum, row) => sum + row.orderTotal, 0)),
+    orderCount: rows.length,
+    rows,
+    bySalesperson: [...salespersonGroups.values()],
+    invalidTotals
+  };
+}
+
+function malaysiaPaymentDate(payment = {}) {
+  const rawValue = payment.paymentDate
+    ?? payment.actualPaymentDate
+    ?? payment.paidAt
+    ?? payment.date
+    ?? payment.createdAt;
+  if (typeof rawValue === "string") {
+    const value = rawValue.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  }
+  const date = new Date(rawValue);
+  if (Number.isNaN(date.getTime())) return "";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kuala_Lumpur",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const part = (type) => parts.find((entry) => entry.type === type)?.value || "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+function exactOrderSalesperson(order = {}, quotation) {
+  const orderPerson = order.salesperson && typeof order.salesperson === "object" ? order.salesperson : {};
+  const quotePerson = quotation?.salesperson && typeof quotation.salesperson === "object" ? quotation.salesperson : {};
+  const id = String(order.salespersonId
+    || order.salesPersonId
+    || orderPerson.id
+    || orderPerson.userId
+    || orderPerson.stableId
+    || quotation?.salespersonId
+    || quotation?.salesPersonId
+    || quotePerson.id
+    || quotePerson.userId
+    || quotePerson.stableId
+    || "").trim();
+  const name = String(order.salespersonName
+    || orderPerson.name
+    || (typeof order.salesperson === "string" ? order.salesperson : "")
+    || quotation?.salespersonName
+    || quotePerson.name
+    || (typeof quotation?.salesperson === "string" ? quotation.salesperson : "")
+    || "").trim();
+  return { id, name };
+}
+
 function collectOrderPaymentRecords(order = {}) {
   const records = [];
   const seenIds = new Set();
@@ -6146,7 +6408,7 @@ function downloadOrderActionBackup(plan) {
     const payload = {
       type: `eco-screen-crm-v2-full-backup-before-${plan.action}`,
       timestamp: new Date().toISOString(),
-      exactSelection: { orderId: plan.orderId, quotationId: plan.quotationId || "", paymentId: plan.paymentId || "" },
+      exactSelection: { orderId: plan.orderId, quotationId: plan.quotationId || "", paymentId: plan.paymentId || "", salespersonId: plan.salespersonId || "" },
       exactFieldChanges: plan.changes,
       state: structuredCloneSafe(stateSnapshot())
     };
