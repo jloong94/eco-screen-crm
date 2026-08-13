@@ -1272,7 +1272,7 @@ export function waitingToInstallerJobs(source = state) {
     if (!current || timestamp >= currentTimestamp) uniqueJobs.set(jobId, job);
   });
   return [...uniqueJobs.values()].filter((job) => {
-    const status = normalizeWorkflowStatus(job.status);
+    const status = installationDispatchStage(job);
     const orderId = String(job.orderId || "").trim();
     return ["pending_arrangement", "ready_to_send"].includes(status) && orderId && activeOrderIds.has(orderId);
   });

@@ -2937,6 +2937,7 @@ const quickReadyInstallation = {
 state.installationJobs = [
   quickPendingInstallation,
   quickReadyInstallation,
+  { ...quickPendingInstallation, id: "installation-legacy-scheduled-quick", status: "scheduled", installationDate: "2026-08-19" },
   { ...quickPendingInstallation, id: "installation-sent-quick", status: "sent_to_installer" },
   { ...quickPendingInstallation, id: "installation-completed-quick", status: "completed" },
   { ...quickPendingInstallation, id: "installation-archived-quick", isArchived: true },
@@ -2944,8 +2945,8 @@ state.installationJobs = [
   { ...quickPendingInstallation, id: "installation-legacy-link-quick", orderId: "legacy-order-quick" }
 ];
 const waitingInstallerRows = waitingToInstallerJobs();
-assert(waitingInstallerRows.map((job) => job.id).sort().join(",") === "installation-pending-quick,installation-ready-quick",
-"AG4: Waiting to Installer must use exact active normal Order links and only pending_arrangement/ready_to_send active Installation records");
+assert(waitingInstallerRows.map((job) => job.id).sort().join(",") === "installation-legacy-scheduled-quick,installation-pending-quick,installation-ready-quick",
+"AG4: Waiting to Installer must use exact active normal Order links and the centralized pending/ready dispatch stage, including legacy scheduled records that have not been sent");
 assert(waitingInstallerJobMatchesSearch(quickReadyInstallation, { orderNumber: "SO-2608-106" }, state)
   && waitingInstallerJobMatchesSearch(quickReadyInstallation, { orderNumber: "ready installer" }, state)
   && waitingInstallerJobMatchesSearch(quickReadyInstallation, { phone: "0128101006" }, state)
