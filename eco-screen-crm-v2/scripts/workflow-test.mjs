@@ -80,6 +80,8 @@ const {
   normalizeProductionStatus,
   getOrderPaymentSummary,
   assignOrderSalesperson,
+  amendOrder,
+  buildOrderAmendmentPlan,
   archiveLegacyOrder,
   buildArchiveLegacyOrderPlan,
   buildLegacyOrderPlan,
@@ -3244,6 +3246,99 @@ state.installationJobs = [structuredClone(reassignInstallation), archivedOnlyIns
 const ambiguousActiveReferenceBlocked = buildSoNumberReassignmentPlan({ desiredOrderNo: "SO2607020", currentOrderNo: "SO2607021" });
 assert(!ambiguousActiveReferenceBlocked.ok && ambiguousActiveReferenceBlocked.message.includes("active or ambiguous linked reference"),
 "AE18: an active desired-number Job without the exact correct Order relationship must block reassignment");
+
+state.currentUser = { userId: "boss-amend-test", username: "boss-amend-test", name: "Boss Amend", role: "Boss", active: true };
+const amendQuote = {
+  id: "quote-amend-test", quoteNumber: "ESQ-2026-AMEND", status: "won", customer: { name: "Original Customer", phone: "0111111111" },
+  items: [{ id: "quote-item-amend", productName: "Original Screen", manualFinalPrice: 8000 }], total: 8000
+};
+const amendOrderRecord = {
+  id: "order-amend-test", orderNo: "SO2608991", orderNumber: "SO2608991", quoteId: amendQuote.id, quotationId: amendQuote.id,
+  quoteNumber: amendQuote.quoteNumber, status: "Sent to Production", sentToProduction: true, sentToProductionAt: "2026-08-10T02:00:00.000Z",
+  customer: { name: "Original Customer", phone: "0111111111", area: "Old Project", address: "Old Address" },
+  items: [{ id: "order-item-amend", productId: "product-amend", productName: "Security Screen", calculationType: "unit", quantity: 1, unitPrice: 8000, manualFinalPrice: 8000, width: 1000, height: 2000, color: "white", openingDirection: "close_left" }],
+  discount: 0, subtotal: 8000, total: 8000, balance: 5000, payments: [{ id: "payment-amend", amount: 3000, paymentDate: "2026-08-11", status: "active" }],
+  productionJobId: "production-amend-test", installationJobId: "installation-amend-test", warrantyCardId: "warranty-amend-test", salespersonId: "sales-amend-test"
+};
+const amendProduction = { id: "production-amend-test", orderId: amendOrderRecord.id, orderNo: amendOrderRecord.orderNo, status: "in_production", items: structuredClone(amendOrderRecord.items), assignedStaff: "Factory A", remarks: "Keep progress" };
+const unrelatedProduction = { id: "production-unrelated-amend", orderId: "order-unrelated", status: "in_production", items: [{ productName: "Untouched" }], remarks: "Untouched" };
+const amendInstallation = { id: "installation-amend-test", orderId: amendOrderRecord.id, orderNo: amendOrderRecord.orderNo, status: "pending_arrangement", customerName: "Original Customer", phone: "0111111111", address: "Old Address" };
+state.quotations = [structuredClone(amendQuote)];
+state.orders = [structuredClone(amendOrderRecord)];
+state.productionJobs = [structuredClone(amendProduction), structuredClone(unrelatedProduction)];
+state.installationJobs = [structuredClone(amendInstallation)];
+state.warrantyCards = [{ id: "warranty-amend-test", orderId: amendOrderRecord.id }];
+const quoteBeforeAmend = JSON.stringify(state.quotations[0]);
+const unrelatedProductionBeforeAmend = JSON.stringify(state.productionJobs[1]);
+const paymentBeforeAmend = JSON.stringify(state.orders[0].payments);
+const amendmentValues = {
+  orderId: amendOrderRecord.id,
+  customerName: "Updated Customer",
+  phone: "0122222222",
+  projectName: "New Project",
+  siteAddress: "New Address",
+  items: [{ ...structuredClone(amendOrderRecord.items[0]), width: 1200, manualFinalPrice: 9500, color: "grey", openingDirection: "double_open" }],
+  discount: 0,
+  taxEnabled: false,
+  taxRate: 0,
+  remark: "Order amended",
+  productionRemark: "Use amended measurements",
+  reason: "Customer approved revised size"
+};
+const amendmentPlan = buildOrderAmendmentPlan(amendmentValues, { amendmentId: "amendment-test-1", amendedAt: "2026-08-14T02:00:00.000Z", amendedBy: "boss-amend-test" });
+assert(amendmentPlan.ok && amendmentPlan.sentToProduction && !amendmentPlan.productionCompleted
+  && amendmentPlan.after.total === 9500 && amendmentPlan.after.totalPaid === 3000 && amendmentPlan.after.balance === 6500,
+"AH1: sent active Order amendment must preview the existing calculation and unchanged-payment balance");
+const missingDispatchConfirmation = await amendOrder(amendmentValues, { amendmentId: "amendment-test-1", amendedAt: "2026-08-14T02:00:00.000Z", downloadBackup: false });
+assert(!missingDispatchConfirmation.ok && state.orders[0].total === 8000, "AH2: sent Production amendment must require explicit confirmation before mutation");
+const amendmentResult = await amendOrder(amendmentValues, {
+  amendmentId: "amendment-test-1", amendedAt: "2026-08-14T02:00:00.000Z", amendedBy: "boss-amend-test",
+  confirmSentToProduction: true, downloadBackup: false
+});
+const amendedOrder = state.orders.find((order) => order.id === amendOrderRecord.id);
+const amendedProduction = state.productionJobs.find((job) => job.id === amendProduction.id);
+const amendedInstallation = state.installationJobs.find((job) => job.id === amendInstallation.id);
+assert(amendmentResult.ok && amendedOrder.id === amendOrderRecord.id && amendedOrder.orderNo === amendOrderRecord.orderNo
+  && amendedOrder.quoteId === amendQuote.id && amendedOrder.productionJobId === amendProduction.id && amendedOrder.installationJobId === amendInstallation.id
+  && amendedOrder.total === 9500 && amendedOrder.totalPaid === 3000 && amendedOrder.balance === 6500
+  && JSON.stringify(amendedOrder.payments) === paymentBeforeAmend,
+"AH3: amendment must preserve exact stable relationships, SO and payments while recalculating total and balance");
+assert(amendedProduction.items[0].width === 1200 && amendedProduction.items[0].manualFinalPrice === 9500
+  && amendedProduction.assignedStaff === "Factory A" && amendedProduction.remarks === "Keep progress"
+  && JSON.stringify(state.productionJobs.find((job) => job.id === unrelatedProduction.id)) === unrelatedProductionBeforeAmend,
+"AH4: only the exact orderId-linked Production snapshot changes while progress and unrelated jobs remain untouched");
+assert(amendedInstallation.customerName === "Updated Customer" && amendedInstallation.phone === "0122222222" && amendedInstallation.address === "New Address"
+  && !Object.prototype.hasOwnProperty.call(amendedInstallation, "items"),
+"AH5: exact Installation receives contact/address only and is never recreated or given product changes");
+assert(JSON.stringify(state.quotations[0]) === quoteBeforeAmend
+  && amendedOrder.amendmentHistory.length === 1
+  && amendedOrder.amendmentHistory[0].amendmentId === "amendment-test-1"
+  && amendedOrder.amendmentHistory[0].before.total === 8000
+  && amendedOrder.amendmentHistory[0].after.total === 9500,
+"AH6: Won Quotation remains unchanged and immutable amendment history records exact before/after snapshots");
+const completedInstallationSource = {
+  ...state,
+  orders: [structuredClone(amendOrderRecord)],
+  quotations: [structuredClone(amendQuote)],
+  productionJobs: [structuredClone(amendProduction)],
+  installationJobs: [{ ...structuredClone(amendInstallation), status: "completed" }],
+  warrantyCards: []
+};
+const completedInstallationBlocked = buildOrderAmendmentPlan(amendmentValues, { source: completedInstallationSource });
+assert(!completedInstallationBlocked.ok && completedInstallationBlocked.message.includes("Completed Installation blocks"),
+"AH7: completed Installation must block unsafe product, measurement and price amendments");
+const completedProductionSource = {
+  ...completedInstallationSource,
+  installationJobs: [{ ...structuredClone(amendInstallation), status: "pending_arrangement" }],
+  productionJobs: [{ ...structuredClone(amendProduction), status: "completed" }]
+};
+const completedProductionPlan = buildOrderAmendmentPlan(amendmentValues, { source: completedProductionSource });
+assert(completedProductionPlan.ok && completedProductionPlan.productionCompleted,
+"AH8: completed Production must be identified for the stronger second confirmation");
+const completedCommissionOrder = { ...structuredClone(amendedOrder), status: "completed", completedAt: "2026-08-20T02:00:00.000Z" };
+const amendedCommission = monthlyCommissionSales([completedCommissionOrder], "2026-08");
+assert(amendedCommission.total === 9500 && amendedCommission.rows.length === 1,
+"AH9: a completed amended Order must contribute its latest valid total once without a second commission event");
 
 const quotationSource = await readFile(new URL("../src/quotations.js", import.meta.url), "utf8");
 const installerSearchWorkflowSource = await readFile(new URL("../src/workflow.js", import.meta.url), "utf8");

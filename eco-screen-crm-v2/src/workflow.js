@@ -26,7 +26,11 @@ import {
   toNumber
 } from "./calculations.js";
 import {
+  COLOR_VALUES,
+  OPENING_DIRECTION_VALUES,
   colorLabel,
+  normalizeColor,
+  normalizeOpeningDirection,
   normalizeStatus,
   openingDirectionLabel,
   statusLabel,
@@ -128,6 +132,7 @@ let returnToFollowUpPanel = null;
 let paymentPanel = null;
 let paymentReversalPanel = null;
 let salespersonAssignmentOrderId = "";
+let orderAmendmentPanel = null;
 let legacyOrderPanel = null;
 let installationDispatchPreviewId = "";
 let installationRecallJobId = "";
@@ -1378,7 +1383,7 @@ function orderActionsHtml(order) {
       ${canScheduleInstallation() ? `<button class="btn" type="button" data-send-installer="${order.id}">${t("Arrange Installation")}</button>` : ""}
       <button class="btn" type="button" data-whatsapp-order="${order.id}">${t("WhatsApp Customer")}</button>
       <button class="btn" type="button" data-highlight-order="${order.id}">${t("Search / Open Customer")}</button>
-      ${canEditOrder() ? `<button class="btn" type="button" data-edit-order-items="${order.id}">${editingOrderId === order.id ? t("Close Item Editor") : t("Edit Order Items")}</button>` : ""}
+      ${bossActiveOrder && !isLegacyOrder(order) ? `<button class="btn" type="button" data-amend-order="${escapeHtml(order.id)}">${t("Amend Order")}</button>` : ""}
       ${isBossOrAdmin() ? `<button class="btn" type="button" data-edit-order-number="${order.id}">${editingOrderNumberId === order.id ? t("Cancel Order Number Edit") : t("Edit Order Number")}</button>` : ""}
       ${bossActiveOrder ? `<button class="btn" type="button" data-return-follow-up="${escapeHtml(order.id)}">${t("Return to Follow Up")}</button>` : ""}
       ${bossActiveOrder ? `<button class="btn" type="button" data-record-payment="${escapeHtml(order.id)}">${t("Record Payment / Add Deposit")}</button>` : ""}
@@ -1391,7 +1396,87 @@ function orderActionsHtml(order) {
     ${paymentPanel?.orderId === order.id ? recordPaymentPanelHtml(order) : ""}
     ${paymentReversalPanel?.orderId === order.id ? reversePaymentPanelHtml(order) : ""}
     ${salespersonAssignmentOrderId === order.id ? salespersonAssignmentPanelHtml(order) : ""}
+    ${orderAmendmentPanel?.orderId === order.id ? orderAmendmentPanelHtml(order) : ""}
+    ${orderAmendmentHistoryHtml(order)}
   `;
+}
+
+function orderAmendmentHistoryHtml(order) {
+  const history = Array.isArray(order.amendmentHistory) ? order.amendmentHistory : [];
+  if (!history.length || !isBossOrAdmin()) return "";
+  return `<details class="order-amendment-history">
+    <summary>${t("Amendment History")} (${history.length})</summary>
+    <p class="order-amended-badge">${t("Order amended after confirmation")}</p>
+    ${[...history].reverse().map((entry) => `<article>
+      <strong>${escapeHtml(entry.amendedAt || "-")} · ${escapeHtml(entry.amendedBy || "-")}</strong>
+      <span>${t("Reason")}: ${escapeHtml(entry.reason || "-")}</span>
+      <span>${t("Previous total")}: ${money(entry.previousTotal)} → ${t("New total")}: ${money(entry.newTotal)}</span>
+      <span>${t("Changed fields")}: ${escapeHtml((entry.changedFields || []).join(", ") || "-")}</span>
+      <small>ID: ${escapeHtml(entry.amendmentId || "-")}</small>
+    </article>`).join("")}
+  </details>`;
+}
+
+function amendmentItemField(orderId, item, label, field, inputMode = "") {
+  return `<label>${t(label)}<input ${inputMode ? `inputmode="${inputMode}"` : ""} data-amend-order-id="${escapeHtml(orderId)}" data-amend-item-id="${escapeHtml(item.id)}" data-amend-item-field="${field}" value="${escapeHtml(item[field] ?? "")}" /></label>`;
+}
+
+function amendmentItemHtml(orderId, item, index) {
+  const directions = OPENING_DIRECTION_VALUES.map((value) => `<option value="${value}" ${normalizeOpeningDirection(item.openingDirection) === value ? "selected" : ""}>${escapeHtml(openingDirectionLabel(value))}</option>`).join("");
+  const colors = COLOR_VALUES.map((value) => `<option value="${value}" ${normalizeColor(item.color) === value ? "selected" : ""}>${escapeHtml(colorLabel(value))}</option>`).join("");
+  return `<article class="order-amendment-item" data-amend-item="${escapeHtml(item.id)}">
+    <div class="section-head"><strong>${t("Product")} ${index + 1}</strong><button class="btn danger" type="button" data-remove-amend-item="${escapeHtml(item.id)}">${t("Remove")}</button></div>
+    <div class="form-grid compact">
+      <label>${t("Product")}<select data-amend-order-id="${escapeHtml(orderId)}" data-amend-item-id="${escapeHtml(item.id)}" data-amend-item-field="productId">${orderProductOptions(item)}</select></label>
+      ${amendmentItemField(orderId, item, "Width mm", "width", "decimal")}
+      ${amendmentItemField(orderId, item, "Height mm", "height", "decimal")}
+      ${amendmentItemField(orderId, item, "Quantity", "quantity", "decimal")}
+      <label>${t("Color")}<select data-amend-order-id="${escapeHtml(orderId)}" data-amend-item-id="${escapeHtml(item.id)}" data-amend-item-field="color">${colors}</select></label>
+      <label>${t("Opening Direction")}<select data-amend-order-id="${escapeHtml(orderId)}" data-amend-item-id="${escapeHtml(item.id)}" data-amend-item-field="openingDirection">${directions}</select></label>
+      ${amendmentItemField(orderId, item, "Installation Location", "installationLocation")}
+      ${amendmentItemField(orderId, item, "Installation Method", "installType")}
+      ${amendmentItemField(orderId, item, "Track Size", "trackSize")}
+      ${amendmentItemField(orderId, item, "Handle Height", "handleHeight")}
+      ${amendmentItemField(orderId, item, "Unit Price", "unitPrice", "decimal")}
+      ${amendmentItemField(orderId, item, "Manual Final Price", "manualFinalPrice", "decimal")}
+      <label class="wide">${t("Remark")}<textarea rows="2" data-amend-order-id="${escapeHtml(orderId)}" data-amend-item-id="${escapeHtml(item.id)}" data-amend-item-field="remark">${escapeHtml(item.remark || "")}</textarea></label>
+    </div>
+  </article>`;
+}
+
+function orderAmendmentPanelHtml(order) {
+  const panel = orderAmendmentPanel;
+  const draft = panel?.draft || amendmentDraftFromOrder(order);
+  const plan = panel?.preview ? buildOrderAmendmentPlan(draft, { amendmentId: panel.amendmentId, amendedAt: panel.amendedAt }) : null;
+  return `<section class="order-action-panel order-amendment-panel" data-order-amendment-panel="${escapeHtml(order.id)}">
+    <div class="section-head"><div><h3>${t("Amend Order")}</h3><p class="muted-text">${t("The original Won Quotation remains unchanged. Order stable ID and SO number are read only.")}</p></div><button class="btn" type="button" data-cancel-order-amendment>${t("Close")}</button></div>
+    <p><strong>${escapeHtml(getOrderDisplayNo(order))}</strong> · ID: ${escapeHtml(order.id)}</p>
+    ${panel?.preview && plan?.ok ? `
+      ${plan.sentToProduction ? `<p class="payment-warning">${t("This Order has already been sent to Production. Changes will update the exact linked Production record.")}</p>` : ""}
+      ${plan.productionCompleted ? `<p class="payment-warning strong-warning">${t("Production is completed. A second confirmation is required before updating its snapshot.")}</p>` : ""}
+      <h4>${t("Before / After Preview")}</h4>${fieldChangesPreviewHtml(plan.changes)}
+      <label class="confirmation-check"><input type="checkbox" data-amend-confirm-preview /> ${t("I confirm the exact before / after changes")}</label>
+      ${plan.sentToProduction ? `<label class="confirmation-check"><input type="checkbox" data-amend-confirm-sent /> ${t("I confirm updating the linked Production snapshot")}</label>` : ""}
+      ${plan.productionCompleted ? `<label class="confirmation-check"><input type="checkbox" data-amend-confirm-completed /> ${t("I confirm updating the completed Production snapshot")}</label>` : ""}
+      <div class="actions"><button class="btn primary" type="button" data-confirm-order-amendment="${escapeHtml(order.id)}">${t("Confirm Amendment")}</button><button class="btn" type="button" data-back-order-amendment>${t("Back")}</button></div>
+    ` : `
+      <div class="form-grid compact amendment-header-fields">
+        <label>${t("Customer Name")}<input data-amend-field="customerName" value="${escapeHtml(draft.customerName || "")}" /></label>
+        <label>${t("Phone")}<input data-amend-field="phone" value="${escapeHtml(draft.phone || "")}" /></label>
+        <label>${t("Location / Project Name")}<input data-amend-field="projectName" value="${escapeHtml(draft.projectName || "")}" /></label>
+        <label class="wide">${t("Installation Address")}<textarea rows="2" data-amend-field="siteAddress">${escapeHtml(draft.siteAddress || "")}</textarea></label>
+        <label>${t("Discount")}<input inputmode="decimal" data-amend-field="discount" value="${escapeHtml(draft.discount ?? "")}" /></label>
+        <label>${t("Tax Rate")}<input inputmode="decimal" data-amend-field="taxRate" value="${escapeHtml(draft.taxRate ?? "")}" /></label>
+        <label><input type="checkbox" data-amend-field="taxEnabled" ${draft.taxEnabled ? "checked" : ""} /> ${t("Tax Enabled")}</label>
+        <label class="wide">${t("Order Remark")}<textarea rows="2" data-amend-field="remark">${escapeHtml(draft.remark || "")}</textarea></label>
+        <label class="wide">${t("Production Remark")}<textarea rows="2" data-amend-field="productionRemark">${escapeHtml(draft.productionRemark || "")}</textarea></label>
+        <label class="wide">${t("Amendment Reason")}<textarea rows="2" data-amend-field="reason">${escapeHtml(draft.reason || "")}</textarea></label>
+      </div>
+      <div class="section-head"><h4>${t("Items")}</h4><button class="btn" type="button" data-add-amend-item>${t("Add Item")}</button></div>
+      <div class="order-amendment-items">${draft.items.map((item, index) => amendmentItemHtml(order.id, item, index)).join("")}</div>
+      <button class="btn primary" type="button" data-preview-order-amendment="${escapeHtml(order.id)}">${t("Show Before / After Preview")}</button>
+    `}
+  </section>`;
 }
 
 function salespersonAssignmentPanelHtml(order) {
@@ -3441,6 +3526,9 @@ function handleOrderClick(event) {
   const quickViewInstallationId = event.target.dataset.quickViewInstallation;
   const quickArrangeInstallationId = event.target.dataset.quickArrangeInstallation;
   const quickSendInstallationId = event.target.dataset.quickSendInstallation;
+  const amendOrderId = event.target.dataset.amendOrder;
+  const previewAmendOrderId = event.target.dataset.previewOrderAmendment;
+  const confirmAmendOrderId = event.target.dataset.confirmOrderAmendment;
   if (page) {
     orderSearch = { ...orderSearch, page: Number(page) || 1 };
     renderOrderList();
@@ -3479,6 +3567,13 @@ function handleOrderClick(event) {
   if (quickViewInstallationId) openQuickInstallation(quickViewInstallationId);
   if (quickArrangeInstallationId) openQuickInstallation(quickArrangeInstallationId);
   if (quickSendInstallationId) openQuickInstallation(quickSendInstallationId, true);
+  if (amendOrderId) openOrderAmendment(amendOrderId);
+  if (event.target.dataset.cancelOrderAmendment !== undefined) closeOrderAmendment();
+  if (event.target.dataset.backOrderAmendment !== undefined) backOrderAmendment();
+  if (event.target.dataset.addAmendItem !== undefined) addOrderAmendmentItem();
+  if (event.target.dataset.removeAmendItem) removeOrderAmendmentItem(event.target.dataset.removeAmendItem);
+  if (previewAmendOrderId) previewOrderAmendment(previewAmendOrderId);
+  if (confirmAmendOrderId) confirmOrderAmendment(confirmAmendOrderId, event.target);
 }
 
 function openQuickInstallation(jobId, previewSend = false) {
@@ -3530,6 +3625,111 @@ function openSalespersonAssignmentPanel(orderId) {
   paymentReversalPanel = null;
   salespersonAssignmentOrderId = String(order.id);
   renderOrderList();
+}
+
+function openOrderAmendment(orderId) {
+  if (!isBossOrAdmin()) return showWorkflowMessage("Permission denied: only Boss/Admin can amend an Order.", "error");
+  const matches = state.orders.filter((order) => String(order.id || "") === String(orderId || "") && isActiveOrderRecord(order) && !isLegacyOrder(order));
+  if (matches.length !== 1) return showWorkflowMessage("The exact active normal CRM Order was not found or is ambiguous.", "error");
+  const order = matches[0];
+  orderAmendmentPanel = {
+    orderId: String(order.id),
+    draft: amendmentDraftFromOrder(order),
+    preview: false,
+    amendmentId: uid("amendment"),
+    amendedAt: new Date().toISOString()
+  };
+  editingOrderId = "";
+  orderEditorDraft = null;
+  returnToFollowUpPanel = null;
+  paymentPanel = null;
+  paymentReversalPanel = null;
+  salespersonAssignmentOrderId = "";
+  renderOrderList();
+  setTimeout(() => document.querySelector?.(`[data-order-amendment-panel="${order.id}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 25);
+}
+
+function closeOrderAmendment() {
+  orderAmendmentPanel = null;
+  renderOrderList();
+}
+
+function backOrderAmendment() {
+  if (!orderAmendmentPanel) return;
+  orderAmendmentPanel.preview = false;
+  renderOrderList();
+}
+
+function updateOrderAmendmentDraft(target) {
+  if (!orderAmendmentPanel?.draft || String(target.dataset.amendOrderId || orderAmendmentPanel.orderId) !== orderAmendmentPanel.orderId) return;
+  const field = target.dataset.amendField;
+  if (field) {
+    orderAmendmentPanel.draft[field] = target.type === "checkbox" ? target.checked : target.value;
+    return;
+  }
+  const itemId = String(target.dataset.amendItemId || "");
+  const itemField = target.dataset.amendItemField;
+  const item = orderAmendmentPanel.draft.items.find((row) => String(row.id) === itemId);
+  if (!item || !itemField) return;
+  if (itemField === "productId") {
+    const product = productById(target.value);
+    if (!product) return;
+    Object.assign(item, {
+      productId: product.id,
+      productName: product.name,
+      category: product.category,
+      calculationType: product.calculationType || "sqft",
+      minimumSqft: Number(product.minimumSqft || 0),
+      unitPrice: Number(product.sellingPrice || 0)
+    });
+  } else if (["width", "height", "quantity", "unitPrice", "manualFinalPrice"].includes(itemField)) {
+    item[itemField] = String(target.value || "").replace(/[^\d.]/g, "");
+  } else item[itemField] = target.value;
+}
+
+function addOrderAmendmentItem() {
+  if (!orderAmendmentPanel?.draft || !isBossOrAdmin()) return;
+  const product = activeProducts()[0] || state.products?.[0] || {};
+  orderAmendmentPanel.draft.items.push({
+    id: uid("item"), productId: product.id || "", productName: product.name || "", category: product.category || "",
+    calculationType: product.calculationType || "sqft", minimumSqft: Number(product.minimumSqft || 0), width: "", height: "", quantity: 1,
+    color: "white", openingDirection: "close_left", unitPrice: Number(product.sellingPrice || 0), manualFinalPrice: "", remark: ""
+  });
+  renderOrderList();
+}
+
+function removeOrderAmendmentItem(itemId) {
+  if (!orderAmendmentPanel?.draft || !isBossOrAdmin()) return;
+  if (orderAmendmentPanel.draft.items.length <= 1) return showWorkflowMessage("At least one Order item is required.", "error");
+  orderAmendmentPanel.draft.items = orderAmendmentPanel.draft.items.filter((item) => String(item.id) !== String(itemId));
+  renderOrderList();
+}
+
+function previewOrderAmendment(orderId) {
+  if (!orderAmendmentPanel || orderAmendmentPanel.orderId !== String(orderId)) return failOrderUpdate("Order amendment editor data is unavailable.");
+  const plan = buildOrderAmendmentPlan(orderAmendmentPanel.draft, { amendmentId: orderAmendmentPanel.amendmentId, amendedAt: orderAmendmentPanel.amendedAt });
+  if (!plan.ok) return failOrderUpdate(plan.message);
+  orderAmendmentPanel.preview = true;
+  renderOrderList();
+}
+
+async function confirmOrderAmendment(orderId, button) {
+  if (!orderAmendmentPanel?.preview || orderAmendmentPanel.orderId !== String(orderId)) return failOrderUpdate("Review the before/after preview first.");
+  const panel = button.closest("[data-order-amendment-panel]");
+  if (!panel?.querySelector("[data-amend-confirm-preview]")?.checked) return failOrderUpdate("Confirm the exact before/after changes first.");
+  const plan = buildOrderAmendmentPlan(orderAmendmentPanel.draft, { amendmentId: orderAmendmentPanel.amendmentId, amendedAt: orderAmendmentPanel.amendedAt });
+  if (!plan.ok) return failOrderUpdate(plan.message);
+  const confirmSentToProduction = !plan.sentToProduction || panel.querySelector("[data-amend-confirm-sent]")?.checked === true;
+  const confirmCompletedProduction = !plan.productionCompleted || panel.querySelector("[data-amend-confirm-completed]")?.checked === true;
+  setOrderActionBusy(button, t("Saving..."));
+  const result = await amendOrder(orderAmendmentPanel.draft, {
+    amendmentId: orderAmendmentPanel.amendmentId,
+    amendedAt: orderAmendmentPanel.amendedAt,
+    confirmSentToProduction,
+    confirmCompletedProduction
+  });
+  if (result.ok) orderAmendmentPanel = null;
+  renderOrders();
 }
 
 function closeSalespersonAssignmentPanel() {
@@ -3670,6 +3870,10 @@ async function confirmReversePayment(orderId, button) {
 }
 
 function handleOrderChange(event) {
+  if (event.target.dataset.amendField || event.target.dataset.amendItemField) {
+    updateOrderAmendmentDraft(event.target);
+    return;
+  }
   if (event.target.dataset.orderItemField) {
     handleOrderItemInput(event);
     return;
@@ -3742,6 +3946,10 @@ function saveOrderNumberFromEditor(orderId, button) {
 }
 
 function handleOrderItemInput(event) {
+  if (event.target.dataset.amendField || event.target.dataset.amendItemField) {
+    updateOrderAmendmentDraft(event.target);
+    return;
+  }
   const orderId = event.target.dataset.orderId;
   const itemId = event.target.dataset.orderItemId;
   const field = event.target.dataset.orderItemField;
@@ -6855,6 +7063,225 @@ export async function reverseOrderPayment(values = {}, options = {}) {
     local: "Payment reversal saved locally. Syncing cloud...",
     success: "Payment reversed. The original record remains in Payment History.",
     cloudFailure: "Payment reversal saved locally but cloud sync failed"
+  });
+}
+
+function amendmentDraftFromOrder(order = {}) {
+  return {
+    orderId: String(order.id || ""),
+    customerName: String(order.customer?.name || order.customerName || ""),
+    phone: String(order.customer?.phone || order.phone || ""),
+    projectName: String(order.projectName || order.locationProjectName || order.projectLocation || order.customer?.area || ""),
+    siteAddress: String(order.siteAddress || order.installationAddress || order.customer?.address || ""),
+    items: (Array.isArray(order.items) ? order.items : []).map((item) => ({ ...structuredCloneSafe(item), id: item.id || uid("item") })),
+    discount: order.discount ?? 0,
+    taxEnabled: order.taxEnabled === true,
+    taxRate: order.taxRate ?? order.serviceTaxRate ?? order.sstRate ?? 0,
+    remark: String(order.remark || order.remarks || ""),
+    productionRemark: String(order.productionRemark || order.productionRemarks || ""),
+    reason: ""
+  };
+}
+
+function orderAmendmentSnapshot(record = {}) {
+  return structuredCloneSafe({
+    customerName: record.customer?.name || record.customerName || "",
+    phone: record.customer?.phone || record.phone || "",
+    projectName: record.projectName || record.locationProjectName || record.projectLocation || record.customer?.area || "",
+    siteAddress: record.siteAddress || record.installationAddress || record.customer?.address || "",
+    items: record.items || [],
+    discount: record.discount ?? 0,
+    taxEnabled: record.taxEnabled === true,
+    taxRate: record.taxRate ?? 0,
+    taxAmount: record.taxAmount ?? 0,
+    subtotal: record.subtotal ?? 0,
+    total: normalizedFinalOrderTotal(record) ?? 0,
+    totalPaid: getOrderPaymentSummary(record).totalPaid,
+    balance: record.balance ?? getOrderPaymentSummary(record).balance,
+    remark: record.remark || record.remarks || "",
+    productionRemark: record.productionRemark || record.productionRemarks || ""
+  });
+}
+
+function amendmentChangedFields(before, after) {
+  return Object.keys(after).filter((field) => JSON.stringify(before[field]) !== JSON.stringify(after[field]));
+}
+
+function calculateAmendedOrderTotals(items, discount, taxEnabled, taxRate) {
+  const base = quoteTotals(items, discount, 0);
+  const normalizedTaxRate = Math.max(0, toNumber(taxRate));
+  const taxAmount = taxEnabled ? roundMoneyValue(base.total * normalizedTaxRate / 100) : 0;
+  return { subtotal: base.subtotal, taxAmount, total: roundMoneyValue(base.total + taxAmount) };
+}
+
+function amendmentUnsafeProductFieldsChanged(fields = []) {
+  return fields.some((field) => ["items", "discount", "taxEnabled", "taxRate", "taxAmount", "subtotal", "total"].includes(field));
+}
+
+function amendmentItemPayload(items = []) {
+  const fields = ["id", "productId", "productName", "category", "calculationType", "minimumSqft", "width", "height", "measurements", "quantity", "color", "openingDirection", "installationLocation", "installType", "trackSize", "trackType", "trackOpening", "meshType", "meshMaterial", "material", "handleHeight", "lock", "unitPrice", "manualFinalPrice", "priceAdjustmentRemark", "discount", "discountType", "powdercoat", "powdercoatRate", "remark", "remarks"];
+  return (Array.isArray(items) ? items : []).map((item) => Object.fromEntries(fields.map((field) => [field, item?.[field] ?? ""])));
+}
+
+function exactActiveOrderJobs(records, orderId) {
+  return (Array.isArray(records) ? records : []).filter((record) => isActiveWorkflowRecord(record) && String(record.orderId || "") === String(orderId || ""));
+}
+
+function preserveOrderAmendmentInvariants(before, after) {
+  const protectedFields = ["id", "orderId", "orderNo", "orderNumber", "quoteId", "quotationId", "quoteNumber", "quotationNo", "productionJobId", "productionId", "installationJobId", "installationId", "warrantyId", "warrantyCardId"];
+  const paymentFields = ["payments", "paymentRecords", "collections", "collectionRecords", "deposit"];
+  return [...protectedFields, ...paymentFields].every((field) => JSON.stringify(before[field]) === JSON.stringify(after[field]));
+}
+
+export function buildOrderAmendmentPlan(values = {}, options = {}) {
+  const source = options.source || state;
+  const orderId = String(values.orderId || "").trim();
+  const matches = (source.orders || []).filter((order) => String(order.id || "") === orderId && isActiveOrderRecord(order) && !isLegacyOrder(order));
+  if (!orderId || matches.length !== 1) return { ok: false, message: "The exact active normal CRM Order was not found or is ambiguous." };
+  const original = matches[0];
+  const reason = String(values.reason || "").trim();
+  if (!reason) return { ok: false, message: "Amendment Reason is required." };
+  const now = options.amendedAt || new Date().toISOString();
+  const actor = options.amendedBy || state.currentUser?.userId || currentActor();
+  const requestedItems = (Array.isArray(values.items) ? values.items : []).map((item) => ({ ...structuredCloneSafe(item), id: item.id || uid("item") }));
+  if (!requestedItems.length) return { ok: false, message: "At least one Order item is required." };
+  const itemInputsChanged = JSON.stringify(amendmentItemPayload(original.items)) !== JSON.stringify(amendmentItemPayload(requestedItems));
+  const items = itemInputsChanged
+    ? requestedItems.map((item) => itemWithCalculatedTotals(item))
+    : structuredCloneSafe(original.items || []);
+  const totals = calculateAmendedOrderTotals(items, values.discount, values.taxEnabled === true, values.taxRate);
+  const paymentSummary = getOrderPaymentSummary(original);
+  const customer = {
+    ...(original.customer || {}),
+    name: String(values.customerName || "").trim(),
+    phone: String(values.phone || "").trim(),
+    area: String(values.projectName || "").trim(),
+    address: String(values.siteAddress || "").trim()
+  };
+  const updatedOrder = {
+    ...original,
+    customer,
+    customerName: customer.name,
+    phone: customer.phone,
+    projectName: customer.area,
+    siteAddress: customer.address,
+    items,
+    discount: toNumber(values.discount),
+    taxEnabled: values.taxEnabled === true,
+    taxRate: Math.max(0, toNumber(values.taxRate)),
+    taxAmount: totals.taxAmount,
+    subtotal: totals.subtotal,
+    total: totals.total,
+    totalPaid: paymentSummary.totalPaid,
+    balance: roundMoneyValue(totals.total - paymentSummary.totalPaid),
+    remark: String(values.remark || ""),
+    productionRemark: String(values.productionRemark || ""),
+    updatedAt: now,
+    orderAmendedAfterConfirmation: true
+  };
+  ["finalTotal", "grandTotal", "quotationTotal"].forEach((field) => {
+    if (Object.prototype.hasOwnProperty.call(original, field)) updatedOrder[field] = totals.total;
+  });
+  const beforeSnapshot = orderAmendmentSnapshot(original);
+  const afterSnapshot = orderAmendmentSnapshot(updatedOrder);
+  const changedFields = amendmentChangedFields(beforeSnapshot, afterSnapshot);
+  if (!changedFields.length) return { ok: false, message: "No Order amendment changes were detected." };
+  if (!preserveOrderAmendmentInvariants(original, updatedOrder)) return { ok: false, message: "Protected Order identity, relationship or payment fields cannot be amended." };
+
+  const productionJobs = exactActiveOrderJobs(source.productionJobs, orderId);
+  const installationJobs = exactActiveOrderJobs(source.installationJobs, orderId);
+  if (productionJobs.length > 1 || installationJobs.length > 1) return { ok: false, message: "Exact linked active Production or Installation relationships are ambiguous." };
+  const productionJob = productionJobs[0] || null;
+  const installationJob = installationJobs[0] || null;
+  const productionCompleted = Boolean(productionJob && normalizeProductionStatus(productionJob.status) === "completed");
+  const installationCompleted = Boolean(installationJob && installationDispatchStage(installationJob) === "completed");
+  const unsafeProductChange = itemInputsChanged
+    || toNumber(values.discount) !== toNumber(original.discount)
+    || (values.taxEnabled === true) !== (original.taxEnabled === true)
+    || Math.max(0, toNumber(values.taxRate)) !== Math.max(0, toNumber(original.taxRate ?? original.serviceTaxRate ?? original.sstRate));
+  if (installationCompleted && (unsafeProductChange || amendmentUnsafeProductFieldsChanged(changedFields))) {
+    return { ok: false, message: "Completed Installation blocks product, measurement, quantity, price, discount, tax and total amendments." };
+  }
+
+  const amendmentId = options.amendmentId || uid("amendment");
+  updatedOrder.amendmentHistory = [
+    ...(Array.isArray(original.amendmentHistory) ? structuredCloneSafe(original.amendmentHistory) : []),
+    {
+      amendmentId,
+      amendedAt: now,
+      amendedBy: actor,
+      reason,
+      before: beforeSnapshot,
+      after: afterSnapshot,
+      changedFields,
+      previousTotal: beforeSnapshot.total,
+      newTotal: afterSnapshot.total
+    }
+  ];
+
+  const updatedProduction = productionJob ? {
+    ...productionJob,
+    customer: { ...(productionJob.customer || {}), name: customer.name, phone: customer.phone, area: customer.area, address: customer.address },
+    customerName: customer.name,
+    phone: customer.phone,
+    projectName: customer.area,
+    siteAddress: customer.address,
+    items: structuredCloneSafe(items),
+    productionRemark: updatedOrder.productionRemark,
+    updatedAt: now
+  } : null;
+  const updatedInstallation = installationJob ? {
+    ...installationJob,
+    customer: { ...(installationJob.customer || {}), name: customer.name, phone: customer.phone, area: customer.area, address: customer.address },
+    customerName: customer.name,
+    phone: customer.phone,
+    contactPhone: customer.phone,
+    projectName: customer.area,
+    installationAddress: customer.address,
+    siteAddress: customer.address,
+    address: customer.address,
+    updatedAt: now
+  } : null;
+  const changes = changedFields.map((field) => ({ collection: "orders", stableId: orderId, field, from: beforeSnapshot[field], to: afterSnapshot[field] }));
+  if (updatedProduction) ["customerName", "phone", "projectName", "siteAddress", "items", "productionRemark"].forEach((field) => {
+    if (JSON.stringify(productionJob[field]) !== JSON.stringify(updatedProduction[field])) changes.push({ collection: "productionJobs", stableId: productionJob.id, field, from: productionJob[field], to: updatedProduction[field] });
+  });
+  if (updatedInstallation) ["customerName", "phone", "contactPhone", "projectName", "installationAddress", "siteAddress", "address"].forEach((field) => {
+    if (JSON.stringify(installationJob[field]) !== JSON.stringify(updatedInstallation[field])) changes.push({ collection: "installationJobs", stableId: installationJob.id, field, from: installationJob[field], to: updatedInstallation[field] });
+  });
+  return {
+    ok: true,
+    action: "order-amendment",
+    orderId,
+    amendmentId,
+    sentToProduction: getOrderDispatchState(original) === "sent-to-production" || getOrderDispatchState(original) === "completed",
+    productionCompleted,
+    installationCompleted,
+    changedFields,
+    changes,
+    before: beforeSnapshot,
+    after: afterSnapshot,
+    nextState: {
+      quotations: source.quotations,
+      orders: source.orders.map((order) => order === original ? updatedOrder : order),
+      productionJobs: source.productionJobs.map((job) => updatedProduction && job === productionJob ? updatedProduction : job),
+      installationJobs: source.installationJobs.map((job) => updatedInstallation && job === installationJob ? updatedInstallation : job),
+      warrantyCards: source.warrantyCards || []
+    }
+  };
+}
+
+export async function amendOrder(values = {}, options = {}) {
+  if (!isBossOrAdmin()) return failOrderUpdate("Permission denied: only Boss/Admin can amend an Order.");
+  const plan = buildOrderAmendmentPlan(values, options);
+  if (!plan.ok) return failOrderUpdate(plan.message);
+  if (plan.sentToProduction && options.confirmSentToProduction !== true) return failOrderUpdate("Confirm that the linked Production snapshot will be updated.");
+  if (plan.productionCompleted && options.confirmCompletedProduction !== true) return failOrderUpdate("A second confirmation is required because Production is completed.");
+  if (options.downloadBackup !== false && !downloadOrderActionBackup(plan)) return failOrderUpdate("Full JSON backup download failed. Order was not amended.");
+  return commitOrderActionPlan(plan, {
+    local: "Order amendment saved locally. Syncing cloud...",
+    success: "Order amendment saved. The original Won Quotation and payment records remain unchanged.",
+    cloudFailure: "Order amendment saved locally but cloud sync failed"
   });
 }
 
