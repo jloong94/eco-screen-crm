@@ -912,6 +912,53 @@ input:focus, select:focus, textarea:focus {
 }
 .order-action-panel h3,
 .order-action-panel h4 { margin: 0; }
+.order-amendment-items {
+  display: grid;
+  gap: 12px;
+}
+.order-amendment-item {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: white;
+}
+.order-amendment-history {
+  grid-column: 1 / -1;
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+.order-amendment-history article {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.order-amendment-history article span,
+.order-amendment-history article small { color: var(--muted); }
+.order-amended-badge {
+  display: inline-flex;
+  width: fit-content;
+  margin: 10px 0 0;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #92400e;
+  font-weight: 700;
+}
+.confirmation-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+}
+.confirmation-check input { width: auto; min-height: 0; margin-top: 3px; }
+.strong-warning { border: 2px solid #b91c1c; }
 .order-action-facts,
 .payment-preview-grid {
   display: grid;
