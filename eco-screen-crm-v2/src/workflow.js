@@ -140,6 +140,9 @@ let warrantyPreviewCardId = "";
 let installationSearch = "";
 let installationStatusFilter = "";
 let installationDateGroupFilter = "";
+let installationDateFrom = "";
+let installationDateTo = "";
+let installationIssueJobId = "";
 let schedulingProductionFilter = "";
 let schedulingInstallationFilter = "";
 let schedulingArrangementJobId = "";
@@ -173,6 +176,9 @@ export function resetWorkflowNavigationState(page) {
     installationSearch = "";
     installationStatusFilter = "";
     installationDateGroupFilter = "";
+    installationDateFrom = "";
+    installationDateTo = "";
+    installationIssueJobId = "";
   }
   if (page === "scheduling") {
     schedulingProductionFilter = "";
@@ -198,7 +204,7 @@ export function workflowNavigationState() {
   return {
     orders: { ...orderSearch },
     production: { search: productionSearch, status: productionStatusFilter, showArchived: showArchivedProductionDuplicates },
-    installation: { search: installationSearch, status: installationStatusFilter, dateGroup: installationDateGroupFilter },
+    installation: { search: installationSearch, status: installationStatusFilter, dateGroup: installationDateGroupFilter, dateFrom: installationDateFrom, dateTo: installationDateTo },
     scheduling: { production: schedulingProductionFilter, installation: schedulingInstallationFilter },
     warranty: { search: warrantySearch, status: warrantyStatusFilter }
   };
@@ -3112,7 +3118,8 @@ function renderInstallationJobs() {
   const installerView = normalizeText(role()) === "installer";
   list.innerHTML = `
     ${installerView ? installerInstallationSummaryHtml() : installationDateGroupSummaryHtml()}
-    ${installationSearchHtml()}
+    ${installationSearchHtml(installerView)}
+    ${installationIssuesHtml()}
     ${canScheduleInstallation() ? `<section class="installation-diagnostics">
       <span>${t("Pending Arrangement")}<strong>${diagnostics.pendingArrangement}</strong></span>
       <span>${t("Ready to Send")}<strong>${diagnostics.readyToSend}</strong></span>
@@ -3194,10 +3201,29 @@ export function installationJobsForCurrentView(user = state.currentUser, search 
   const installerView = normalizeText(user?.role || source.role) === "installer";
   return visibleJobs
     .filter((job) => installationJobMatchesSearch(job, search, source))
+    .filter((job) => !installerView || installationJobMatchesDateRange(job, installationDateFrom, installationDateTo))
     .filter((job) => installerView
       ? installationJobMatchesStatusFilter(job, status)
       : installationJobMatchesDateGroup(job, installationDateGroupFilter))
     .sort(compareInstallationSchedule);
+}
+
+export function installationJobMatchesDateRange(job = {}, dateFrom = installationDateFrom, dateTo = installationDateTo) {
+  const from = malaysiaCalendarDate(dateFrom);
+  const to = malaysiaCalendarDate(dateTo);
+  if (!from && !to) return true;
+  const date = malaysiaCalendarDate(job.installationDate || job.completedAt || job.completionDate);
+  if (!date) return false;
+  return (!from || date >= from) && (!to || date <= to);
+}
+
+export function setInstallationDateRange(dateFrom = "", dateTo = "") {
+  installationDateFrom = malaysiaCalendarDate(dateFrom);
+  installationDateTo = malaysiaCalendarDate(dateTo);
+  if (installationDateFrom && installationDateTo && installationDateFrom > installationDateTo) {
+    [installationDateFrom, installationDateTo] = [installationDateTo, installationDateFrom];
+  }
+  return { dateFrom: installationDateFrom, dateTo: installationDateTo };
 }
 
 export function installationJobMatchesStatusFilter(job = {}, status = installationStatusFilter) {
@@ -3277,12 +3303,62 @@ function installerInstallationSummaryHtml() {
   </div>`;
 }
 
-function installationSearchHtml() {
+function installationSearchHtml(installerView = normalizeText(role()) === "installer") {
   const placeholder = t("Search SO number, customer or phone");
   return `<section class="installer-installation-search" role="search" aria-label="${escapeHtml(placeholder)}">
     <label class="installer-installation-search-field"><span>${escapeHtml(placeholder)}</span><input type="search" data-installer-installation-search value="${escapeHtml(installationSearch)}" placeholder="${escapeHtml(placeholder)}" autocomplete="off" /></label>
+    ${installerView ? `<label><span>${t("Installation Date From")}</span><input type="date" data-installer-installation-date-from value="${escapeHtml(installationDateFrom)}" /></label><label><span>${t("Installation Date To")}</span><input type="date" data-installer-installation-date-to value="${escapeHtml(installationDateTo)}" /></label>` : ""}
     <div class="actions"><button class="btn primary" type="button" data-installation-search-action="search">${t("Search")}</button><button class="btn" type="button" data-installation-search-action="clear">${t("Clear Search")}</button></div>
   </section>`;
+}
+
+export function installationIssuesForAll(source = state) {
+  const seen = new Set();
+  const rows = [];
+  (source.installationJobs || []).filter(isActiveWorkflowRecord).forEach((job) => {
+    const details = installationJobDisplayDetails(job, source);
+    (Array.isArray(job.installationIssues) ? job.installationIssues : []).forEach((issue) => {
+      const issueId = String(issue.issueId || issue.id || "").trim();
+      if (!issueId || seen.has(issueId)) return;
+      seen.add(issueId);
+      rows.push({ issue, job, details });
+    });
+  });
+  return rows.sort((left, right) => String(right.issue.reportedAt || "").localeCompare(String(left.issue.reportedAt || "")));
+}
+
+function installationIssuesHtml() {
+  if (!state.currentUser) return "";
+  const rows = installationIssuesForAll();
+  const openCount = rows.filter(({ issue }) => normalizeText(issue.status) !== "resolved").length;
+  return `<section class="installation-issues-panel">
+    <div class="section-head"><div><h3>${t("Installation Issues")}</h3><p class="muted-text">${t("All installation staff can see reported issues. Assignment uses exact Installation and Installer stable IDs.")}</p></div><span class="pill">${t("Open Issues")}: ${openCount}</span></div>
+    ${rows.length ? `<div class="installation-issue-list">${rows.map(installationIssueCardHtml).join("")}</div>` : `<p class="muted-text">${t("No installation issues reported.")}</p>`}
+  </section>`;
+}
+
+function installationIssueCardHtml({ issue, job, details }) {
+  const assignedName = issue.assignedInstallerName || t("Unassigned");
+  const phone = details.phone ? `<a class="installation-phone-link" href="tel:${escapeHtml(details.phone)}">${escapeHtml(details.phone)}</a>` : "-";
+  return `<article class="installation-issue-card" data-installation-issue="${escapeHtml(issue.issueId)}">
+    <div class="card-head"><div><strong>${escapeHtml(details.orderNo || "-")} · ${escapeHtml(details.customer || "-")}</strong><p class="muted-text">${phone} | ${escapeHtml(job.installationDate || t("Not arranged"))}</p></div><span class="pill">${t(issue.status === "resolved" ? "Resolved" : "Open")}</span></div>
+    <div class="installation-issue-meta"><span>${t("Issue Type")}<strong>${t(issue.type || "Other")}</strong></span><span>${t("Reported By")}<strong>${escapeHtml(issue.reportedByName || issue.reportedById || "-")}</strong></span><span>${t("Reported At")}<strong>${escapeHtml(issue.reportedAt || "-")}</strong></span><span>${t("Assigned Installer")}<strong>${escapeHtml(assignedName)}</strong></span><span>${t("Installation ID")}<strong>${escapeHtml(job.id || "-")}</strong></span><span>${t("Order ID")}<strong>${escapeHtml(job.orderId || "-")}</strong></span></div>
+    <p class="installation-issue-description">${escapeHtml(issue.description || "-")}</p>
+    ${canScheduleInstallation() && issue.status !== "resolved" ? `<div class="installation-issue-assignment"><label>${t("Assign Problem Job")}<select data-installation-issue-installer="${escapeHtml(issue.issueId)}">${installerOptionsHtml(issue.assignedInstallerId)}</select></label><button class="btn" type="button" data-assign-installation-issue="${escapeHtml(issue.issueId)}" data-installation-job-id="${escapeHtml(job.id)}">${t("Assign Installer")}</button></div>` : ""}
+  </article>`;
+}
+
+function canReportInstallationIssue(job = {}) {
+  if (canScheduleInstallation()) return true;
+  return normalizeText(role()) === "installer"
+    && String(state.currentUser?.userId || "").trim()
+    && String(state.currentUser?.userId || "").trim() === String(job.assignedInstallerId || "").trim()
+    && ["sent_to_installer", "completed"].includes(installationDispatchStage(job));
+}
+
+function installationIssueFormHtml(job) {
+  const types = ["Installation Problem", "Missing Item", "Measurement Issue", "Customer Unavailable", "Return Visit Required", "Other"];
+  return `<section class="installation-issue-form" data-installation-issue-form="${escapeHtml(job.id)}"><div class="section-head"><h3>${t("Report Installation Problem")}</h3><button class="btn" type="button" data-close-installation-issue>${t("Close")}</button></div><div class="form-grid compact"><label>${t("Issue Type")}<select data-installation-issue-field="type">${types.map((type) => `<option value="${escapeHtml(type)}">${t(type)}</option>`).join("")}</select></label><label class="wide">${t("Problem Details")}<textarea rows="3" data-installation-issue-field="description" placeholder="${t("Describe the installation problem and action needed")}"></textarea></label></div><div class="actions"><button class="btn primary" type="button" data-save-installation-issue="${escapeHtml(job.id)}">${t("Save Problem Record")}</button></div></section>`;
 }
 
 function installationDateGroupSummaryHtml() {
@@ -3528,6 +3604,7 @@ function installationJobCardHtml(job) {
         <button class="btn" type="button" data-view-installation="${job.id}">${t("View Installation Job")}</button>
         <button class="btn primary" type="button" data-print-installation="${job.id}">${t("Print Installation Sheet")}</button>
         <button class="btn" type="button" data-whatsapp-installation="${job.id}">${t("WhatsApp Customer")}</button>
+        ${canReportInstallationIssue(job) ? `<button class="btn" type="button" data-report-installation-issue="${escapeHtml(job.id)}">${t("Report Installation Problem")}</button>` : ""}
         ${canScheduleInstallation() && !["sent_to_installer", "completed"].includes(stage) ? `<button class="btn primary" type="button" data-preview-installation-send="${job.id}">${t("Send to Installer")}</button>` : ""}
         ${isBossOrAdmin() && stage === "sent_to_installer" ? `<button class="btn danger" type="button" data-open-installation-recall="${job.id}">${t("Recall from Installer")}</button>` : ""}
         ${canCompleteInstallationJob(job) && stage === "sent_to_installer" ? `<button class="btn" type="button" data-complete-installation="${job.id}">${t("Complete Installation")}</button>` : ""}
@@ -3537,6 +3614,7 @@ function installationJobCardHtml(job) {
       </div>
       ${installationDispatchPreviewId === job.id ? installationDispatchPreviewHtml(job) : ""}
       ${installationRecallJobId === job.id ? installationRecallPanelHtml(job) : ""}
+      ${installationIssueJobId === job.id ? installationIssueFormHtml(job) : ""}
       ${activeCompletionJobId === job.id ? completionFormHtml(job) : ""}
       ${warrantyPreview ? warrantyCardPreviewHtml(warrantyPreview) : ""}
     </article>
@@ -8128,6 +8206,9 @@ function handleInstallationClick(event) {
   if (searchAction === "search") {
     const input = event.target.closest("#installationList")?.querySelector("[data-installer-installation-search]");
     setInstallationSearch(input?.value || "");
+    const dateFrom = event.target.closest("#installationList")?.querySelector("[data-installer-installation-date-from]")?.value || "";
+    const dateTo = event.target.closest("#installationList")?.querySelector("[data-installer-installation-date-to]")?.value || "";
+    setInstallationDateRange(dateFrom, dateTo);
     renderInstallationJobs();
     return;
   }
@@ -8135,6 +8216,7 @@ function handleInstallationClick(event) {
     setInstallationSearch("");
     setInstallationStatusFilter("");
     setInstallationDateGroupFilter("");
+    setInstallationDateRange("", "");
     renderInstallationJobs();
     return;
   }
@@ -8172,6 +8254,9 @@ function handleInstallationClick(event) {
   const openRecallId = event.target.dataset.openInstallationRecall;
   const confirmRecallId = event.target.dataset.confirmInstallationRecall;
   const closeRecallId = event.target.dataset.closeInstallationRecall;
+  const reportIssueId = event.target.dataset.reportInstallationIssue;
+  const saveIssueId = event.target.dataset.saveInstallationIssue;
+  const assignIssueId = event.target.dataset.assignInstallationIssue;
   if (printId) printInstallation(printId);
   if (viewId) printInstallation(viewId);
   if (whatsappId) whatsappInstallationCustomer(whatsappId);
@@ -8189,6 +8274,16 @@ function handleInstallationClick(event) {
   if (openRecallId) openInstallationRecall(openRecallId);
   if (confirmRecallId) confirmInstallationRecall(confirmRecallId, event.target);
   if (closeRecallId) closeInstallationRecall();
+  if (reportIssueId) {
+    installationIssueJobId = installationIssueJobId === reportIssueId ? "" : reportIssueId;
+    renderInstallationJobs();
+  }
+  if (event.target.dataset.closeInstallationIssue !== undefined) {
+    installationIssueJobId = "";
+    renderInstallationJobs();
+  }
+  if (saveIssueId) saveInstallationIssueFromPanel(saveIssueId, event.target);
+  if (assignIssueId) assignInstallationIssueFromPanel(event.target.dataset.installationJobId, assignIssueId, event.target);
   if (warrantyId) generateWarrantyCard(warrantyId);
   if (viewWarrantyId) viewExistingWarrantyCard(viewWarrantyId);
   if (regenerateWarrantyId) generateWarrantyCard(regenerateWarrantyId, { regenerate: true });
@@ -8475,6 +8570,86 @@ export async function recallInstallationFromInstaller(jobId, recallReason) {
   return { ...result, jobId: exactJobId, status: "pending_arrangement" };
 }
 
+function saveInstallationIssueFromPanel(jobId, button) {
+  const panel = button.closest("[data-installation-issue-form]");
+  const type = panel?.querySelector('[data-installation-issue-field="type"]')?.value || "Other";
+  const description = panel?.querySelector('[data-installation-issue-field="description"]')?.value || "";
+  reportInstallationIssue(jobId, { type, description }).then((result) => {
+    if (result.ok) installationIssueJobId = "";
+    renderInstallationJobs();
+  });
+}
+
+export async function reportInstallationIssue(jobId, values = {}, options = {}) {
+  const exactJobId = String(jobId || "").trim();
+  const job = state.installationJobs.find((row) => String(row.id || "").trim() === exactJobId);
+  if (!exactJobId || !job || !isActiveWorkflowRecord(job)) return failInstallationAction("The exact active Installation stable ID was not found.");
+  if (!canReportInstallationIssue(job)) return failInstallationAction("Permission denied: only the exact assigned Installer or scheduling staff can report this problem.");
+  const description = String(values.description || "").trim();
+  if (!description) return failInstallationAction("Enter the installation problem details.");
+  const now = new Date().toISOString();
+  const issue = {
+    issueId: uid("installation-issue"),
+    installationId: exactJobId,
+    orderId: String(job.orderId || "").trim(),
+    type: String(values.type || "Other").trim() || "Other",
+    description,
+    status: "open",
+    reportedAt: now,
+    reportedById: String(state.currentUser?.userId || "").trim(),
+    reportedByName: currentActor(),
+    assignedInstallerId: "",
+    assignedInstallerName: "",
+    assignmentHistory: []
+  };
+  const updatedJob = { ...job, installationIssues: [...(Array.isArray(job.installationIssues) ? job.installationIssues : []), issue], hasOpenInstallationIssue: true, updatedAt: now };
+  const changes = [];
+  recordFieldChanges(changes, "installationJobs", job, updatedJob);
+  const plan = installationMutationPlan("report-installation-issue", exactJobId, changes, {
+    installationJobs: state.installationJobs.map((row) => String(row.id || "") === exactJobId ? updatedJob : row)
+  });
+  if (options.downloadBackup !== false && !downloadOrderActionBackup(plan)) return failInstallationAction("Full JSON backup download failed. Installation problem was not saved.");
+  return commitOrderActionPlan(plan, {
+    local: "Installation problem saved locally. Syncing cloud...",
+    success: "Installation problem recorded.",
+    cloudFailure: "Installation problem saved locally but cloud sync failed"
+  });
+}
+
+function assignInstallationIssueFromPanel(jobId, issueId, button) {
+  const card = button.closest("[data-installation-issue]");
+  const installerId = card?.querySelector(`[data-installation-issue-installer="${CSS.escape(String(issueId))}"]`)?.value || "";
+  assignInstallationIssue(jobId, issueId, installerId).then(renderInstallationJobs);
+}
+
+export async function assignInstallationIssue(jobId, issueId, installerId, options = {}) {
+  if (!canScheduleInstallation()) return failInstallationAction("Permission denied: only Boss, Admin or Secretary can assign an installation problem.");
+  const exactJobId = String(jobId || "").trim();
+  const exactIssueId = String(issueId || "").trim();
+  const job = state.installationJobs.find((row) => String(row.id || "").trim() === exactJobId && isActiveWorkflowRecord(row));
+  if (!job || !exactIssueId) return failInstallationAction("The exact Installation or problem stable ID was not found.");
+  const installer = exactInstallerUser(installerId);
+  if (!installer) return failInstallationAction("Select an active Installer by exact staff/user ID.");
+  const issues = Array.isArray(job.installationIssues) ? job.installationIssues : [];
+  const issue = issues.find((row) => String(row.issueId || row.id || "").trim() === exactIssueId);
+  if (!issue) return failInstallationAction("The exact installation problem stable ID was not found.");
+  const now = new Date().toISOString();
+  const assignment = { at: now, by: currentActor(), installerId: installer.userId, installerName: installer.name || installer.username || installer.userId };
+  const nextIssue = { ...issue, assignedInstallerId: installer.userId, assignedInstallerName: assignment.installerName, assignedAt: now, assignedBy: assignment.by, assignmentHistory: [...(Array.isArray(issue.assignmentHistory) ? issue.assignmentHistory : []), assignment] };
+  const updatedJob = { ...job, installationIssues: issues.map((row) => String(row.issueId || row.id || "").trim() === exactIssueId ? nextIssue : row), updatedAt: now };
+  const changes = [];
+  recordFieldChanges(changes, "installationJobs", job, updatedJob);
+  const plan = installationMutationPlan("assign-installation-issue", exactJobId, changes, {
+    installationJobs: state.installationJobs.map((row) => String(row.id || "") === exactJobId ? updatedJob : row)
+  });
+  if (options.downloadBackup !== false && !downloadOrderActionBackup(plan)) return failInstallationAction("Full JSON backup download failed. Problem assignment was not saved.");
+  return commitOrderActionPlan(plan, {
+    local: "Installation problem assignment saved locally. Syncing cloud...",
+    success: `Installation problem assigned to ${nextIssue.assignedInstallerName}.`,
+    cloudFailure: "Installation problem assignment saved locally but cloud sync failed"
+  });
+}
+
 function exactInstallerUser(installerId) {
   const exactId = String(installerId || "").trim();
   if (!exactId) return null;
@@ -8504,6 +8679,12 @@ function failInstallationAction(message) {
 }
 
 function handleInstallationChange(event) {
+  if (event.target.matches("[data-installer-installation-date-from], [data-installer-installation-date-to]")) {
+    const list = event.target.closest("#installationList");
+    setInstallationDateRange(list?.querySelector("[data-installer-installation-date-from]")?.value || "", list?.querySelector("[data-installer-installation-date-to]")?.value || "");
+    renderInstallationJobs();
+    return;
+  }
   const photoJobId = event.target.dataset.installationPhotoId;
   const photoField = event.target.dataset.photoField;
   if (photoJobId && photoField) {
