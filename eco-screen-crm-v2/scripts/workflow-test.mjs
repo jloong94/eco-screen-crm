@@ -97,6 +97,11 @@ const {
   generateWarrantyCard,
   installationDateGroup,
   installationDateGroupCounts,
+  installationJobMatchesDateRange,
+  setInstallationDateRange,
+  installationIssuesForAll,
+  reportInstallationIssue,
+  assignInstallationIssue,
   installationDispatchDiagnostics,
   installationJobMatchesSearch,
   installationJobsForCurrentView,
@@ -1812,6 +1817,34 @@ resetWorkflowNavigationState("installation");
 assert(workflowNavigationState().installation.search === "",
 "Z5A: opening Installation from navigation must reset retained Installer search");
 
+installerSearchSource.installationJobs[0].installationDate = "2026-08-12";
+installerSearchSource.installationJobs[1].installationDate = "2026-07-20";
+setInstallationDateRange("2026-08-01", "2026-08-31");
+assert(installationJobMatchesDateRange(installerSearchSource.installationJobs[0])
+  && !installationJobMatchesDateRange(installerSearchSource.installationJobs[1])
+  && installationJobsForCurrentView(installerSearchUser, "", installerSearchSource).map((job) => job.id).join(",") === "installation-search-sent",
+"Z5B: Installer date range must find the exact assigned unfinished job without exposing completed jobs outside the range");
+setInstallationDateRange("", "");
+
+const issueBoss = { userId: "boss-installation-issue", username: "boss-issue", name: "Boss Issue", role: "Boss", active: true };
+const issueInstaller = { userId: "installer-issue-exact", username: "installer-issue", name: "Issue Installer", role: "Installer", active: true };
+const issuePreviousState = { currentUser: state.currentUser, role: state.role, users: state.users, orders: state.orders, installationJobs: state.installationJobs };
+state.currentUser = issueBoss;
+state.role = issueBoss.role;
+state.users = [issueBoss, issueInstaller];
+state.orders = [{ id: "order-installation-issue", orderNo: "SO2608991", customer: { name: "Issue Customer", phone: "0123000991" }, status: "Sent to Installer" }];
+state.installationJobs = [{ id: "installation-issue-exact", orderId: "order-installation-issue", orderNo: "SO2608991", status: "sent_to_installer", assignedInstallerId: issueInstaller.userId, isArchived: false }];
+const issueReported = await reportInstallationIssue("installation-issue-exact", { type: "Installation Problem", description: "Track requires return visit" }, { downloadBackup: false });
+const reportedIssue = state.installationJobs[0].installationIssues?.[0];
+assert(issueReported.ok && reportedIssue?.installationId === "installation-issue-exact" && reportedIssue.orderId === "order-installation-issue"
+  && installationIssuesForAll().length === 1,
+"Z5B: a problem record must append to the exact Installation stable ID and appear once in the all-staff issue queue");
+const issueAssigned = await assignInstallationIssue("installation-issue-exact", reportedIssue.issueId, issueInstaller.userId, { downloadBackup: false });
+assert(issueAssigned.ok && state.installationJobs[0].installationIssues[0].assignedInstallerId === issueInstaller.userId
+  && state.installationJobs[0].installationIssues[0].assignmentHistory.length === 1,
+"Z5B: Boss/Admin/Secretary assignment must store the exact active Installer stable ID and retain assignment audit history");
+Object.assign(state, issuePreviousState);
+
 const malaysiaGroupingNow = new Date("2026-08-24T15:30:00.000Z");
 const managerInstallationJobs = [
   { id: "group-unscheduled", orderId: "group-order-unscheduled", status: "pending_arrangement" },
@@ -3468,6 +3501,14 @@ assert(installerSearchCss.includes(".scheduling-center")
   && installerSearchCss.includes(".scheduling-meta")
   && installerSearchCss.includes(".installation-date-summary"),
 "Z5G: Scheduling and Installation date cards must remain responsive without horizontal overflow");
+assert(installerSearchWorkflowSource.includes("data-installer-installation-date-from")
+  && installerSearchWorkflowSource.includes("data-installer-installation-date-to")
+  && installerSearchWorkflowSource.includes("data-report-installation-issue=")
+  && installerSearchWorkflowSource.includes("data-assign-installation-issue=")
+  && installerSearchWorkflowSource.includes("installationIssuesForAll()")
+  && installerSearchCss.includes(".installation-issues-panel")
+  && installerSearchCss.includes(".installation-issue-assignment"),
+"Z5H: Installer date search and the all-staff exact-ID Installation issue queue must be visible and mobile responsive");
 assert(mainSource.includes('state.currentPage === "warranty"')
   && mainSource.includes('id="warrantyList"')
   && installerSearchWorkflowSource.includes('data-warranty-search')

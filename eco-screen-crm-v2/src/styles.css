@@ -1079,7 +1079,7 @@ input:focus, select:focus, textarea:focus {
 .installation-diagnostics strong { font-size: 22px; }
 .installer-installation-search {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(260px, 1fr) repeat(2, minmax(150px, 180px)) auto;
   gap: 10px;
   align-items: end;
   box-sizing: border-box;
@@ -1122,6 +1122,43 @@ input:focus, select:focus, textarea:focus {
 .installation-date-summary {
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
+.installation-issues-panel,
+.installation-issue-list,
+.installation-issue-card,
+.installation-issue-form {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+}
+.installation-issues-panel {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--soft);
+}
+.installation-issue-list { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+.installation-issue-card {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: white;
+}
+.installation-issue-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.installation-issue-meta span {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.installation-issue-meta strong { color: var(--ink); overflow-wrap: anywhere; }
+.installation-issue-description { margin: 0; white-space: pre-wrap; overflow-wrap: break-word; }
+.installation-issue-assignment { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
+.installation-issue-assignment label { display: grid; flex: 1 1 220px; gap: 6px; }
 .scheduling-center,
 .scheduling-section,
 .scheduling-records {
@@ -1622,6 +1659,7 @@ input:focus, select:focus, textarea:focus {
   .scheduling-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .installer-installation-search { grid-template-columns: minmax(0, 1fr); }
   .installer-installation-search .actions .btn { flex: 1 1 140px; }
+  .installation-issue-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .installation-assigned-summary { grid-template-columns: 1fr; }
 }
 
@@ -1631,7 +1669,9 @@ input:focus, select:focus, textarea:focus {
   .panel { padding: 10px; }
   .installation-date-summary,
   .scheduling-summary,
-  .scheduling-meta { grid-template-columns: minmax(0, 1fr); }
+  .scheduling-meta,
+  .installation-issue-meta,
+  .installation-issue-list { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 390px) {
