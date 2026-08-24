@@ -1119,6 +1119,47 @@ input:focus, select:focus, textarea:focus {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+.installation-date-summary {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+.scheduling-center,
+.scheduling-section,
+.scheduling-records {
+  display: grid;
+  min-width: 0;
+  gap: 14px;
+}
+.scheduling-section + .scheduling-section {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.scheduling-summary {
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+.scheduling-card {
+  min-width: 0;
+}
+.scheduling-meta {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.scheduling-meta span {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--soft);
+  padding: 9px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.scheduling-meta strong {
+  color: var(--ink);
+  overflow-wrap: break-word;
+}
 .warranty-page,
 .warranty-page .workflow-list,
 .warranty-record-list {
@@ -1577,6 +1618,8 @@ input:focus, select:focus, textarea:focus {
   .ads-live-preview { grid-template-columns: 1fr; }
   .progress-columns, .progress-meta, .photo-grid, .media-preview-grid { grid-template-columns: 1fr; }
   .installation-diagnostics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .installation-date-summary,
+  .scheduling-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .installer-installation-search { grid-template-columns: minmax(0, 1fr); }
   .installer-installation-search .actions .btn { flex: 1 1 140px; }
   .installation-assigned-summary { grid-template-columns: 1fr; }
@@ -1586,6 +1629,9 @@ input:focus, select:focus, textarea:focus {
   .module-tabs { grid-auto-columns: minmax(82px, 1fr); }
   .module-tab { font-size: 11px; }
   .panel { padding: 10px; }
+  .installation-date-summary,
+  .scheduling-summary,
+  .scheduling-meta { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 390px) {

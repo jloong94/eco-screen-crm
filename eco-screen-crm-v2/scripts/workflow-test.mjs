@@ -53,6 +53,7 @@ const {
   markProductionStatus,
   getOrderDispatchState,
   productionJobMatchesSearch,
+  productionSchedulingGroup,
   productionWorkStageCounts,
   productionSheetContactDetails,
   productionSheetPrintHtml,
@@ -94,9 +95,12 @@ const {
   waitingToInstallerJobs,
   waitingToProductionOrders,
   generateWarrantyCard,
+  installationDateGroup,
+  installationDateGroupCounts,
   installationDispatchDiagnostics,
   installationJobMatchesSearch,
   installationJobsForCurrentView,
+  installationSchedulingGroup,
   installationJobsForUser,
   nextWarrantyCardNumber,
   uniqueWarrantyCards,
@@ -120,6 +124,7 @@ const {
   updateOrderNumber,
   updateOrderStatus,
   updateQuotationStatus,
+  validateCompletion,
   warrantyCardPreviewHtml
 } = await import("../src/workflow.js");
 const {
@@ -1807,6 +1812,65 @@ resetWorkflowNavigationState("installation");
 assert(workflowNavigationState().installation.search === "",
 "Z5A: opening Installation from navigation must reset retained Installer search");
 
+const malaysiaGroupingNow = new Date("2026-08-24T15:30:00.000Z");
+const managerInstallationJobs = [
+  { id: "group-unscheduled", orderId: "group-order-unscheduled", status: "pending_arrangement" },
+  { id: "group-today", orderId: "group-order-today", orderNo: "SO2608002", status: "pending_arrangement", installationDate: "2026-08-24" },
+  { id: "group-tomorrow", orderId: "group-order-tomorrow", orderNo: "SO2608003", status: "pending_arrangement", installationDate: "2026-08-25" },
+  { id: "group-upcoming", orderId: "group-order-upcoming", orderNo: "SO2608004", status: "pending_arrangement", installationDate: "2026-08-30" },
+  { id: "group-completed", orderId: "group-order-completed", orderNo: "SO2607001", status: "completed", installationDate: "2026-07-01", contactPerson: "Completed Search Customer", phone: "011-222 3333" }
+];
+const managerInstallationSource = {
+  role: "Secretary",
+  orders: managerInstallationJobs.map((job) => ({ id: job.orderId, orderNo: job.orderNo, customer: { name: job.contactPerson || job.id, phone: job.phone || "" } })),
+  installationJobs: managerInstallationJobs
+};
+const groupingCounts = installationDateGroupCounts(managerInstallationJobs, malaysiaGroupingNow);
+assert(groupingCounts.unscheduled === 1 && groupingCounts.today === 1 && groupingCounts.tomorrow === 1 && groupingCounts.upcoming === 1 && groupingCounts.completed === 1,
+"Z5C: Boss/Admin/Secretary Installation grouping must classify every active job and use Malaysia calendar dates for Today/Tomorrow");
+assert(installationDateGroup(managerInstallationJobs[2], malaysiaGroupingNow) === "tomorrow"
+  && installationSchedulingGroup(managerInstallationJobs[4], malaysiaGroupingNow) === "completed",
+"Z5C: Tomorrow and Completed grouping must not depend on browser UTC or an old installation date");
+assert(installationJobsForCurrentView({ userId: "secretary-test", role: "Secretary" }, "SO2607001", managerInstallationSource).map((job) => job.id).join(",") === "group-completed"
+  && installationJobsForCurrentView({ userId: "secretary-test", role: "Secretary" }, "Completed Search Customer", managerInstallationSource).map((job) => job.id).join(",") === "group-completed"
+  && installationJobsForCurrentView({ userId: "secretary-test", role: "Secretary" }, "0112223333", managerInstallationSource).map((job) => job.id).join(",") === "group-completed",
+"Z5C: completed Installation jobs must remain searchable by SO, customer and normalized phone");
+
+const schedulingOrders = [
+  { id: "schedule-waiting", status: "Confirmed" },
+  { id: "schedule-not-produced", status: "Sent to Production", sentToProduction: true },
+  { id: "schedule-in-production", status: "Sent to Production", sentToProductionAt: "2026-08-01T00:00:00.000Z" },
+  { id: "schedule-completed", status: "Completed", completedAt: "2026-08-20T00:00:00.000Z" }
+];
+const schedulingSource = { productionJobs: [
+  { id: "schedule-job-created-early", orderId: "schedule-waiting", status: "not_produced" },
+  { id: "schedule-job-not-produced", orderId: "schedule-not-produced", status: "not_produced" },
+  { id: "schedule-job-in-production", orderId: "schedule-in-production", status: "in_production" },
+  { id: "schedule-job-completed", orderId: "schedule-completed", status: "completed" }
+] };
+assert(productionSchedulingGroup(schedulingOrders[0], schedulingSource) === "waiting"
+  && productionSchedulingGroup(schedulingOrders[1], schedulingSource) === "not_produced"
+  && productionSchedulingGroup(schedulingOrders[2], schedulingSource) === "in_production"
+  && productionSchedulingGroup(schedulingOrders[3], schedulingSource) === "completed",
+"Z5D: Scheduling must keep Production dispatch separate from exact Production work stage and never treat early Job existence as sent evidence");
+
+const noPhotoCompletionError = validateCompletion({}, {
+  fields: { completionDate: "2026-08-24T14:00", amountCollected: "0" },
+  checklist: {
+    "Product installed correctly": true,
+    "Door/window tested": true,
+    "Lock/handle tested": true,
+    "Track checked": true,
+    "Mesh checked": true,
+    "Area cleaned": true,
+    "Customer checked and accepted": true
+  }
+}, "data:image/png;base64,signature");
+assert(noPhotoCompletionError === "", "Z5E: Installer completion must succeed validation without uploading any completion photo");
+assert(canAccessPage("Boss", "scheduling") && canAccessPage("Admin", "scheduling") && canAccessPage("Secretary", "scheduling")
+  && !canAccessPage("Installer", "scheduling"),
+"Z5F: Scheduling must be accessible only to Boss/Admin/Secretary and remain unavailable to Installer");
+
 const incompleteWarrantyJob = createInstallationJobFromOrder(dispatchOrder);
 incompleteWarrantyJob.id = "installation-incomplete-warranty";
 state.installationJobs.push(incompleteWarrantyJob);
@@ -3388,6 +3452,22 @@ assert(installerSearchCss.includes(".installer-installation-search")
   && installerSearchCss.includes(".installation-phone-link")
   && installerSearchCss.includes("white-space: nowrap"),
 "Z5B: Installer search must use a full-width mobile-safe field, wrapping buttons and non-wrapping phone links");
+assert(mainSource.includes('state.currentPage === "scheduling"')
+  && mainSource.includes('id="schedulingList"')
+  && installerSearchWorkflowSource.includes('data-scheduling-filter="${section}:${group}"')
+  && installerSearchWorkflowSource.includes('data-scheduling-send-production=')
+  && installerSearchWorkflowSource.includes('data-scheduling-preview-installation-send=')
+  && installerSearchWorkflowSource.includes('data-scheduling-arrange-installation='),
+"Z5F: Scheduling page must expose Production and Installation filters plus the existing exact-ID operational actions");
+assert(installerSearchWorkflowSource.includes('data-installation-date-group-filter=')
+  && installerSearchWorkflowSource.includes('timeZone: "Asia/Kuala_Lumpur"')
+  && !installerSearchWorkflowSource.includes('return "Please upload after installation photo"')
+  && !installerSearchWorkflowSource.includes('mediaUploadHtml(job, "afterPhotos"'),
+"Z5G: Installation must provide Malaysia date filters and no longer require or request completion photos");
+assert(installerSearchCss.includes(".scheduling-center")
+  && installerSearchCss.includes(".scheduling-meta")
+  && installerSearchCss.includes(".installation-date-summary"),
+"Z5G: Scheduling and Installation date cards must remain responsive without horizontal overflow");
 assert(mainSource.includes('state.currentPage === "warranty"')
   && mainSource.includes('id="warrantyList"')
   && installerSearchWorkflowSource.includes('data-warranty-search')

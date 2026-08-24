@@ -113,6 +113,7 @@ function currentPageHtml() {
   if (state.currentPage === "orders") return ordersPageHtml();
   if (state.currentPage === "production") return productionPageHtml();
   if (state.currentPage === "installation") return installationPageHtml();
+  if (state.currentPage === "scheduling") return schedulingPageHtml();
   if (state.currentPage === "warranty") return warrantyPageHtml();
   if (state.currentPage === "products") return productManagementPageHtml();
   if (state.currentPage === "users") return usersPageHtml();
@@ -276,6 +277,21 @@ function installationPageHtml() {
   `;
 }
 
+function schedulingPageHtml() {
+  return `
+    <section class="panel page-panel workflow-panel scheduling-page" data-page-panel="scheduling">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">${t("Operations")}</p>
+          <h2>${t("Scheduling")}</h2>
+        </div>
+        <span class="pill" id="workflowStatus">${t("Ready")}</span>
+      </div>
+      <div id="schedulingList" class="scheduling-center"></div>
+    </section>
+  `;
+}
+
 function warrantyPageHtml() {
   return `
     <section class="panel page-panel workflow-panel warranty-page" data-page-panel="warranty">
@@ -344,7 +360,7 @@ function renderShell() {
     renderAddProductForm();
     renderProducts();
   }
-  if (["dashboard", "orders", "production", "installation", "warranty"].includes(state.currentPage)) {
+  if (["dashboard", "orders", "production", "installation", "scheduling", "warranty"].includes(state.currentPage)) {
     attachWorkflowEvents();
     renderWorkflowModules();
   }
