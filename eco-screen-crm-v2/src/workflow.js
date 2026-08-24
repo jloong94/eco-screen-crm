@@ -139,6 +139,10 @@ let installationRecallJobId = "";
 let warrantyPreviewCardId = "";
 let installationSearch = "";
 let installationStatusFilter = "";
+let installationDateGroupFilter = "";
+let schedulingProductionFilter = "";
+let schedulingInstallationFilter = "";
+let schedulingArrangementJobId = "";
 let warrantySearch = "";
 let warrantyStatusFilter = "";
 function defaultOrderSearch() {
@@ -168,6 +172,11 @@ export function resetWorkflowNavigationState(page) {
   if (page === "installation") {
     installationSearch = "";
     installationStatusFilter = "";
+    installationDateGroupFilter = "";
+  }
+  if (page === "scheduling") {
+    schedulingProductionFilter = "";
+    schedulingInstallationFilter = "";
   }
   if (page === "warranty") {
     warrantySearch = "";
@@ -189,7 +198,8 @@ export function workflowNavigationState() {
   return {
     orders: { ...orderSearch },
     production: { search: productionSearch, status: productionStatusFilter, showArchived: showArchivedProductionDuplicates },
-    installation: { search: installationSearch, status: installationStatusFilter },
+    installation: { search: installationSearch, status: installationStatusFilter, dateGroup: installationDateGroupFilter },
+    scheduling: { production: schedulingProductionFilter, installation: schedulingInstallationFilter },
     warranty: { search: warrantySearch, status: warrantyStatusFilter }
   };
 }
@@ -799,6 +809,7 @@ export function renderWorkflowModules() {
   renderOrders();
   renderProductionJobs();
   renderInstallationJobs();
+  renderSchedulingCenter();
   renderWarrantyPage();
 }
 
@@ -819,6 +830,7 @@ export function attachWorkflowEvents() {
   document.querySelector("#installationList")?.addEventListener("input", handleInstallationSearchInput);
   document.querySelector("#installationList")?.addEventListener("keydown", handleInstallationSearchKeydown);
   document.querySelector("#installationList")?.addEventListener("change", handleInstallationChange);
+  document.querySelector("#schedulingList")?.addEventListener("click", handleSchedulingClick);
   document.querySelector("#warrantyList")?.addEventListener("input", handleWarrantySearchInput);
   document.querySelector("#warrantyList")?.addEventListener("keydown", handleWarrantySearchKeydown);
   document.querySelector("#warrantyList")?.addEventListener("click", handleWarrantyClick);
@@ -2562,7 +2574,7 @@ function renderProductionJobs() {
     const orderNumber = productionOrderNumber(job);
     const customerName = order?.customer?.name || order?.customerName || job.customerName || "-";
     return `
-    <article class="card">
+    <article class="card" data-production-card="${escapeHtml(job.id)}">
       <div class="card-head">
         <div>
           <strong>${escapeHtml(orderNumber)}</strong>
@@ -3097,8 +3109,10 @@ function renderInstallationJobs() {
   if (!list) return;
   const activeJobs = installationJobsForCurrentView();
   const diagnostics = installationDispatchDiagnostics();
+  const installerView = normalizeText(role()) === "installer";
   list.innerHTML = `
-    ${normalizeText(role()) === "installer" ? `${installerInstallationSummaryHtml()}${installerInstallationSearchHtml()}` : ""}
+    ${installerView ? installerInstallationSummaryHtml() : installationDateGroupSummaryHtml()}
+    ${installationSearchHtml()}
     ${canScheduleInstallation() ? `<section class="installation-diagnostics">
       <span>${t("Pending Arrangement")}<strong>${diagnostics.pendingArrangement}</strong></span>
       <span>${t("Ready to Send")}<strong>${diagnostics.readyToSend}</strong></span>
@@ -3177,8 +3191,13 @@ export function installationJobMatchesSearch(job = {}, search = installationSear
 
 export function installationJobsForCurrentView(user = state.currentUser, search = installationSearch, source = state, status = installationStatusFilter) {
   const visibleJobs = installationJobsForUserFromSource(user, source);
-  if (normalizeText(user?.role || source.role) !== "installer") return visibleJobs;
-  return visibleJobs.filter((job) => installationJobMatchesSearch(job, search, source) && installationJobMatchesStatusFilter(job, status));
+  const installerView = normalizeText(user?.role || source.role) === "installer";
+  return visibleJobs
+    .filter((job) => installationJobMatchesSearch(job, search, source))
+    .filter((job) => installerView
+      ? installationJobMatchesStatusFilter(job, status)
+      : installationJobMatchesDateGroup(job, installationDateGroupFilter))
+    .sort(compareInstallationSchedule);
 }
 
 export function installationJobMatchesStatusFilter(job = {}, status = installationStatusFilter) {
@@ -3208,6 +3227,45 @@ function setInstallationStatusFilter(value = "") {
   return installationStatusFilter;
 }
 
+function setInstallationDateGroupFilter(value = "") {
+  const normalized = String(value || "");
+  installationDateGroupFilter = ["unscheduled", "today", "tomorrow", "upcoming", "completed"].includes(normalized) ? normalized : "";
+  return installationDateGroupFilter;
+}
+
+function calendarDatePlusDays(dateKey, days) {
+  const [year, month, day] = String(dateKey).split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + days));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+}
+
+export function installationDateGroup(job = {}, now = new Date()) {
+  if (installationDispatchStage(job) === "completed") return "completed";
+  const installationDate = malaysiaCalendarDate(job.installationDate);
+  if (!installationDate) return "unscheduled";
+  const today = malaysiaCalendarDate(now);
+  if (installationDate === today) return "today";
+  if (installationDate === calendarDatePlusDays(today, 1)) return "tomorrow";
+  return "upcoming";
+}
+
+export function installationJobMatchesDateGroup(job = {}, group = installationDateGroupFilter, now = new Date()) {
+  return !group || installationDateGroup(job, now) === group;
+}
+
+export function installationDateGroupCounts(jobs = installationJobsForUserFromSource(state.currentUser, state), now = new Date()) {
+  const counts = { unscheduled: 0, today: 0, tomorrow: 0, upcoming: 0, completed: 0 };
+  jobs.forEach((job) => { counts[installationDateGroup(job, now)] += 1; });
+  return counts;
+}
+
+function compareInstallationSchedule(left, right) {
+  const leftDate = malaysiaCalendarDate(left.installationDate) || "9999-12-31";
+  const rightDate = malaysiaCalendarDate(right.installationDate) || "9999-12-31";
+  return leftDate.localeCompare(rightDate)
+    || installationJobDisplayDetails(left).orderNo.localeCompare(installationJobDisplayDetails(right).orderNo);
+}
+
 function installerInstallationSummaryHtml() {
   const visibleJobs = installationJobsForUserFromSource(state.currentUser, state);
   const counts = {
@@ -3219,12 +3277,199 @@ function installerInstallationSummaryHtml() {
   </div>`;
 }
 
-function installerInstallationSearchHtml() {
+function installationSearchHtml() {
   const placeholder = t("Search SO number, customer or phone");
   return `<section class="installer-installation-search" role="search" aria-label="${escapeHtml(placeholder)}">
     <label class="installer-installation-search-field"><span>${escapeHtml(placeholder)}</span><input type="search" data-installer-installation-search value="${escapeHtml(installationSearch)}" placeholder="${escapeHtml(placeholder)}" autocomplete="off" /></label>
     <div class="actions"><button class="btn primary" type="button" data-installation-search-action="search">${t("Search")}</button><button class="btn" type="button" data-installation-search-action="clear">${t("Clear Search")}</button></div>
   </section>`;
+}
+
+function installationDateGroupSummaryHtml() {
+  const counts = installationDateGroupCounts();
+  const groups = [
+    ["unscheduled", "Unscheduled"],
+    ["today", "Today"],
+    ["tomorrow", "Tomorrow"],
+    ["upcoming", "Upcoming"],
+    ["completed", "Completed"]
+  ];
+  return `<div class="progress-summary-grid installation-date-summary" aria-label="${t("Installation Date Groups")}">
+    ${groups.map(([group, label]) => `<button class="metric-card progress-summary-card ${installationDateGroupFilter === group ? "active" : ""}" type="button" data-installation-date-group-filter="${group}" aria-pressed="${installationDateGroupFilter === group}"><span>${t(label)}</span><strong>${counts[group]}</strong></button>`).join("")}
+  </div>`;
+}
+
+function exactProductionJobsForOrder(order = {}, source = state) {
+  const orderId = String(order.id || "").trim();
+  if (!orderId) return [];
+  return uniqueActiveProductionJobs(source.productionJobs || [])
+    .filter((job) => String(job.orderId || "").trim() === orderId);
+}
+
+export function productionSchedulingGroup(order = {}, source = state) {
+  if (getOrderDispatchState(order) === "waiting-to-send") return "waiting";
+  const exactJobs = exactProductionJobsForOrder(order, source);
+  if (exactJobs.length !== 1) return "not_produced";
+  return normalizeProductionStatus(exactJobs[0].status);
+}
+
+export function installationSchedulingGroup(job = {}, now = new Date()) {
+  const stage = installationDispatchStage(job);
+  if (stage === "completed") return "completed";
+  if (stage === "sent_to_installer") return "sent";
+  if (stage === "ready_to_send") return "ready";
+  return installationDateGroup(job, now);
+}
+
+function renderSchedulingCenter() {
+  const container = document.querySelector("#schedulingList");
+  if (!container) return;
+  if (!canScheduleInstallation()) {
+    container.innerHTML = `<p class="muted-text">${t("You do not have permission to access this page.")}</p>`;
+    return;
+  }
+  container.innerHTML = `${productionSchedulingHtml()}${installationSchedulingHtml()}`;
+}
+
+function productionSchedulingHtml() {
+  const orders = uniqueActiveBusinessOrders(state.orders || []);
+  const groups = [
+    ["waiting", "Waiting to Send"],
+    ["not_produced", "Not Produced"],
+    ["in_production", "In Production"],
+    ["completed", "Completed"]
+  ];
+  const counts = Object.fromEntries(groups.map(([group]) => [group, orders.filter((order) => productionSchedulingGroup(order) === group).length]));
+  const visible = schedulingProductionFilter
+    ? orders.filter((order) => productionSchedulingGroup(order) === schedulingProductionFilter)
+    : orders;
+  return `<section class="scheduling-section" data-scheduling-section="production">
+    <div class="section-head"><div><h3>${t("Production Scheduling")}</h3><p class="muted-text">${t("Uses exact Order and Production stable-ID relationships.")}</p></div></div>
+    <div class="progress-summary-grid scheduling-summary">
+      ${groups.map(([group, label]) => schedulingFilterButton("production", group, label, counts[group], schedulingProductionFilter)).join("")}
+    </div>
+    <div class="scheduling-records">${visible.length ? visible.map(productionSchedulingCardHtml).join("") : `<p class="muted-text">${t("None found in this section.")}</p>`}</div>
+  </section>`;
+}
+
+function schedulingFilterButton(section, group, label, count, selected) {
+  return `<button class="metric-card progress-summary-card ${selected === group ? "active" : ""}" type="button" data-scheduling-filter="${section}:${group}" aria-pressed="${selected === group}"><span>${t(label)}</span><strong>${count}</strong></button>`;
+}
+
+function productionSchedulingCardHtml(order) {
+  const exactJobs = exactProductionJobsForOrder(order);
+  const job = exactJobs.length === 1 ? exactJobs[0] : null;
+  const group = productionSchedulingGroup(order);
+  const phone = order.customer?.phone || order.phone || "";
+  const project = order.projectName || order.locationProjectName || order.projectLocation || order.customer?.area || "-";
+  const installation = getOrderInstallationJob(order);
+  return `<article class="card scheduling-card" data-scheduling-order="${escapeHtml(order.id)}">
+    <div class="card-head"><div><strong>${escapeHtml(getOrderDisplayNo(order) || "-")}</strong><p>${escapeHtml(order.customer?.name || order.customerName || "-")}</p><p class="muted-text">${phone ? `<a class="installation-phone-link" href="tel:${escapeHtml(phone)}">${escapeHtml(phone)}</a>` : "-"} | ${escapeHtml(project)}</p></div><span class="pill">${t(group === "waiting" ? "Waiting to Send" : group === "not_produced" ? "Not Produced" : group === "in_production" ? "In Production" : "Completed")}</span></div>
+    <div class="scheduling-meta"><span>${t("Order Date")}<strong>${escapeHtml(order.createdAt || order.orderDate || "-")}</strong></span><span>${t("Production Status")}<strong>${t(job ? statusLabel(job.status) : "Not Produced")}</strong></span><span>${t("Production Remark")}<strong>${escapeHtml(job?.remark || order.productionRemark || "-")}</strong></span><span>${t("Installation Date")}<strong>${escapeHtml(installation?.installationDate || order.installationDate || t("Not arranged"))}</strong></span></div>
+    ${exactJobs.length > 1 ? `<p class="warning-text">${t("Multiple active Production Jobs")}: ${escapeHtml(exactJobs.map((row) => row.id).join(", "))}</p>` : ""}
+    <div class="actions"><button class="btn" type="button" data-scheduling-view-order="${escapeHtml(order.id)}">${t("View Order")}</button>${group === "waiting" && canSendOrder() ? `<button class="btn primary" type="button" data-scheduling-send-production="${escapeHtml(order.id)}">${t("Send to Production")}</button>` : ""}${job ? `<button class="btn" type="button" data-scheduling-open-production="${escapeHtml(job.id)}">${t("Open Production")}</button>` : ""}</div>
+  </article>`;
+}
+
+function installationSchedulingHtml() {
+  const jobs = installationJobsForUserFromSource(state.currentUser, state).sort(compareInstallationSchedule);
+  const groups = [
+    ["unscheduled", "Unscheduled"], ["today", "Today"], ["tomorrow", "Tomorrow"], ["upcoming", "Upcoming"],
+    ["ready", "Ready to Send"], ["sent", "Sent to Installer"], ["completed", "Completed"]
+  ];
+  const counts = Object.fromEntries(groups.map(([group]) => [group, jobs.filter((job) => installationSchedulingGroup(job) === group).length]));
+  const visible = schedulingInstallationFilter
+    ? jobs.filter((job) => installationSchedulingGroup(job) === schedulingInstallationFilter)
+    : jobs;
+  return `<section class="scheduling-section" data-scheduling-section="installation">
+    <div class="section-head"><div><h3>${t("Installation Scheduling")}</h3><p class="muted-text">${t("Uses exact Order and Installation stable-ID relationships.")}</p></div></div>
+    <div class="progress-summary-grid scheduling-summary">
+      ${groups.map(([group, label]) => schedulingFilterButton("installation", group, label, counts[group], schedulingInstallationFilter)).join("")}
+    </div>
+    <div class="scheduling-records">${visible.length ? visible.map(installationSchedulingCardHtml).join("") : `<p class="muted-text">${t("None found in this section.")}</p>`}</div>
+  </section>`;
+}
+
+function installationSchedulingCardHtml(job) {
+  const details = installationJobDisplayDetails(job);
+  const order = details.order;
+  const productionJobs = order ? exactProductionJobsForOrder(order) : [];
+  const production = productionJobs.length === 1 ? productionJobs[0] : null;
+  const stage = installationDispatchStage(job);
+  const phone = details.phone ? `<a class="installation-phone-link" href="tel:${escapeHtml(details.phone)}">${escapeHtml(details.phone)}</a>` : "-";
+  return `<article class="card scheduling-card" data-scheduling-installation="${escapeHtml(job.id)}">
+    <div class="card-head"><div><strong>${escapeHtml(details.orderNo || "-")}</strong><p>${escapeHtml(details.customer || "-")}</p><p class="muted-text">${phone} | ${escapeHtml(details.project || details.address || "-")}</p></div><span class="pill">${t(installationDispatchLabel(job))}</span></div>
+    <div class="scheduling-meta"><span>${t("Production Status")}<strong>${t(production ? statusLabel(production.status) : "Not Produced")}</strong></span><span>${t("Installation Date")}<strong>${escapeHtml(job.installationDate || t("Not arranged"))}</strong></span><span>${t("Assigned Installer")}<strong>${escapeHtml(job.assignedInstallerName || "-")}</strong></span><span>${t("Dispatch Status")}<strong>${t(installationDispatchLabel(job))}</strong></span><span>${t("Address")}<strong>${escapeHtml(details.address || "-")}</strong></span></div>
+    <div class="actions">${order ? `<button class="btn" type="button" data-scheduling-view-order="${escapeHtml(order.id)}">${t("View Order")}</button>` : ""}<button class="btn" type="button" data-scheduling-open-installation="${escapeHtml(job.id)}">${t("Open Installation")}</button>${!["sent_to_installer", "completed"].includes(stage) ? `<button class="btn" type="button" data-scheduling-arrange-installation="${escapeHtml(job.id)}">${t("Arrange / Assign Installer")}</button>` : ""}${stage === "ready_to_send" ? `<button class="btn primary" type="button" data-scheduling-preview-installation-send="${escapeHtml(job.id)}">${t("Send to Installer")}</button>` : ""}</div>
+    ${schedulingArrangementJobId === job.id ? installationArrangementHtml(job, stage) : ""}
+    ${installationDispatchPreviewId === job.id ? installationDispatchPreviewHtml(job) : ""}
+  </article>`;
+}
+
+function openSchedulingRecordPage(page, selector) {
+  const navigation = document.querySelector?.(`[data-page="${page}"]`);
+  navigation?.click();
+  setTimeout(() => document.querySelector?.(selector)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+}
+
+function handleSchedulingClick(event) {
+  const filter = event.target.closest?.("[data-scheduling-filter]")?.dataset.schedulingFilter;
+  if (filter) {
+    const [section, group] = filter.split(":");
+    if (section === "production") schedulingProductionFilter = schedulingProductionFilter === group ? "" : group;
+    if (section === "installation") schedulingInstallationFilter = schedulingInstallationFilter === group ? "" : group;
+    renderSchedulingCenter();
+    return;
+  }
+  const viewOrderId = event.target.dataset.schedulingViewOrder;
+  if (viewOrderId) {
+    const order = state.orders.find((row) => String(row.id || "") === String(viewOrderId));
+    if (order) openOrderInOrders(order, "Order opened from Scheduling.");
+    return;
+  }
+  const sendProductionId = event.target.dataset.schedulingSendProduction;
+  if (sendProductionId) {
+    sendOrderToProduction(sendProductionId).then(renderSchedulingCenter);
+    return;
+  }
+  const productionId = event.target.dataset.schedulingOpenProduction;
+  if (productionId) {
+    openSchedulingRecordPage("production", `[data-production-card="${CSS.escape(productionId)}"]`);
+    return;
+  }
+  const installationId = event.target.dataset.schedulingOpenInstallation;
+  if (installationId) {
+    openSchedulingRecordPage("installation", `[data-installation-card="${CSS.escape(installationId)}"]`);
+    return;
+  }
+  const arrangeId = event.target.dataset.schedulingArrangeInstallation;
+  if (arrangeId) {
+    schedulingArrangementJobId = schedulingArrangementJobId === arrangeId ? "" : arrangeId;
+    renderSchedulingCenter();
+    return;
+  }
+  const saveArrangementId = event.target.dataset.saveInstallationArrangement;
+  if (saveArrangementId) {
+    Promise.resolve(saveInstallationArrangementFromPanel(saveArrangementId, event.target)).then(() => renderSchedulingCenter());
+    return;
+  }
+  const previewId = event.target.dataset.schedulingPreviewInstallationSend;
+  if (previewId) {
+    const validation = validateInstallationDispatch(previewId);
+    if (!validation.ok) return failInstallationAction(validation.message);
+    installationDispatchPreviewId = previewId;
+    renderSchedulingCenter();
+    return;
+  }
+  const confirmId = event.target.dataset.confirmInstallationSend;
+  if (confirmId) {
+    confirmInstallationDispatch(confirmId, event.target).then(renderSchedulingCenter);
+    return;
+  }
+  if (event.target.dataset.closeInstallationSend) {
+    installationDispatchPreviewId = "";
+    renderSchedulingCenter();
+  }
 }
 
 export function installationDispatchDiagnostics() {
@@ -3278,6 +3523,7 @@ function installationJobCardHtml(job) {
       ${canScheduleInstallation() ? installationArrangementHtml(job, stage) : installationAssignedSummaryHtml(job)}
       ${itemsSummary(job.items)}
       ${completionSummaryHtml(job)}
+      ${historicalCompletionMediaHtml(job)}
       <div class="actions">
         <button class="btn" type="button" data-view-installation="${job.id}">${t("View Installation Job")}</button>
         <button class="btn primary" type="button" data-print-installation="${job.id}">${t("Print Installation Sheet")}</button>
@@ -3376,7 +3622,7 @@ function completionFormHtml(job) {
       <div class="section-head">
         <div>
           <h3>${t("Complete Installation")}</h3>
-          <p class="muted-text">${t("Photo, checklist, collection and customer signature are required.")}</p>
+          <p class="muted-text">${t("Checklist, collection and customer signature are required. Completion photos are optional and no longer requested.")}</p>
         </div>
         <button class="btn" type="button" data-close-completion="${job.id}">${t("Close")}</button>
       </div>
@@ -3386,13 +3632,7 @@ function completionFormHtml(job) {
         <label class="wide">${t("Installer Remark")}<textarea rows="2" data-completion-field="installationRemark" placeholder="${t("Installation remark")}">${job.installationRemark || job.installerRemark || ""}</textarea></label>
       </div>
 
-      <div class="photo-grid">
-        ${mediaUploadHtml(job, "beforePhotos", "Before Photos", "image/*")}
-        ${mediaUploadHtml(job, "afterPhotos", "After Photos", "image/*")}
-        ${mediaUploadHtml(job, "defectPhotos", "Defect Photos", "image/*")}
-        ${mediaUploadHtml(job, "touchUpPhotos", "Touch-up Photos", "image/*")}
-        ${mediaUploadHtml(job, "installationVideos", "Installation Videos", "video/*")}
-      </div>
+      <div class="photo-grid">${mediaUploadHtml(job, "installationVideos", "Installation Videos", "video/*")}</div>
       <label>${t("Installation Videos")}<textarea rows="2" data-completion-field="mediaRemarks" placeholder="${t("Media note")}">${job.mediaRemarks || ""}</textarea></label>
 
       <div class="checklist-box">
@@ -3454,6 +3694,20 @@ function mediaUploadHtml(job, field, label, accept) {
       </div>
     </div>
   `;
+}
+
+function historicalCompletionMediaHtml(job) {
+  const groups = [
+    ["beforePhotos", "Before Photos"],
+    ["afterPhotos", "After Photos"],
+    ["defectPhotos", "Defect Photos"],
+    ["touchUpPhotos", "Touch-up Photos"]
+  ].map(([field, label]) => ({ field, label, rows: mediaRows(job, field) })).filter((group) => group.rows.length);
+  if (!groups.length) return "";
+  return `<details class="historical-installation-media"><summary>${t("Existing Installation Photos")}</summary><div class="photo-grid">${groups.map((group) => `<div class="photo-box"><strong>${t(group.label)}</strong><div class="media-preview-grid">${group.rows.map((item) => {
+    const source = item.dataUrl || item.url || item;
+    return `<div class="media-preview"><img src="${escapeHtml(source)}" alt="${escapeHtml(t(group.label))}" /></div>`;
+  }).join("")}</div></div>`).join("")}</div></details>`;
 }
 
 function mediaRows(job, field) {
@@ -7880,12 +8134,19 @@ function handleInstallationClick(event) {
   if (searchAction === "clear") {
     setInstallationSearch("");
     setInstallationStatusFilter("");
+    setInstallationDateGroupFilter("");
     renderInstallationJobs();
     return;
   }
   const statusFilter = event.target.closest?.("[data-installer-installation-status-filter]")?.dataset.installerInstallationStatusFilter;
   if (statusFilter) {
     setInstallationStatusFilter(installationStatusFilter === statusFilter ? "" : statusFilter);
+    renderInstallationJobs();
+    return;
+  }
+  const dateGroup = event.target.closest?.("[data-installation-date-group-filter]")?.dataset.installationDateGroupFilter;
+  if (dateGroup) {
+    setInstallationDateGroupFilter(installationDateGroupFilter === dateGroup ? "" : dateGroup);
     renderInstallationJobs();
     return;
   }
@@ -8026,7 +8287,7 @@ function saveInstallationArrangementFromPanel(jobId, button) {
   const panel = button.closest("[data-installation-arrangement]");
   if (!panel) return failInstallationAction("Installation arrangement form is unavailable.");
   const read = (field) => panel.querySelector(`[data-arrangement-field="${field}"]`)?.value || "";
-  saveInstallationArrangement(jobId, {
+  return saveInstallationArrangement(jobId, {
     installationDate: read("installationDate"),
     installationTime: read("installationTime"),
     assignedInstallerId: read("assignedInstallerId"),
@@ -8418,8 +8679,8 @@ function readCompletionForm(panel) {
   return { fields, checklist };
 }
 
-function validateCompletion(job, completionData, signature) {
-  if (!mediaRows(job, "afterPhotos").length) return "Please upload after installation photo";
+export function validateCompletion(job, completionData, signature) {
+  void job;
   if (!completionData.fields.completionDate) return "Please fill completion date";
   if (completionData.fields.amountCollected === "") return "Please fill collection amount";
   if (!checklistLabels.every((label) => completionData.checklist[label])) return "Please complete customer inspection checklist";
