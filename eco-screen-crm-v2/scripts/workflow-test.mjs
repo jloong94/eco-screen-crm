@@ -37,6 +37,7 @@ const {
   archiveProductionDuplicateGroup,
   activeProductionJobForOrder,
   buildSafeOrderOwnershipComparison,
+  compareOrdersBySoSequence,
   convertQuoteToOrder,
   createOrderFromQuote,
   createProductionJobFromOrder,
@@ -262,6 +263,17 @@ state.orders = [];
 state.productionJobs = [{ id: "august-production-audit", orderNo: "SO2608001", status: "duplicate_archived", isArchived: true }];
 assert(nextSalesOrderNumber(new Date("2026-07-31T16:00:00.000Z")) === "SO2608002",
 "Numbering: archived workflow audit references must prevent reuse of an issued SO");
+const sortedSoOrders = [
+  { id: "so-july-1", orderNo: "SO2607001", updatedAt: "2026-08-26T00:00:00.000Z" },
+  { id: "so-july-2", orderNo: "SO-2607-002" },
+  { id: "so-august-1", orderNo: "SO2608001" },
+  { id: "no-so", updatedAt: "2026-08-27T00:00:00.000Z" }
+].sort(compareOrdersBySoSequence);
+assert(sortedSoOrders.map((order) => order.id).join(",") === "so-august-1,so-july-2,so-july-1,no-so",
+"Order sorting: normalized monthly SO numbers must display newest month and highest sequence first, ahead of records without a valid SO");
+resetWorkflowNavigationState("orders");
+assert(workflowNavigationState().orders.sort === "orderNumber",
+"Order sorting: opening Orders must default to SO Number newest first");
 resetWorkflowState();
 
 const phoneListQuote = validQuote("ESQ-PHONE", "Phone Customer");
