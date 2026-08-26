@@ -157,7 +157,7 @@ function defaultOrderSearch() {
     filter: "all",
     status: "",
     installationDate: "",
-    sort: "updated",
+    sort: "orderNumber",
     page: 1,
     highlightId: ""
   };
@@ -921,7 +921,7 @@ function renderOrderTools() {
       <label>${t("Status")}<select data-order-search="status"><option value="">${t("All status")}</option>${visibleFilters.map((filter) => `<option value="${filter.id}" ${orderSearch.status === filter.id ? "selected" : ""}>${t(filter.label)}</option>`).join("")}</select></label>
         <label>${t("Installation Date")}<input type="date" data-order-search="installationDate" value="${orderSearch.installationDate}" /></label>
       <label>${t("Sort by")}<select data-order-search="sort">
-          ${[["updated", "Latest Updated"], ["installationDate", "Installation Date"], ["orderNumber", "Order Number"]].map(([value, label]) => `<option value="${value}" ${orderSearch.sort === value ? "selected" : ""}>${t(label)}</option>`).join("")}
+          ${[["orderNumber", "SO Number (Newest First)"], ["updated", "Latest Updated"], ["installationDate", "Installation Date"]].map(([value, label]) => `<option value="${value}" ${orderSearch.sort === value ? "selected" : ""}>${t(label)}</option>`).join("")}
         </select></label>
       </div>
       <div class="actions">
@@ -2264,9 +2264,28 @@ function matchesProgressFilter(categoryId, order) {
 function sortedOrders(rows) {
   return [...rows].sort((a, b) => {
     if (orderSearch.sort === "installationDate") return String(a.installationDate || "").localeCompare(String(b.installationDate || ""));
-    if (orderSearch.sort === "orderNumber") return String(getOrderDisplayNo(a)).localeCompare(String(getOrderDisplayNo(b)));
+    if (orderSearch.sort === "orderNumber") return compareOrdersBySoSequence(a, b);
     return Date.parse(b.updatedAt || b.createdAt || 0) - Date.parse(a.updatedAt || a.createdAt || 0);
   });
+}
+
+export function compareOrdersBySoSequence(left = {}, right = {}) {
+  const parse = (order) => {
+    const identity = salesOrderNumberIdentity(getOrderDisplayNo(order));
+    const match = identity.match(/^SO(\d{2})(\d{2})(\d+)$/);
+    return match ? { year: Number(match[1]), month: Number(match[2]), sequence: Number(match[3]) } : null;
+  };
+  const leftSo = parse(left);
+  const rightSo = parse(right);
+  if (leftSo && rightSo) {
+    return rightSo.year - leftSo.year
+      || rightSo.month - leftSo.month
+      || rightSo.sequence - leftSo.sequence
+      || Date.parse(right.updatedAt || right.createdAt || 0) - Date.parse(left.updatedAt || left.createdAt || 0);
+  }
+  if (leftSo) return -1;
+  if (rightSo) return 1;
+  return Date.parse(right.updatedAt || right.createdAt || 0) - Date.parse(left.updatedAt || left.createdAt || 0);
 }
 
 function normalizeText(value) {

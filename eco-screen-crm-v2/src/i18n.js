@@ -717,6 +717,7 @@ const zh = {
   "Legacy Orders": "旧单补录",
   "Archived duplicates": "已归档重复记录",
   "Latest Updated": "最近更新",
+  "SO Number (Newest First)": "SO号码（最新优先）",
   "Order Number": "订单号码",
   "Touch Up": "手尾",
   orders: "张订单",
