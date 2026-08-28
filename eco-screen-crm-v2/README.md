@@ -11,6 +11,14 @@ npm run dev
 
 Open the local URL shown in the terminal.
 
+## Social Lead Miner (TikTok MVP)
+
+Boss and Admin users can open **Social Lead Miner** from the existing CRM navigation. The module supports lawful TikTok comment CSV import, intent scoring, duplicate prevention, search and filters, CSV export, suggested English/Chinese/Malay outreach, and a manual contact queue.
+
+Direct TikTok comment access is deliberately disabled in this static frontend until an approved server-side provider is available. The module never returns mock comments, bypasses TikTok protections, or sends messages automatically. Download the CSV template from the module; `contact_eligibility` must be `not_eligible`, `direct_brand_interaction`, or `user_consented`.
+
+The data layer uses a provider registry in `src/socialProviders.js`, so Facebook, Instagram and YouTube adapters can be registered later without changing scoring, storage or queue behavior. To activate an approved TikTok connector, set `VITE_TIKTOK_SCAN_ENDPOINT` to a same-origin server route. This variable is only the public route; TikTok/provider credentials must remain on that server and must never use a `VITE_` prefix.
+
 ## Build
 
 ```bash

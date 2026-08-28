@@ -1472,7 +1472,83 @@ input:focus, select:focus, textarea:focus {
 .print-area { display: none; }
 .right { text-align: right; }
 
+.social-metrics {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(120px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.social-scan-card,
+.social-import-card,
+.social-filter-card,
+.social-empty {
+  margin-bottom: 16px;
+}
+
+.social-advanced {
+  margin: 14px 0;
+}
+
+.social-advanced summary {
+  cursor: pointer;
+  color: var(--brand);
+  font-weight: 700;
+}
+
+.social-confirmation {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+.social-confirmation input {
+  flex: 0 0 auto;
+  min-height: auto;
+}
+
+.social-lead-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: white;
+}
+
+.social-lead-table {
+  width: 100%;
+  min-width: 980px;
+  border-collapse: collapse;
+}
+
+.social-lead-table th,
+.social-lead-table td {
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.social-lead-table td small,
+.social-lead-table td .pill {
+  display: block;
+  margin-top: 6px;
+}
+
+.social-row-actions {
+  display: grid;
+  gap: 6px;
+  min-width: 150px;
+}
+
+.intent-hot { background: #fee2e2; color: #991b1b; }
+.intent-warm { background: #fef3c7; color: #92400e; }
+.intent-cold { background: #dbeafe; color: #1e40af; }
+.intent-not_lead { background: #e5e7eb; color: #4b5563; }
+
 @media (max-width: 980px) {
+  .social-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .topbar { align-items: flex-start; flex-direction: column; }
   .module-tabs { top: 126px; padding: 10px 12px; }
   .layout, .quotation-page-grid { grid-template-columns: 1fr; padding: 12px; }
@@ -1675,6 +1751,9 @@ input:focus, select:focus, textarea:focus {
     height: 260px;
   }
   .dashboard-grid { grid-template-columns: 1fr; }
+  .social-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .social-lead-table { min-width: 840px; }
+  .social-confirmation { align-items: flex-start; }
   .ads-summary-grid,
   .ads-live-preview { grid-template-columns: 1fr; }
   .progress-columns, .progress-meta, .photo-grid, .media-preview-grid { grid-template-columns: 1fr; }

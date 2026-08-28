@@ -23,6 +23,7 @@ import { normalizedFinalOrderTotal, uniqueActiveBusinessOrders } from "./workflo
 import { t } from "./i18n.js";
 import { canAccessPage, defaultPageForRole, isBossOrAdmin, pageDefinitions, role } from "./permissions.js";
 import { cloudCollections, cloudConfigurationIssue, isCloudConfigured, safeSyncWithCloud, syncFromCloud, syncToCloud } from "./cloudSync.js";
+import { attachSocialLeadMinerEvents, renderSocialLeadMinerPage } from "./socialLeadMiner.js";
 
 let cloudHydrated = false;
 let monthlySummaryMonth = currentMonthValue();
@@ -116,6 +117,7 @@ function currentPageHtml() {
   if (state.currentPage === "installation") return installationPageHtml();
   if (state.currentPage === "scheduling") return schedulingPageHtml();
   if (state.currentPage === "warranty") return warrantyPageHtml();
+  if (state.currentPage === "social-lead-miner") return renderSocialLeadMinerPage();
   if (state.currentPage === "products") return productManagementPageHtml();
   if (state.currentPage === "users") return usersPageHtml();
   return `<section class="panel page-panel"><p class="muted-text">${t("You do not have permission to access this page.")}</p></section>`;
@@ -369,6 +371,7 @@ function renderShell() {
   if (isCurrentPage("dashboard")) attachMonthlySummaryEvents();
   if (isCurrentPage("customers")) renderCustomers();
   if (isCurrentPage("users")) attachUserManagementEvents(renderShell);
+  if (isCurrentPage("social-lead-miner")) attachSocialLeadMinerEvents(renderShell);
 }
 
 function syncCloudOnFirstLogin() {
