@@ -10,6 +10,7 @@ export const cloudCollections = [
   "productionJobs",
   "installationJobs",
   "warrantyCards",
+  "socialLeads",
   "companySettings"
 ];
 

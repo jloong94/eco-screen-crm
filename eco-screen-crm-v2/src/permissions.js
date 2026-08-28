@@ -7,6 +7,7 @@ export const pageDefinitions = [
   { id: "orders", label: "Orders", title: "Orders" },
   { id: "production", label: "Production", title: "Production Jobs" },
   { id: "installation", label: "Installation", title: "Installation Jobs" },
+  { id: "social-lead-miner", label: "Social Lead Miner", title: "Social Lead Miner" },
   { id: "products", label: "Product Management / Settings", title: "Product Management" },
   { id: "users", label: "Staff Management", title: "Staff Management" }
 ];

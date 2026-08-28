@@ -25,5 +25,7 @@ export const storageKeys = {
   productionJobs: "ecoScreenV2.productionJobs",
   installationJobs: "ecoScreenV2.installationJobs",
   warrantyCards: "ecoScreenV2.warrantyCards",
+  socialLeads: "ecoScreenV2.socialLeads",
+  socialLeadDuplicateCount: "ecoScreenV2.socialLeadDuplicateCount",
   companySettings: "ecoScreenV2.companySettings"
 };
