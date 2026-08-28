@@ -29,6 +29,8 @@ const {
 const {
   socialProvider,
   socialProviderPlatforms,
+  validateFacebookSourceUrl,
+  validateRedNoteSourceUrl,
   validateTikTokVideoUrl
 } = await import("../src/socialProviders.js");
 const { canAccessPage, rolePages } = await import("../src/permissions.js");
@@ -57,8 +59,15 @@ assert(canQueueSocialLead(hotLead), "Eligible HOT lead with a public profile may
 assert(!canQueueSocialLead(parsed.leads.find((lead) => lead.username === "mei")), "Not-eligible comment must not enter the queue");
 
 assert(socialProviderPlatforms().includes("tiktok"), "TikTok must be registered through the provider layer");
+assert(socialProviderPlatforms().includes("facebook"), "Facebook must be registered through the provider layer");
+assert(socialProviderPlatforms().includes("rednote"), "RedNote must be registered through the provider layer");
 assert(validateTikTokVideoUrl("https://www.tiktok.com/@brand/video/7591511969182649621"), "Public TikTok video URLs must validate");
 assert(!validateTikTokVideoUrl("https://example.com/@brand/video/7591511969182649621"), "Non-TikTok URLs must be rejected");
+assert(validateFacebookSourceUrl("https://web.facebook.com/share/v/1CZAX55NpV/"), "Public Facebook share URLs must validate");
+assert(validateFacebookSourceUrl("https://www.facebook.com/brand/posts/123456"), "Public Facebook post URLs must validate");
+assert(!validateFacebookSourceUrl("https://example.com/share/v/1CZAX55NpV/"), "Non-Facebook URLs must be rejected");
+assert(validateRedNoteSourceUrl("https://www.xiaohongshu.com/discovery/item/68e6066a000000000700a31b?source=webshare"), "Public RedNote item URLs must validate");
+assert(!validateRedNoteSourceUrl("https://example.com/discovery/item/68e6066a000000000700a31b"), "Non-RedNote URLs must be rejected");
 let providerBlocker = null;
 try {
   await socialProvider("tiktok").scan({ sourceUrl: "https://www.tiktok.com/@brand/video/7591511969182649621", maximum: 50 });
@@ -66,6 +75,30 @@ try {
   providerBlocker = error;
 }
 assert(providerBlocker?.code === "PROVIDER_NOT_CONFIGURED", "Unconfigured TikTok access must return an explicit blocker without mock comments");
+
+for (const [platform, sourceUrl] of [
+  ["facebook", "https://web.facebook.com/share/v/1CZAX55NpV/"],
+  ["rednote", "https://www.xiaohongshu.com/discovery/item/68e6066a000000000700a31b"]
+]) {
+  let blocker = null;
+  try {
+    await socialProvider(platform).scan({ sourceUrl, maximum: 50 });
+  } catch (error) {
+    blocker = error;
+  }
+  assert(blocker?.code === "PROVIDER_NOT_CONFIGURED", `Unconfigured ${platform} access must return an explicit blocker without mock comments`);
+}
+
+const multiPlatformCsv = [
+  "platform,username,display_name,profile_url,avatar_url,comment,comment_time,source_url,source_author,region,contact_eligibility",
+  "facebook,faiz,Faiz,https://www.facebook.com/faiz,,price please security screen Penang,2026-08-25T10:00:00+08:00,https://www.facebook.com/brand/posts/123456,brand,,direct_brand_interaction",
+  "xiaohongshu,lin,Lin,https://www.xiaohongshu.com/user/profile/abc,,Batu Kawan 可以安装防蚊纱窗吗？,2026-08-25T11:00:00+08:00,https://www.xiaohongshu.com/discovery/item/68e6066a000000000700a31b,brand,,user_consented"
+].join("\n");
+const multiPlatform = parseSocialLeadCsv(multiPlatformCsv, { maximum: 50 });
+assert(multiPlatform.errors.length === 0 && multiPlatform.leads.length === 2, "Facebook and RedNote CSV rows must use the shared import pipeline");
+assert(multiPlatform.leads.some((lead) => lead.platform === "facebook"), "Facebook leads must preserve their canonical platform");
+assert(multiPlatform.leads.some((lead) => lead.platform === "rednote"), "Xiaohongshu aliases must normalize to RedNote");
+assert(multiPlatform.leads.find((lead) => lead.platform === "rednote")?.intentLevel === "HOT", "Chinese installation enquiries must receive buying-intent scoring");
 
 const providerImport = ingestProviderComments([
   { username: "siti", displayName: "Siti", profileUrl: "https://www.tiktok.com/@siti", comment: "price please roller screen Penang", commentedAt: "2026-08-25T12:00:00+08:00" },

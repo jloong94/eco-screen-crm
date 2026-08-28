@@ -11,13 +11,13 @@ npm run dev
 
 Open the local URL shown in the terminal.
 
-## Social Lead Miner (TikTok MVP)
+## Social Lead Miner (TikTok, Facebook and RedNote)
 
-Boss and Admin users can open **Social Lead Miner** from the existing CRM navigation. The module supports lawful TikTok comment CSV import, intent scoring, duplicate prevention, search and filters, CSV export, suggested English/Chinese/Malay outreach, and a manual contact queue.
+Boss and Admin users can open **Social Lead Miner** from the existing CRM navigation. The module supports lawful TikTok, Facebook and Xiaohongshu/RedNote comment CSV import, intent scoring, duplicate prevention, platform/search filters, CSV export, suggested English/Chinese/Malay outreach, and the existing manual contact queue.
 
 Direct TikTok comment access is deliberately disabled in this static frontend until an approved server-side provider is available. The module never returns mock comments, bypasses TikTok protections, or sends messages automatically. Download the CSV template from the module; `contact_eligibility` must be `not_eligible`, `direct_brand_interaction`, or `user_consented`.
 
-The data layer uses a provider registry in `src/socialProviders.js`, so Facebook, Instagram and YouTube adapters can be registered later without changing scoring, storage or queue behavior. To activate an approved TikTok connector, set `VITE_TIKTOK_SCAN_ENDPOINT` to a same-origin server route. This variable is only the public route; TikTok/provider credentials must remain on that server and must never use a `VITE_` prefix.
+The data layer uses a provider registry in `src/socialProviders.js`, so Instagram and YouTube adapters can be added later without changing scoring, storage or queue behavior. Approved connectors can be activated with `VITE_TIKTOK_SCAN_ENDPOINT`, `VITE_FACEBOOK_SCAN_ENDPOINT`, or `VITE_REDNOTE_SCAN_ENDPOINT`. These variables are only public same-origin route URLs; platform credentials must remain on the connector server and must never use a `VITE_` prefix. Without a connector, the UI returns a real configuration error and never supplies mock comments. Facebook access must use authorized Meta Page/content access. RedNote direct scanning remains disabled until an approved comment data source is available; lawful CSV import remains available.
 
 ## Build
 

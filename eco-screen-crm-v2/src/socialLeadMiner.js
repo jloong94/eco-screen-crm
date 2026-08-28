@@ -1,6 +1,6 @@
 import { t } from "./i18n.js";
 import { isBossOrAdmin } from "./permissions.js";
-import { socialProvider, socialProviderPlatforms } from "./socialProviders.js";
+import { normalizeSocialPlatform, socialProvider, socialProviderPlatforms } from "./socialProviders.js";
 import { persistSocialLeads, state, uid } from "./state.js";
 
 const supportedPlatforms = new Set(socialProviderPlatforms());
@@ -10,15 +10,16 @@ const statuses = new Set(["New", "Queued", "Contacted", "Rejected"]);
 
 const highIntent = [
   "berapa harga", "price please", "pm price", "how much", "nak buat", "interested",
-  "boleh pasang", "can install", "where is your shop", "ada penang", "quotation"
+  "boleh pasang", "can install", "where is your shop", "ada penang", "quotation",
+  "多少钱", "价格", "可以安装", "想安装", "有兴趣", "怎么联系"
 ];
-const mediumIntent = ["mosquito", "nyamuk", "security", "screen", "sliding door", "roller screen", "pintu", "tingkap"];
+const mediumIntent = ["mosquito", "nyamuk", "security", "screen", "sliding door", "roller screen", "pintu", "tingkap", "防蚊", "纱窗", "防盗", "推拉门", "卷帘"];
 const productRules = [
-  [/sliding|pintu sliding/i, "Sliding Screen"],
-  [/roller/i, "Roller Screen"],
-  [/security door|security screen|secure mesh|pintu keselamatan/i, "Security Screen / Door"],
-  [/mosquito|nyamuk|insect/i, "Mosquito Screen"],
-  [/window|tingkap/i, "Window Screen"]
+  [/sliding|pintu sliding|推拉门/i, "Sliding Screen"],
+  [/roller|卷帘/i, "Roller Screen"],
+  [/security door|security screen|secure mesh|pintu keselamatan|防盗/i, "Security Screen / Door"],
+  [/mosquito|nyamuk|insect|防蚊/i, "Mosquito Screen"],
+  [/window|tingkap|窗|纱窗/i, "Window Screen"]
 ];
 const locationRules = [
   [/\bBM\b|bukit mertajam/i, "Bukit Mertajam"],
@@ -28,7 +29,7 @@ const locationRules = [
   [/seberang perai|butterworth/i, "Seberang Perai"]
 ];
 
-let filters = { query: "", level: "", status: "", location: "", need: "" };
+let filters = { query: "", platform: "", level: "", status: "", location: "", need: "" };
 let activeScanController = null;
 
 export function renderSocialLeadMinerPage() {
@@ -40,7 +41,7 @@ export function renderSocialLeadMinerPage() {
         <div>
           <p class="eyebrow">${t("Acquisition")}</p>
           <h2>${t("Social Lead Miner")}</h2>
-          <p class="muted-text">${t("Import lawful public TikTok comments, score buying intent, remove duplicates and move qualified people into a manual contact queue.")}</p>
+          <p class="muted-text">${t("Import lawful public social comments, score buying intent, remove duplicates and move qualified people into a manual contact queue.")}</p>
         </div>
         <button class="btn" id="socialExportButton" type="button">${t("Export CSV")}</button>
       </div>
@@ -56,7 +57,8 @@ export function renderSocialLeadMinerPage() {
 
       <section class="card social-scan-card">
         <div class="form-grid compact">
-          <label class="wide">${t("TikTok Video URL")}<input id="socialSourceUrl" type="url" placeholder="https://www.tiktok.com/@account/video/..." /></label>
+          <label>${t("Platform")}<select id="socialPlatform"><option value="tiktok">TikTok</option><option value="facebook">Facebook</option><option value="rednote">${t("Xiaohongshu / RedNote")}</option></select></label>
+          <label class="wide">${t("Post / Video URL")}<input id="socialSourceUrl" type="url" placeholder="${t("Paste a public post or video URL")}" /></label>
           <label>${t("Maximum Leads")}<select id="socialMaximumLeads"><option>50</option><option>100</option><option>200</option></select></label>
         </div>
         <details class="social-advanced">
@@ -69,14 +71,14 @@ export function renderSocialLeadMinerPage() {
         <div class="actions">
           <button class="btn primary" id="socialStartScanButton" type="button">${t("Start Scan")}</button>
           <button class="btn danger" id="socialStopScanButton" type="button" hidden>${t("Stop Scan")}</button>
-          <span class="pill">TikTok MVP</span>
+          <span class="pill">TikTok · Facebook · ${t("RedNote")}</span>
         </div>
-        <p id="socialScanStatus" class="muted-text">${t("Direct TikTok scanning is not configured in this static CRM. No mock comments will be returned. Use the lawful CSV import below.")}</p>
+        <p id="socialScanStatus" class="muted-text">${t("Direct platform scanning needs an approved connector. No mock comments will be returned. You can use the lawful CSV import below.")}</p>
       </section>
 
       <section class="card social-import-card">
         <div class="section-head">
-          <div><h3>${t("Lawful CSV Import")}</h3><p class="muted-text">${t("Use one public TikTok video per CSV. The file stays inside this CRM and is scored after import.")}</p></div>
+          <div><h3>${t("Lawful CSV Import")}</h3><p class="muted-text">${t("Use one public post or video per CSV and set platform to tiktok, facebook or rednote. The file stays inside this CRM and is scored after import.")}</p></div>
           <button class="btn" id="socialTemplateButton" type="button">${t("Download Template")}</button>
         </div>
         <div class="form-grid compact">
@@ -90,6 +92,7 @@ export function renderSocialLeadMinerPage() {
       <section class="card social-filter-card">
         <div class="form-grid compact social-filters">
           <label>${t("Search")}<input id="socialFilterQuery" value="${escapeHtml(filters.query)}" placeholder="${t("User or comment")}" /></label>
+          <label>${t("Platform")}<select id="socialFilterPlatform"><option value="">${t("All Platforms")}</option>${option("tiktok", filters.platform, "TikTok")}${option("facebook", filters.platform, "Facebook")}${option("rednote", filters.platform, t("RedNote"))}</select></label>
           <label>${t("Intent Level")}<select id="socialFilterLevel"><option value="">${t("All")}</option>${option("HOT", filters.level)}${option("WARM", filters.level)}${option("COLD", filters.level)}${option("NOT_LEAD", filters.level)}</select></label>
           <label>${t("Status")}<select id="socialFilterStatus"><option value="">${t("All")}</option>${["New", "Queued", "Contacted", "Rejected"].map((value) => option(value, filters.status, t(value))).join("")}</select></label>
           <label>${t("Location")}<input id="socialFilterLocation" value="${escapeHtml(filters.location)}" /></label>
@@ -109,7 +112,7 @@ export function attachSocialLeadMinerEvents(renderShell) {
   document.querySelector("#socialTemplateButton")?.addEventListener("click", downloadTemplate);
   document.querySelector("#socialCsvFile")?.addEventListener("change", (event) => importSelectedFile(event, renderShell));
   document.querySelector("#socialExportButton")?.addEventListener("click", exportFilteredLeads);
-  ["Query", "Level", "Status", "Location", "Need"].forEach((name) => {
+  ["Query", "Platform", "Level", "Status", "Location", "Need"].forEach((name) => {
     const element = document.querySelector(`#socialFilter${name}`);
     element?.addEventListener(element.tagName === "SELECT" ? "change" : "input", updateFilters);
   });
@@ -132,7 +135,7 @@ export function parseSocialLeadCsv(text, options = {}) {
       continue;
     }
     if (!supportedPlatforms.has(candidate.platform)) {
-      errors.push(`Row ${index + 2}: only TikTok is supported in this MVP.`);
+      errors.push(`Row ${index + 2}: platform must be tiktok, facebook or rednote.`);
       continue;
     }
     const key = leadDuplicateKey(candidate);
@@ -173,7 +176,7 @@ export function scoreSocialLead(lead, options = {}) {
   const mediumMatches = mediumIntent.filter((term) => normalized.includes(normalize(term)));
   const triggerMatches = triggers.filter((term) => normalized.includes(normalize(term)));
   const excluded = excludes.some((term) => normalized.includes(normalize(term)));
-  const hasQuestion = /\?|harga|price|how much|berapa|boleh|can /i.test(comment);
+  const hasQuestion = /\?|？|harga|price|how much|berapa|boleh|can |多少|价格|可以|安装/i.test(comment);
   const hasArea = locationRules.some(([expression]) => expression.test(comment));
   let score = 10 + highMatches.length * 42 + mediumMatches.length * 9 + triggerMatches.length * 16 + (hasQuestion ? 12 : 0) + (hasArea ? 10 : 0);
   if (excluded) score = 0;
@@ -213,7 +216,7 @@ export function canQueueSocialLead(lead) {
 
 function normalizeImportedRow(row, options) {
   const value = (name) => String(row[name] || "").trim();
-  const platform = normalize(value("platform") || "tiktok").replace(/\s+/g, "");
+  const platform = normalizeSocialPlatform(value("platform") || "tiktok");
   return {
     platform,
     username: value("username").replace(/^@/, ""),
@@ -238,7 +241,7 @@ function normalizeProviderComment(row = {}, options = {}) {
     return String(name ? row[name] : "").trim();
   };
   return {
-    platform: normalize(options.platform || value("platform") || "tiktok"),
+    platform: normalizeSocialPlatform(options.platform || value("platform") || "tiktok"),
     username: value("username", "userName").replace(/^@/, ""),
     displayName: value("displayName", "display_name"),
     profileUrl: safePublicUrl(value("profileUrl", "profile_url")),
@@ -259,7 +262,7 @@ function socialLeadResultsHtml() {
   const rows = filteredLeads();
   if (!rows.length) return `<section class="card social-empty"><p class="muted-text">${t("No social leads match the current filters.")}</p></section>`;
   return `<div class="social-lead-table-wrap"><table class="social-lead-table"><thead><tr>
-    <th>${t("Score")}</th><th>${t("User")}</th><th>${t("Comment")}</th><th>${t("Location")}</th><th>${t("Need")}</th><th>${t("Source Video")}</th><th>${t("Date")}</th><th>${t("Status")}</th><th>${t("Actions")}</th>
+    <th>${t("Score")}</th><th>${t("User")}</th><th>${t("Comment")}</th><th>${t("Location")}</th><th>${t("Need")}</th><th>${t("Source")}</th><th>${t("Date")}</th><th>${t("Status")}</th><th>${t("Actions")}</th>
   </tr></thead><tbody>${rows.map(leadRowHtml).join("")}</tbody></table></div>`;
 }
 
@@ -271,7 +274,7 @@ function leadRowHtml(lead) {
     <td><p>${escapeHtml(lead.comment)}</p><small>${escapeHtml(lead.intentReason)}</small></td>
     <td>${escapeHtml(lead.estimatedLocation || "-")}</td>
     <td>${escapeHtml(lead.estimatedNeed || "-")}</td>
-    <td><a href="${escapeHtml(lead.sourceUrl)}" target="_blank" rel="noreferrer">${t("View Video")}</a><small>${escapeHtml(lead.sourceAuthor || "TikTok")}</small></td>
+    <td><a href="${escapeHtml(lead.sourceUrl)}" target="_blank" rel="noreferrer">${t("View Source")}</a><small>${escapeHtml(platformLabel(lead.platform))}${lead.sourceAuthor ? ` · ${escapeHtml(lead.sourceAuthor)}` : ""}</small></td>
     <td>${escapeHtml(formatDate(lead.commentedAt || lead.importedAt))}</td>
     <td><span class="pill">${t(lead.status || "New")}</span><small>${escapeHtml(contactEligibilityLabel(lead.contactEligibility))}</small></td>
     <td><div class="social-row-actions">
@@ -294,13 +297,15 @@ async function startDirectScan(renderShell) {
   activeScanController = new AbortController();
   if (startButton) startButton.disabled = true;
   if (stopButton) stopButton.hidden = false;
-  if (status) status.textContent = t("Scanning TikTok comments...");
+  const platform = normalizeSocialPlatform(document.querySelector("#socialPlatform")?.value || "tiktok");
+  const provider = socialProvider(platform);
+  if (status) status.textContent = `${t("Scanning")} ${provider.label} ${t("comments...")}`;
   try {
     const sourceUrl = document.querySelector("#socialSourceUrl")?.value || "";
     const maximum = document.querySelector("#socialMaximumLeads")?.value || 50;
     const triggerKeywords = document.querySelector("#socialTriggerKeywords")?.value || "";
     const excludeKeywords = document.querySelector("#socialExcludeKeywords")?.value || "";
-    const result = await socialProvider("tiktok").scan({
+    const result = await provider.scan({
       sourceUrl,
       maximum,
       triggerKeywords,
@@ -308,7 +313,7 @@ async function startDirectScan(renderShell) {
       signal: activeScanController.signal
     });
     const imported = ingestProviderComments(result.comments, {
-      platform: "tiktok",
+      platform,
       sourceUrl,
       maximum,
       triggerKeywords,
@@ -321,7 +326,7 @@ async function startDirectScan(renderShell) {
     if (status) status.textContent = `${t("Comments Found")}: ${result.comments.length}. ${t("Qualified Leads")}: ${imported.leads.filter((lead) => activeLevels.has(lead.intentLevel)).length}.`;
     renderShell();
   } catch (error) {
-    if (status) status.textContent = t(error?.message || "TikTok provider could not be reached.");
+    if (status) status.textContent = t(error?.message || "Social provider could not be reached.");
   } finally {
     activeScanController = null;
     if (startButton) startButton.disabled = false;
@@ -385,6 +390,7 @@ function handleLeadAction(event, renderShell) {
 function updateFilters() {
   filters = {
     query: document.querySelector("#socialFilterQuery")?.value || "",
+    platform: document.querySelector("#socialFilterPlatform")?.value || "",
     level: document.querySelector("#socialFilterLevel")?.value || "",
     status: document.querySelector("#socialFilterStatus")?.value || "",
     location: document.querySelector("#socialFilterLocation")?.value || "",
@@ -399,6 +405,7 @@ function filteredLeads() {
   return socialLeadRows().filter((lead) => {
     const haystack = normalize([lead.username, lead.displayName, lead.comment].join(" "));
     return (!query || haystack.includes(query))
+      && (!filters.platform || lead.platform === filters.platform)
       && (!filters.level || lead.intentLevel === filters.level)
       && (!filters.status || lead.status === filters.status)
       && (!filters.location || normalize(lead.estimatedLocation).includes(normalize(filters.location)))
@@ -407,8 +414,8 @@ function filteredLeads() {
 }
 
 function exportFilteredLeads() {
-  const columns = ["intent_score", "intent_level", "intent_reason", "username", "display_name", "profile_url", "avatar_url", "comment", "estimated_location", "estimated_need", "suggested_next_action", "contact_eligibility", "status", "source_url", "source_author", "comment_time"];
-  const rows = filteredLeads().map((lead) => [lead.intentScore, lead.intentLevel, lead.intentReason, lead.username, lead.displayName, lead.profileUrl, lead.avatarUrl, lead.comment, lead.estimatedLocation, lead.estimatedNeed, lead.suggestedNextAction, lead.contactEligibility, lead.status, lead.sourceUrl, lead.sourceAuthor, lead.commentedAt]);
+  const columns = ["platform", "intent_score", "intent_level", "intent_reason", "username", "display_name", "profile_url", "avatar_url", "comment", "estimated_location", "estimated_need", "suggested_next_action", "contact_eligibility", "status", "source_url", "source_author", "comment_time"];
+  const rows = filteredLeads().map((lead) => [lead.platform, lead.intentScore, lead.intentLevel, lead.intentReason, lead.username, lead.displayName, lead.profileUrl, lead.avatarUrl, lead.comment, lead.estimatedLocation, lead.estimatedNeed, lead.suggestedNextAction, lead.contactEligibility, lead.status, lead.sourceUrl, lead.sourceAuthor, lead.commentedAt]);
   downloadCsv("social-leads.csv", [columns, ...rows]);
 }
 
@@ -469,6 +476,7 @@ function safePublicUrl(value) { try { const url = new URL(String(value || "")); 
 function csvCell(value) { const text = String(value ?? ""); return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text; }
 function escapeHtml(value) { return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[char]); }
 function contactEligibilityLabel(value) { return ({ direct_brand_interaction: t("Direct brand interaction"), user_consented: t("User consented"), not_eligible: t("Not eligible for contact") })[value] || t("Not eligible for contact"); }
+function platformLabel(value) { return ({ tiktok: "TikTok", facebook: "Facebook", rednote: t("Xiaohongshu / RedNote") })[normalizeSocialPlatform(value)] || value || "-"; }
 function outreachMessages({ need, location }) {
   const area = location && location !== "Not stated" ? ` in ${location}` : "";
   return {

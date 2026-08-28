@@ -19,7 +19,7 @@ export function registerSocialProvider(provider) {
 }
 
 export function socialProvider(platform) {
-  const provider = providers.get(normalizePlatform(platform));
+  const provider = providers.get(normalizeSocialPlatform(platform));
   if (!provider) throw new SocialProviderError("UNSUPPORTED_PLATFORM", `Unsupported social platform: ${platform || "unknown"}.`);
   return provider;
 }
@@ -41,6 +41,32 @@ export function validateTikTokVideoUrl(value) {
   }
 }
 
+export function validateFacebookSourceUrl(value) {
+  try {
+    const url = new URL(String(value || "").trim());
+    const host = url.hostname.toLowerCase().replace(/^(?:www\.|web\.|m\.)/, "");
+    if (host === "fb.watch") return url.pathname !== "/" ? cleanUrl(url) : "";
+    if (host !== "facebook.com") return "";
+    if (!/(?:\/share\/(?:p|v)\/|\/reel\/|\/videos\/|\/posts\/|\/watch\/|\/permalink\.php)/i.test(`${url.pathname}${url.search}`)) return "";
+    return cleanUrl(url);
+  } catch {
+    return "";
+  }
+}
+
+export function validateRedNoteSourceUrl(value) {
+  try {
+    const url = new URL(String(value || "").trim());
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    if (host === "xhslink.com") return url.pathname !== "/" ? cleanUrl(url) : "";
+    if (host !== "xiaohongshu.com") return "";
+    if (!/(?:\/discovery\/item\/|\/explore\/)[a-z0-9]+/i.test(url.pathname)) return "";
+    return cleanUrl(url);
+  } catch {
+    return "";
+  }
+}
+
 const tiktokProvider = {
   platform: "tiktok",
   label: "TikTok",
@@ -55,11 +81,46 @@ const tiktokProvider = {
         "TikTok comment access is not configured. An approved server-side provider is required; no scraping or mock comments will be used."
       );
     }
-    return scanApprovedEndpoint(endpoint, { ...request, sourceUrl, platform: "tiktok" });
+    return scanApprovedEndpoint(endpoint, { ...request, sourceUrl, platform: "tiktok", providerLabel: "TikTok" });
   }
 };
 
+const facebookProvider = createEndpointProvider({
+  platform: "facebook",
+  label: "Facebook",
+  endpointKey: "VITE_FACEBOOK_SCAN_ENDPOINT",
+  validateSourceUrl: validateFacebookSourceUrl,
+  invalidMessage: "Enter a valid public Facebook post, video or reel URL.",
+  configurationMessage: "Facebook comment access is not configured. An approved Meta Page connector and authorization are required; no scraping or mock comments will be used."
+});
+
+const redNoteProvider = createEndpointProvider({
+  platform: "rednote",
+  label: "小红书 / RedNote",
+  endpointKey: "VITE_REDNOTE_SCAN_ENDPOINT",
+  validateSourceUrl: validateRedNoteSourceUrl,
+  invalidMessage: "Enter a valid public Xiaohongshu / RedNote post URL.",
+  configurationMessage: "Xiaohongshu / RedNote comment access is not configured. An approved provider is required; no login bypass, scraping or mock comments will be used."
+});
+
 registerSocialProvider(tiktokProvider);
+registerSocialProvider(facebookProvider);
+registerSocialProvider(redNoteProvider);
+
+function createEndpointProvider({ platform, label, endpointKey, validateSourceUrl, invalidMessage, configurationMessage }) {
+  return {
+    platform,
+    label,
+    capabilities: Object.freeze({ comments: true, pagination: true, stop: true }),
+    async scan(request = {}) {
+      const sourceUrl = validateSourceUrl(request.sourceUrl);
+      if (!sourceUrl) throw new SocialProviderError("INVALID_SOURCE_URL", invalidMessage);
+      const endpoint = String(runtimeEnv[endpointKey] || "").trim();
+      if (!endpoint) throw new SocialProviderError("PROVIDER_NOT_CONFIGURED", configurationMessage);
+      return scanApprovedEndpoint(endpoint, { ...request, sourceUrl, platform, providerLabel: label });
+    }
+  };
+}
 
 async function scanApprovedEndpoint(endpoint, request) {
   const controller = new AbortController();
@@ -83,10 +144,10 @@ async function scanApprovedEndpoint(endpoint, request) {
     });
     const payload = await readJson(response);
     if (!response.ok) {
-      throw new SocialProviderError(payload.code || "PROVIDER_REQUEST_FAILED", payload.message || `TikTok provider failed (${response.status}).`, { status: response.status });
+      throw new SocialProviderError(payload.code || "PROVIDER_REQUEST_FAILED", payload.message || `${request.providerLabel || "Social"} provider failed (${response.status}).`, { status: response.status });
     }
     if (!Array.isArray(payload.comments)) {
-      throw new SocialProviderError("INVALID_PROVIDER_RESPONSE", "TikTok provider returned an invalid comments response.");
+      throw new SocialProviderError("INVALID_PROVIDER_RESPONSE", `${request.providerLabel || "Social"} provider returned an invalid comments response.`);
     }
     return {
       comments: payload.comments.slice(0, clampMaximum(request.maximum)),
@@ -96,9 +157,9 @@ async function scanApprovedEndpoint(endpoint, request) {
   } catch (error) {
     if (error instanceof SocialProviderError) throw error;
     if (controller.signal.aborted) {
-      throw new SocialProviderError(externalSignal?.aborted ? "SCAN_STOPPED" : "PROVIDER_TIMEOUT", externalSignal?.aborted ? "Scan stopped." : "TikTok provider timed out.");
+      throw new SocialProviderError(externalSignal?.aborted ? "SCAN_STOPPED" : "PROVIDER_TIMEOUT", externalSignal?.aborted ? "Scan stopped." : `${request.providerLabel || "Social"} provider timed out.`);
     }
-    throw new SocialProviderError("PROVIDER_NETWORK_ERROR", "TikTok provider could not be reached.");
+    throw new SocialProviderError("PROVIDER_NETWORK_ERROR", `${request.providerLabel || "Social"} provider could not be reached.`);
   } finally {
     clearTimeout(timeout);
     externalSignal?.removeEventListener("abort", abort);
@@ -117,6 +178,12 @@ function clampMaximum(value) {
   return Math.min(200, Math.max(1, Number(value || 50)));
 }
 
-function normalizePlatform(value) {
-  return String(value || "").trim().toLowerCase();
+export function normalizeSocialPlatform(value) {
+  const platform = String(value || "").trim().toLowerCase().replace(/[\s_-]+/g, "");
+  if (["xiaohongshu", "小红书", "xhs", "rednote"].includes(platform)) return "rednote";
+  if (["fb", "meta", "facebook"].includes(platform)) return "facebook";
+  return platform;
 }
+
+function normalizePlatform(value) { return normalizeSocialPlatform(value); }
+function cleanUrl(url) { url.hash = ""; return url.href; }
