@@ -88,8 +88,11 @@ const {
   buildArchiveLegacyOrderPlan,
   buildLegacyOrderPlan,
   eligibleSalespersonUsers,
+  historicalOrderNumberMatches,
+  installedSalesForMonth,
   legacyOrderMatchesSearch,
   monthlyCommissionSales,
+  normalizeHistoricalOrderNumber,
   saveLegacyOrder,
   waitingInstallerJobMatchesSearch,
   waitingProductionOrderMatchesSearch,
@@ -2986,6 +2989,66 @@ assert(archivedLegacyResult.ok && archivedLegacy.isArchived === true && archived
   && archivedLegacy.customerName === "Legacy Customer" && archivedLegacy.orderTotal === 5000,
 "AF7: Boss/Admin safe archive must preserve the full Legacy Order and never hard-delete it");
 
+assert(normalizeHistoricalOrderNumber(" SO-2608-001 ") === normalizeHistoricalOrderNumber("so2608001")
+  && historicalOrderNumberMatches("so - 2608 - 001", state.orders).some((match) => match.id === "current-order-for-legacy-test"),
+"AF9: historical Order number lookup must ignore SO prefix, case, spaces and hyphens without rewriting stored data");
+const duplicateLegacyPlan = buildLegacyOrderPlan({ ...legacyValues, originalOrderNo: "SO-2608-001" }, { id: "legacy-duplicate-block" });
+assert(!duplicateLegacyPlan.ok && duplicateLegacyPlan.code === "order-number-exists"
+  && duplicateLegacyPlan.matches.some((match) => match.id === "current-order-for-legacy-test"),
+"AF10: Legacy entry must block a normalized number already used by a normal CRM Order and return the exact match");
+
+const installedNormal = {
+  id: "installed-normal-order",
+  orderNo: "SO2608010",
+  orderNumber: "SO2608010",
+  status: "Confirmed",
+  isArchived: false,
+  customer: { name: "Installed Normal" },
+  total: 8400,
+  finalTotal: 8500,
+  installationCompletedDate: "2026-07-31",
+  payments: [{ id: "irrelevant-payment", amount: 3000, date: "2026-08-01" }]
+};
+const installedLegacy = {
+  id: "installed-legacy-order",
+  source: "legacy_manual",
+  status: "legacy_record",
+  isArchived: false,
+  originalOrderNo: "HAND-018",
+  customerName: "Installed Legacy",
+  orderTotal: 2600,
+  installationStatus: "completed",
+  installationCompletedDate: "2026-08-14"
+};
+const installedJobs = [{
+  id: "installation-installed-normal",
+  orderId: installedNormal.id,
+  status: "completed",
+  completionDate: "2026-08-11T09:30:00+08:00",
+  completedAt: "2026-08-12T09:30:00+08:00"
+}, {
+  id: "installation-invalid-total",
+  orderId: "installed-invalid-total",
+  status: "completed",
+  completedAt: "2026-08-10T09:00:00+08:00"
+}];
+const installedSummary = installedSalesForMonth([
+  installedNormal,
+  structuredClone(installedNormal),
+  installedLegacy,
+  { ...installedLegacy, id: "installed-legacy-archived", isArchived: true, status: "legacy_archived", orderTotal: 9999 },
+  { id: "installed-invalid-total", status: "Confirmed", installationCompletedDate: "2026-08-10", total: "invalid" },
+  { id: "installed-missing-date", status: "Confirmed", total: 5000 },
+  { id: "installed-manual-normal-date", status: "Confirmed", total: 7000, installationCompletedDate: "2026-08-18" }
+], installedJobs, "2026-08");
+assert(installedSummary.recordCount === 2 && installedSummary.total === 11100
+  && installedSummary.rows.find((row) => row.orderId === installedNormal.id)?.installationCompletedDate === "2026-08-12"
+  && installedSummary.rows.find((row) => row.orderId === installedNormal.id)?.completionSource === "installation"
+  && installedSummary.rows.find((row) => row.orderId === installedLegacy.id)?.source === "legacy_manual"
+  && installedSummary.invalidTotals.includes("installed-invalid-total")
+  && !installedSummary.rows.some((row) => row.orderId === "installed-manual-normal-date"),
+"AF11: Installed Sales must count one active normal/Legacy Order total in the Malaysia completion month, use exact Installation completedAt and latest normalized total, and ignore payments or manual normal-Order dates");
+
 resetWorkflowState();
 const quickViewBoss = { userId: "boss-quick-views", name: "Quick View Boss", role: "Boss", active: true };
 const quickViewInstaller = { userId: "installer-quick-views", name: "Quick Installer", role: "Installer", active: true };
@@ -3475,6 +3538,15 @@ assert(installerSearchWorkflowSource.includes('data-order-tool="add-legacy-order
   && installerSearchWorkflowSource.includes('quickViewCount(filter.id)')
   && mainSource.includes("uniqueActiveBusinessOrders(state.orders)"),
 "AF8: Orders UI must expose a counted Legacy Orders tab plus create/edit/archive controls while current-Order metrics stay isolated");
+assert(installerSearchWorkflowSource.includes('data-order-tool="record-old-completed-order"')
+  && installerSearchWorkflowSource.includes('data-old-completed-order-no')
+  && installerSearchWorkflowSource.includes('data-order-tool="open-old-completed-existing"')
+  && installerSearchWorkflowSource.includes('Normal CRM Orders enter Installed Sales automatically when the exact linked Installation is completed.')
+  && !installerSearchWorkflowSource.includes('data-old-completed-date')
+  && mainSource.includes('data-monthly-installed-sales-toggle')
+  && mainSource.includes('installedSalesForMonth(state.orders, state.installationJobs, monthlySummaryMonth)')
+  && mainSource.includes('t("This Month Installed Sales")'),
+"AF14: Orders must expose number-first old completion entry and Dashboard must expose a separate clickable Installed Sales detail card");
 assert(installerSearchWorkflowSource.includes('{ id: "waiting-production", label: "Waiting to Production" }')
   && installerSearchWorkflowSource.includes('{ id: "waiting-installer", label: "Waiting to Installer" }')
   && installerSearchWorkflowSource.includes('data-quick-view-installation=')
@@ -3591,6 +3663,7 @@ console.log([
   ,"Monthly Commission Sales completed-Order calculation and salesperson grouping: passed"
   ,"Boss/Admin exact Order salesperson assignment, audit fields and protected workflow payloads: passed"
   ,"Legacy Order entry, search, commission treatment, count isolation and safe archive: passed"
+  ,"Installed Sales, normalized old-number duplicate protection and exact completed-Installation automation: passed"
   ,"Orders Waiting to Production and Waiting to Installer exact-dispatch quick views: passed"
   ,"Installation pending/ready/send/recall/completed exact-ID dispatch control: passed"
   ,"Warranty validation, exact links, unique numbering, reuse, regeneration and mobile preview: passed"

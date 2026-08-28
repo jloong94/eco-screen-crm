@@ -791,16 +791,39 @@ input:focus, select:focus, textarea:focus {
   color: inherit;
   white-space: nowrap;
 }
-.monthly-commission-details {
+.monthly-commission-details,
+.monthly-installed-sales-details {
   margin-top: 16px;
 }
-.monthly-commission-details .table-wrap {
+.monthly-commission-details .table-wrap,
+.monthly-installed-sales-details .table-wrap {
   max-width: 100%;
   overflow-x: auto;
 }
-.monthly-commission-details table {
+.monthly-commission-details table,
+.monthly-installed-sales-details table {
   min-width: 760px;
 }
+.old-completed-order-search {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) auto auto;
+  gap: 10px;
+  align-items: end;
+}
+.old-order-match-list { display: grid; gap: 8px; }
+.old-order-match-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: white;
+}
+.old-order-match-row input { flex: 0 0 auto; }
+.old-order-match-row span { display: grid; gap: 4px; min-width: 0; }
+.old-order-match-row small { overflow-wrap: anywhere; }
+.old-completion-date-entry { display: grid; gap: 10px; }
 .compact-order-list {
   display: grid;
   gap: 8px;
@@ -1469,6 +1492,7 @@ input:focus, select:focus, textarea:focus {
 }
 
 @media (max-width: 640px) {
+  .old-completed-order-search { grid-template-columns: minmax(0, 1fr); }
   body { padding-bottom: 92px; }
   .topbar {
     position: static;
