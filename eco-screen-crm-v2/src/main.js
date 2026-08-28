@@ -18,7 +18,7 @@ import {
   updateCloudStatus
 } from "./state.js";
 import { itemWithCalculatedTotals, money, quoteTotals, toNumber } from "./calculations.js";
-import { attachWorkflowEvents, getQuotationDisplayNo, monthlyCommissionSales, nextSalesOrderNumber, renderWorkflowModules, resetWorkflowNavigationState } from "./workflow.js";
+import { attachWorkflowEvents, getQuotationDisplayNo, installedSalesForMonth, monthlyCommissionSales, nextSalesOrderNumber, renderWorkflowModules, resetWorkflowNavigationState } from "./workflow.js";
 import { normalizedFinalOrderTotal, uniqueActiveBusinessOrders } from "./workflowIntegrity.js";
 import { t } from "./i18n.js";
 import { canAccessPage, defaultPageForRole, isBossOrAdmin, pageDefinitions, role } from "./permissions.js";
@@ -27,6 +27,7 @@ import { cloudCollections, cloudConfigurationIssue, isCloudConfigured, safeSyncW
 let cloudHydrated = false;
 let monthlySummaryMonth = currentMonthValue();
 let monthlyCommissionDetailVisible = false;
+let monthlyInstalledSalesDetailVisible = false;
 
 function appHtml() {
   if (!state.currentUser) return renderLoginCard();
@@ -1186,20 +1187,27 @@ function attachMonthlySummaryEvents() {
   document.querySelector("[data-month-preset='this']")?.addEventListener("click", () => {
     monthlySummaryMonth = currentMonthValue();
     monthlyCommissionDetailVisible = false;
+    monthlyInstalledSalesDetailVisible = false;
     renderShell();
   });
   document.querySelector("[data-month-preset='last']")?.addEventListener("click", () => {
     monthlySummaryMonth = monthOffsetValue(-1);
     monthlyCommissionDetailVisible = false;
+    monthlyInstalledSalesDetailVisible = false;
     renderShell();
   });
   document.querySelector("#monthlySummaryMonth")?.addEventListener("change", (event) => {
     monthlySummaryMonth = event.target.value || currentMonthValue();
     monthlyCommissionDetailVisible = false;
+    monthlyInstalledSalesDetailVisible = false;
     renderShell();
   });
   document.querySelector("[data-monthly-commission-toggle]")?.addEventListener("click", () => {
     monthlyCommissionDetailVisible = !monthlyCommissionDetailVisible;
+    renderShell();
+  });
+  document.querySelector("[data-monthly-installed-sales-toggle]")?.addEventListener("click", () => {
+    monthlyInstalledSalesDetailVisible = !monthlyInstalledSalesDetailVisible;
     renderShell();
   });
 }
@@ -1284,6 +1292,7 @@ function monthlySummaryHtml() {
   if (!["Boss", "Admin", "Secretary"].includes(role())) return "";
   const summary = monthlySummary(monthlySummaryMonth);
   const commission = monthlyCommissionSales(state.orders, monthlySummaryMonth, { quotations: state.quotations });
+  const installedSales = installedSalesForMonth(state.orders, state.installationJobs, monthlySummaryMonth);
   return `
     <section class="panel monthly-summary-panel">
       <div class="panel-head">
@@ -1304,10 +1313,24 @@ function monthlySummaryHtml() {
         <div class="metric-card"><span>${t("Pending Collection")}</span><strong>${money(summary.pendingCollection)}</strong><small>${summary.pendingCollectionCount} ${t("pending")}</small></div>
         <div class="metric-card"><span>${t("Completed Orders")}</span><strong>${money(summary.completedAmount)}</strong><small>${summary.completedCount} ${t("completed")}</small></div>
         <button class="metric-card progress-summary-card ${monthlyCommissionDetailVisible ? "active" : ""}" type="button" data-monthly-commission-toggle aria-pressed="${monthlyCommissionDetailVisible}" aria-expanded="${monthlyCommissionDetailVisible}"><span>${t("Monthly Commission Sales")}</span><strong>${money(commission.total)}</strong><small>${commission.orderCount} ${t("commission-eligible orders")}</small></button>
+        <button class="metric-card progress-summary-card ${monthlyInstalledSalesDetailVisible ? "active" : ""}" type="button" data-monthly-installed-sales-toggle aria-pressed="${monthlyInstalledSalesDetailVisible}" aria-expanded="${monthlyInstalledSalesDetailVisible}"><span>${t("This Month Installed Sales")}</span><strong>${money(installedSales.total)}</strong><small>${installedSales.recordCount} ${t("installed orders")}</small></button>
       </div>
       ${monthlyCommissionDetailVisible ? monthlyCommissionDetailsHtml(commission) : ""}
+      ${monthlyInstalledSalesDetailVisible ? monthlyInstalledSalesDetailsHtml(installedSales) : ""}
     </section>
   `;
+}
+
+function monthlyInstalledSalesDetailsHtml(summary) {
+  const rows = summary.rows.length
+    ? summary.rows.map((row) => `<tr><td>${escapeHtml(row.orderNo || "-")}</td><td>${escapeHtml(row.customer || "-")}</td><td>${escapeHtml(row.installationCompletedDate)}</td><td>${money(row.orderTotal)}</td></tr>`).join("")
+    : `<tr><td colspan="4">${t("No installed Orders for this month.")}</td></tr>`;
+  return `
+    <section class="monthly-installed-sales-details" aria-label="${t("This Month Installed Sales")}">
+      <div class="section-head"><h3>${t("This Month Installed Sales")}</h3><p><strong>${summary.recordCount}</strong> ${t("installed orders")} · <strong>${money(summary.total)}</strong></p></div>
+      <div class="table-wrap"><table><thead><tr><th>${t("Order No")}</th><th>${t("Customer")}</th><th>${t("Installation Completed Date")}</th><th>${t("Sale")}</th></tr></thead><tbody>${rows}</tbody></table></div>
+      ${summary.invalidTotals.length ? `<p class="warning-text">${t("Orders with missing or invalid totals")}: ${escapeHtml(summary.invalidTotals.join(", "))}</p>` : ""}
+    </section>`;
 }
 
 function monthlyCommissionDetailsHtml(summary) {

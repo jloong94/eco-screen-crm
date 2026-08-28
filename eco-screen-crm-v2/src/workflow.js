@@ -134,6 +134,7 @@ let paymentReversalPanel = null;
 let salespersonAssignmentOrderId = "";
 let orderAmendmentPanel = null;
 let legacyOrderPanel = null;
+let oldCompletedOrderPanel = null;
 let installationDispatchPreviewId = "";
 let installationRecallJobId = "";
 let warrantyPreviewCardId = "";
@@ -929,6 +930,7 @@ function renderOrderTools() {
         <button class="btn" type="button" data-order-tool="clear">${t("Clear Search")}</button>
         <button class="btn" type="button" data-order-tool="find">${t("Find Order")}</button>
         ${canManageLegacyOrders() ? `<button class="btn" type="button" data-order-tool="add-legacy-order">${t("Add Legacy Order")}</button>` : ""}
+        ${canManageLegacyOrders() ? `<button class="btn" type="button" data-order-tool="record-old-completed-order">${t("Record Old Completed Order")}</button>` : ""}
         ${isBossOrAdmin() ? `<button class="btn" type="button" data-order-tool="duplicates">${t("Duplicate Order Check")}</button>` : ""}
       ${isBossOrAdmin() ? `<button class="btn" type="button" data-order-tool="workflow-integrity">${t("Workflow Integrity Check")}</button>` : ""}
       ${isBossOrAdmin() ? `<button class="btn" type="button" data-order-tool="production-dispatch-integrity">${t("Repair Production Dispatch Integrity")}</button>` : ""}
@@ -943,6 +945,7 @@ function renderOrderTools() {
       ${productionDispatchIntegrityPanelHtml()}
       ${coveredOrderRecoveryPanelHtml()}
       ${soNumberReassignmentPanelHtml()}
+      ${oldCompletedOrderPanelHtml()}
       ${legacyOrderPanelHtml()}
     </section>
   `;
@@ -962,7 +965,7 @@ function legacyOrderPanelHtml() {
     ? state.orders.find((row) => String(row.id || "") === String(legacyOrderPanel.orderId))
     : null;
   if (legacyOrderPanel.orderId && (!order || !isLegacyOrder(order))) return "";
-  const value = (field) => escapeHtml(order?.[field] ?? "");
+  const value = (field) => escapeHtml(order?.[field] ?? legacyOrderPanel?.prefill?.[field] ?? "");
   const salespeople = eligibleSalespersonUsers(state.users);
   const selectedSalespersonId = String(order?.salespersonId || "");
   return `
@@ -999,6 +1002,35 @@ function legacyOrderPanelHtml() {
       </div>
     </section>
   `;
+}
+
+function oldCompletedOrderPanelHtml() {
+  if (!oldCompletedOrderPanel || !canManageLegacyOrders()) return "";
+  const matches = oldCompletedOrderPanel.matches || [];
+  const selectedId = String(oldCompletedOrderPanel.selectedId || (matches.length === 1 ? matches[0].id : ""));
+  const selected = matches.find((row) => String(row.id) === selectedId) || null;
+  const resultHtml = oldCompletedOrderPanel.searched
+    ? matches.length
+      ? `<div class="old-order-match-list"><p class="warning-text">${t("Order already exists")}</p>${matches.map((match) => `
+          <label class="old-order-match-row">
+            <input type="radio" name="old-completed-match" value="${escapeHtml(match.id)}" ${String(match.id) === selectedId ? "checked" : ""} />
+            <span><strong>${escapeHtml(match.orderNo || "-")}</strong> · ${escapeHtml(match.customer || "-")} · ${match.isLegacy ? t("Legacy Order") : t("Normal CRM Order")}<small>${t("Stable ID")}: ${escapeHtml(match.id)}</small></span>
+          </label>`).join("")}</div>
+        ${selected ? selected.isLegacy
+          ? `<div class="actions"><button class="btn primary" type="button" data-order-tool="open-old-completed-existing">${t("Open Existing Order")}</button></div>`
+          : `<div class="old-completion-date-entry"><p class="muted-text">${t("Normal CRM Orders enter Installed Sales automatically when the exact linked Installation is completed.")}</p><div class="actions"><button class="btn primary" type="button" data-order-tool="open-old-completed-existing">${t("Open Existing Order")}</button></div></div>` : ""}`
+      : `<p class="success-text">${t("No existing Order found. Continue to Legacy Order entry.")}</p><div class="actions"><button class="btn primary" type="button" data-order-tool="continue-old-completed-legacy">${t("Continue to Legacy Order Entry")}</button></div>`
+    : "";
+  return `
+    <section class="order-action-panel old-completed-order-panel" data-old-completed-order-panel>
+      <div class="section-head"><div><h3>${t("Record Old Completed Order")}</h3><p class="muted-text">${t("Enter the historical Order number first. Existing CRM and Legacy Orders are checked before a new record can be created.")}</p></div></div>
+      <div class="old-completed-order-search">
+        <label>${t("Original Order No")}<input data-old-completed-order-no value="${escapeHtml(oldCompletedOrderPanel.orderNo || "")}" /></label>
+        <button class="btn primary" type="button" data-order-tool="search-old-completed-order">${t("Check Order Number")}</button>
+        <button class="btn" type="button" data-order-tool="cancel-old-completed-order">${t("Cancel")}</button>
+      </div>
+      ${resultHtml}
+    </section>`;
 }
 
 export function scanDuplicateOrders() {
@@ -4456,6 +4488,11 @@ function handleOrderToolsClick(event) {
   const tool = event.target.dataset.orderTool;
   const archiveGroupId = event.target.dataset.archiveDuplicateGroup;
   const duplicateOrderId = event.target.dataset.duplicateOpenOrder;
+  if (event.target.matches?.('input[name="old-completed-match"]')) {
+    oldCompletedOrderPanel = { ...oldCompletedOrderPanel, selectedId: String(event.target.value || "") };
+    renderOrderTools();
+    return;
+  }
   if (filter) {
     setOrderNavigationFilter(filter);
     renderOrders();
@@ -4471,6 +4508,18 @@ function handleOrderToolsClick(event) {
     legacyOrderPanel = { orderId: "" };
     renderOrderTools();
   }
+  if (tool === "record-old-completed-order") {
+    if (!canManageLegacyOrders()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+    oldCompletedOrderPanel = { orderNo: "", searched: false, matches: [], selectedId: "" };
+    renderOrderTools();
+  }
+  if (tool === "search-old-completed-order") searchOldCompletedOrder(event.target);
+  if (tool === "cancel-old-completed-order") {
+    oldCompletedOrderPanel = null;
+    renderOrderTools();
+  }
+  if (tool === "open-old-completed-existing") openOldCompletedExisting(event.target);
+  if (tool === "continue-old-completed-legacy") continueOldCompletedAsLegacy();
   if (tool === "cancel-legacy-order") {
     legacyOrderPanel = null;
     renderOrderTools();
@@ -4543,6 +4592,43 @@ function handleOrderToolsClick(event) {
   }
   if (archiveGroupId) archiveDuplicateGroupFromPanel(archiveGroupId, event.target);
   if (duplicateOrderId) highlightOrder(duplicateOrderId);
+}
+
+function searchOldCompletedOrder(button) {
+  if (!canManageLegacyOrders()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
+  const panel = button.closest("[data-old-completed-order-panel]");
+  const orderNo = String(panel?.querySelector("[data-old-completed-order-no]")?.value || "").trim();
+  if (!normalizeHistoricalOrderNumber(orderNo)) return showWorkflowMessage("Enter an Order number first.", "error");
+  const matches = historicalOrderNumberMatches(orderNo, state.orders);
+  oldCompletedOrderPanel = { orderNo, searched: true, matches, selectedId: matches.length === 1 ? matches[0].id : "" };
+  renderOrderTools();
+  showWorkflowMessage(matches.length ? "Order already exists" : "No existing Order found. Continue to Legacy Order entry.", matches.length ? "info" : "success");
+}
+
+function selectedOldCompletedMatch(button) {
+  const panel = button.closest("[data-old-completed-order-panel]");
+  const selectedId = String(panel?.querySelector('input[name="old-completed-match"]:checked')?.value || oldCompletedOrderPanel?.selectedId || "");
+  const match = oldCompletedOrderPanel?.matches?.find((row) => String(row.id) === selectedId) || null;
+  if (match) oldCompletedOrderPanel.selectedId = selectedId;
+  return match;
+}
+
+function openOldCompletedExisting(button) {
+  const match = selectedOldCompletedMatch(button);
+  if (!match) return showWorkflowMessage("Select one exact existing Order first.", "error");
+  oldCompletedOrderPanel = null;
+  if (match.isLegacy) return openLegacyOrderEditor(match.id);
+  return openOrderInOrders(match.record, "Existing Order opened. No duplicate Legacy Order was created.");
+}
+
+function continueOldCompletedAsLegacy() {
+  if (!oldCompletedOrderPanel?.searched || oldCompletedOrderPanel.matches?.length) {
+    return showWorkflowMessage("Existing Order matches must be opened, not duplicated.", "error");
+  }
+  const orderNo = String(oldCompletedOrderPanel.orderNo || "").trim();
+  oldCompletedOrderPanel = null;
+  legacyOrderPanel = { orderId: "", prefill: { originalOrderNo: orderNo, installationStatus: "completed" } };
+  renderOrderTools();
 }
 
 function openCoveredOrderRecovery() {
@@ -6711,6 +6797,39 @@ export function eligibleSalespersonUsers(users = state.users) {
   }, []);
 }
 
+export function normalizeHistoricalOrderNumber(value) {
+  const compact = String(value || "").normalize("NFKC").trim().toUpperCase().replace(/[\s-]+/g, "");
+  return compact.startsWith("SO") ? compact.slice(2) : compact;
+}
+
+export function historicalOrderNumberMatches(orderNo, orders = state.orders) {
+  const normalized = normalizeHistoricalOrderNumber(orderNo);
+  if (!normalized) return [];
+  const seen = new Set();
+  return (Array.isArray(orders) ? orders : []).reduce((matches, order) => {
+    const id = String(order?.id || "").trim();
+    if (!id || seen.has(id)) return matches;
+    const candidates = isLegacyOrder(order)
+      ? [order.originalOrderNo]
+      : [order.orderNo, order.orderNumber, order.originalOrderNo, order.previousOrderNo];
+    if (!candidates.some((value) => normalizeHistoricalOrderNumber(value) === normalized)) return matches;
+    seen.add(id);
+    matches.push({
+      id,
+      orderNo: String((isLegacyOrder(order) ? order.originalOrderNo : getOrderDisplayNo(order)) || "").trim(),
+      customer: String(order.customer?.name || order.customerName || order.customer || "").trim(),
+      isLegacy: isLegacyOrder(order),
+      isArchived: !isActiveOrderRecord(order),
+      record: order
+    });
+    return matches;
+  }, []);
+}
+
+function completedInstallationDate(job = {}) {
+  return malaysiaCalendarDate(job.completedAt || job.completionDate || job.installationCompletedDate);
+}
+
 function legacyOrderValuesFromPanel(panel) {
   const value = (field) => String(panel?.querySelector(`[data-legacy-field="${field}"]`)?.value || "").trim();
   return {
@@ -6737,6 +6856,15 @@ async function saveLegacyOrderFromPanel(button) {
   if (!canManageLegacyOrders()) return showWorkflowMessage("Permission denied: your role cannot perform this action.", "error");
   const panel = button.closest("[data-legacy-order-panel]");
   const values = legacyOrderValuesFromPanel(panel);
+  const numberMatches = normalizeHistoricalOrderNumber(values.originalOrderNo)
+    ? historicalOrderNumberMatches(values.originalOrderNo, state.orders).filter((match) => match.id !== String(legacyOrderPanel?.orderId || ""))
+    : [];
+  if (numberMatches.length) {
+    oldCompletedOrderPanel = { orderNo: values.originalOrderNo, searched: true, matches: numberMatches, selectedId: numberMatches.length === 1 ? numberMatches[0].id : "" };
+    legacyOrderPanel = null;
+    renderOrderTools();
+    return showWorkflowMessage("Order already exists", "error");
+  }
   setOrderActionBusy(button, t("Saving..."));
   const result = await saveLegacyOrder(values, { orderId: legacyOrderPanel?.orderId || "" });
   if (result.ok) {
@@ -6754,6 +6882,11 @@ export function buildLegacyOrderPlan(values = {}, options = {}) {
   }
   const originalOrderDate = String(values.originalOrderDate || "").trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(originalOrderDate)) return { ok: false, message: "Original Order Date is required." };
+  const originalOrderNo = String(values.originalOrderNo || "").trim();
+  if (normalizeHistoricalOrderNumber(originalOrderNo)) {
+    const numberMatches = historicalOrderNumberMatches(originalOrderNo, state.orders).filter((match) => match.id !== orderId);
+    if (numberMatches.length) return { ok: false, code: "order-number-exists", matches: numberMatches, message: "Order already exists" };
+  }
   const commissionTreatment = String(values.commissionTreatment || "already_commissioned").trim();
   if (!["include", "already_commissioned"].includes(commissionTreatment)) return { ok: false, message: "Select a valid commission treatment." };
   const salespersonId = String(values.salespersonId || "").trim();
@@ -6780,7 +6913,7 @@ export function buildLegacyOrderPlan(values = {}, options = {}) {
     status: previous?.status || "legacy_record",
     isArchived: false,
     originalOrderDate,
-    originalOrderNo: String(values.originalOrderNo || "").trim(),
+    originalOrderNo,
     customerName: String(values.customerName || "").trim(),
     phone: String(values.phone || "").trim(),
     projectLocation: String(values.projectLocation || "").trim(),
@@ -7035,6 +7168,72 @@ export function monthlyCommissionSales(orders = [], monthValue = "", options = {
     rows,
     bySalesperson: [...salespersonGroups.values()],
     invalidTotals
+  };
+}
+
+function installedCompletionResolution(order = {}, installationJobs = []) {
+  if (isLegacyOrder(order)) {
+    return { date: malaysiaCalendarDate(order.installationCompletedDate), source: "legacy_manual" };
+  }
+  const orderId = String(order.id || "").trim();
+  const completedJobs = (Array.isArray(installationJobs) ? installationJobs : []).filter((job) => isActiveWorkflowRecord(job)
+    && String(job.orderId || "").trim() === orderId
+    && installationDispatchStage(job) === "completed");
+  if (completedJobs.length) {
+    const dated = completedJobs.map((job) => ({ id: String(job.id || "").trim(), date: completedInstallationDate(job) })).filter((row) => row.date);
+    const dates = [...new Set(dated.map((row) => row.date))];
+    if (dates.length === 1) return { date: dates[0], source: "installation", installationIds: dated.filter((row) => row.date === dates[0]).map((row) => row.id) };
+    return { date: "", source: "installation", ambiguous: dates.length > 1, installationIds: completedJobs.map((job) => String(job.id || "")).filter(Boolean) };
+  }
+  return { date: "", source: "installation" };
+}
+
+export function installedSalesForMonth(orders = [], installationJobs = [], monthValue = "") {
+  const selectedMonth = /^\d{4}-\d{2}$/.test(String(monthValue || "")) ? String(monthValue) : "";
+  const rows = [];
+  const invalidTotals = [];
+  const missingCompletionDates = [];
+  const ambiguousCompletionOrderIds = [];
+  uniqueActiveOrders(orders).forEach((order) => {
+    const orderId = String(order?.id || "").trim();
+    if (!orderId || !selectedMonth) return;
+    const completion = installedCompletionResolution(order, installationJobs);
+    if (completion.ambiguous) {
+      ambiguousCompletionOrderIds.push(orderId);
+      return;
+    }
+    if (!completion.date) {
+      missingCompletionDates.push(orderId);
+      return;
+    }
+    if (completion.date.slice(0, 7) !== selectedMonth) return;
+    const legacy = isLegacyOrder(order);
+    const orderTotal = legacy
+      ? normalizedFinalOrderTotal({ total: order.orderTotal })
+      : normalizedFinalOrderTotal(order);
+    if (orderTotal === null) {
+      invalidTotals.push(orderId);
+      return;
+    }
+    rows.push({
+      orderId,
+      orderNo: String(legacy ? order.originalOrderNo : getOrderDisplayNo(order)).trim(),
+      customer: String(order.customer?.name || order.customerName || order.customer || "").trim(),
+      installationCompletedDate: completion.date,
+      orderTotal,
+      source: legacy ? "legacy_manual" : "crm_order",
+      completionSource: completion.source,
+      installationIds: completion.installationIds || []
+    });
+  });
+  return {
+    month: selectedMonth,
+    total: roundMoneyValue(rows.reduce((sum, row) => sum + row.orderTotal, 0)),
+    recordCount: rows.length,
+    rows,
+    invalidTotals,
+    missingCompletionDates,
+    ambiguousCompletionOrderIds
   };
 }
 
