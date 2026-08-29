@@ -70,6 +70,7 @@ export function validateRedNoteSourceUrl(value) {
 const tiktokProvider = {
   platform: "tiktok",
   label: "TikTok",
+  validateSourceUrl: validateTikTokVideoUrl,
   capabilities: Object.freeze({ comments: true, pagination: true, stop: true }),
   async scan(request = {}) {
     const sourceUrl = validateTikTokVideoUrl(request.sourceUrl);
@@ -111,6 +112,7 @@ function createEndpointProvider({ platform, label, endpointKey, validateSourceUr
   return {
     platform,
     label,
+    validateSourceUrl,
     capabilities: Object.freeze({ comments: true, pagination: true, stop: true }),
     async scan(request = {}) {
       const sourceUrl = validateSourceUrl(request.sourceUrl);

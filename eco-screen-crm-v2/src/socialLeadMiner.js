@@ -31,6 +31,7 @@ const locationRules = [
 
 let filters = { query: "", platform: "", level: "", status: "", location: "", need: "" };
 let activeScanController = null;
+let scanMessage = "";
 
 export function renderSocialLeadMinerPage() {
   const leads = socialLeadRows();
@@ -60,33 +61,34 @@ export function renderSocialLeadMinerPage() {
           <label>${t("Platform")}<select id="socialPlatform"><option value="tiktok">TikTok</option><option value="facebook">Facebook</option><option value="rednote">${t("Xiaohongshu / RedNote")}</option></select></label>
           <label class="wide">${t("Post / Video URL")}<input id="socialSourceUrl" type="url" placeholder="${t("Paste a public post or video URL")}" /></label>
           <label>${t("Maximum Leads")}<select id="socialMaximumLeads"><option>50</option><option>100</option><option>200</option></select></label>
+          <label class="wide">${t("Paste Comments")}<textarea id="socialPastedComments" rows="7" placeholder="${t("One comment per line, for example: @username: berapa harga?")}"></textarea><small>${t("Copy only lawful public comments. Plain comments can be analysed; include a username or public profile URL when available.")}</small></label>
         </div>
         <details class="social-advanced">
           <summary>${t("Advanced Settings")}</summary>
           <div class="form-grid compact">
             <label>${t("Trigger Keywords")}<input id="socialTriggerKeywords" placeholder="berapa harga, interested" /></label>
             <label>${t("Exclude Keywords")}<input id="socialExcludeKeywords" placeholder="spam, giveaway" /></label>
+            <label class="wide social-confirmation"><input id="socialBrandInteraction" type="checkbox" /> ${t("These comments are direct interactions with my business account or the user consented to contact.")}</label>
           </div>
+          <section class="card social-import-card">
+            <div class="section-head">
+              <div><h3>${t("CSV Import (Optional)")}</h3><p class="muted-text">${t("Use this only when you already have a prepared CSV file.")}</p></div>
+              <button class="btn" id="socialTemplateButton" type="button">${t("Download Template")}</button>
+            </div>
+            <div class="form-grid compact">
+              <label>${t("Maximum Leads")}<select id="socialImportLimit"><option>50</option><option>100</option><option>200</option></select></label>
+              <label class="wide social-confirmation"><input id="socialLawfulConfirm" type="checkbox" /> ${t("I confirm that this CSV contains lawfully obtained public comments and no private sensitive data.")}</label>
+              <label class="wide">${t("Choose CSV File")}<input id="socialCsvFile" type="file" accept=".csv,text/csv" /></label>
+            </div>
+            <p id="socialImportStatus" class="muted-text"></p>
+          </section>
         </details>
         <div class="actions">
-          <button class="btn primary" id="socialStartScanButton" type="button">${t("Start Scan")}</button>
+          <button class="btn primary" id="socialStartScanButton" type="button">${t("Start Analysis")}</button>
           <button class="btn danger" id="socialStopScanButton" type="button" hidden>${t("Stop Scan")}</button>
           <span class="pill">TikTok · Facebook · ${t("RedNote")}</span>
         </div>
-        <p id="socialScanStatus" class="muted-text">${t("Direct platform scanning needs an approved connector. No mock comments will be returned. You can use the lawful CSV import below.")}</p>
-      </section>
-
-      <section class="card social-import-card">
-        <div class="section-head">
-          <div><h3>${t("Lawful CSV Import")}</h3><p class="muted-text">${t("Use one public post or video per CSV and set platform to tiktok, facebook or rednote. The file stays inside this CRM and is scored after import.")}</p></div>
-          <button class="btn" id="socialTemplateButton" type="button">${t("Download Template")}</button>
-        </div>
-        <div class="form-grid compact">
-          <label>${t("Maximum Leads")}<select id="socialImportLimit"><option>50</option><option>100</option><option>200</option></select></label>
-          <label class="wide social-confirmation"><input id="socialLawfulConfirm" type="checkbox" /> ${t("I confirm that this CSV contains lawfully obtained public comments and no private sensitive data.")}</label>
-          <label class="wide">${t("Choose CSV File")}<input id="socialCsvFile" type="file" accept=".csv,text/csv" /></label>
-        </div>
-        <p id="socialImportStatus" class="muted-text"></p>
+        <p id="socialScanStatus" class="muted-text">${escapeHtml(scanMessage || t("Paste comments above and click Start Analysis. If the box is empty, the system will try the approved platform connector."))}</p>
       </section>
 
       <section class="card social-filter-card">
@@ -165,6 +167,28 @@ export function ingestProviderComments(comments, options = {}) {
     leads.push(scoreSocialLead(candidate, options));
   }
   return { leads, duplicates, errors };
+}
+
+export function parsePastedSocialComments(text, options = {}) {
+  const records = pastedCommentRecords(text);
+  const comments = [];
+  const errors = [];
+  const platform = normalizeSocialPlatform(options.platform || "tiktok");
+  for (const [index, record] of records.entries()) {
+    const parsed = parsePastedRecord(record, index, platform);
+    if (!parsed.comment) {
+      errors.push(`Comment ${index + 1}: comment text is required.`);
+      continue;
+    }
+    comments.push({
+      ...parsed,
+      platform,
+      sourceUrl: options.sourceUrl,
+      contactEligibility: options.contactEligibility || "not_eligible"
+    });
+  }
+  const result = ingestProviderComments(comments, { ...options, platform, acquisitionSource: "manual_comment_paste" });
+  return { ...result, errors: [...errors, ...result.errors] };
 }
 
 export function scoreSocialLead(lead, options = {}) {
@@ -252,7 +276,7 @@ function normalizeProviderComment(row = {}, options = {}) {
     sourceAuthor: value("sourceAuthor", "source_author"),
     region: value("region"),
     contactEligibility: value("contactEligibility", "contact_eligibility") || "not_eligible",
-    acquisitionSource: "approved_social_provider",
+    acquisitionSource: options.acquisitionSource || "approved_social_provider",
     importedBy: state.currentUser?.userId || "",
     importedAt: new Date().toISOString()
   };
@@ -305,6 +329,29 @@ async function startDirectScan(renderShell) {
     const maximum = document.querySelector("#socialMaximumLeads")?.value || 50;
     const triggerKeywords = document.querySelector("#socialTriggerKeywords")?.value || "";
     const excludeKeywords = document.querySelector("#socialExcludeKeywords")?.value || "";
+    const pastedComments = document.querySelector("#socialPastedComments")?.value || "";
+    const contactEligibility = document.querySelector("#socialBrandInteraction")?.checked ? "direct_brand_interaction" : "not_eligible";
+    if (pastedComments.trim()) {
+      const validatedSourceUrl = provider.validateSourceUrl?.(sourceUrl) || "";
+      if (!validatedSourceUrl) throw new Error(t("Enter a valid public post or video URL for the selected platform."));
+      const imported = parsePastedSocialComments(pastedComments, {
+        platform,
+        sourceUrl: validatedSourceUrl,
+        maximum,
+        triggerKeywords,
+        excludeKeywords,
+        contactEligibility,
+        existing: socialLeadRows()
+      });
+      state.socialLeads = [...imported.leads, ...socialLeadRows()];
+      state.socialLeadDuplicateCount = Number(state.socialLeadDuplicateCount || 0) + imported.duplicates;
+      await persistSocialLeads();
+      const qualifiedCount = imported.leads.filter((lead) => activeLevels.has(lead.intentLevel)).length;
+      const queueNote = qualifiedCount && contactEligibility === "not_eligible" ? ` ${t("To enable Contact Queue, open Advanced Settings and confirm contact eligibility.")}` : "";
+      scanMessage = `${t("Analysed")}: ${imported.leads.length}. ${t("Qualified Leads")}: ${qualifiedCount}. ${t("Duplicates")}: ${imported.duplicates}.${queueNote}`;
+      renderShell();
+      return;
+    }
     const result = await provider.scan({
       sourceUrl,
       maximum,
@@ -323,10 +370,11 @@ async function startDirectScan(renderShell) {
     state.socialLeads = [...imported.leads, ...socialLeadRows()];
     state.socialLeadDuplicateCount = Number(state.socialLeadDuplicateCount || 0) + imported.duplicates;
     await persistSocialLeads();
-    if (status) status.textContent = `${t("Comments Found")}: ${result.comments.length}. ${t("Qualified Leads")}: ${imported.leads.filter((lead) => activeLevels.has(lead.intentLevel)).length}.`;
+    scanMessage = `${t("Comments Found")}: ${result.comments.length}. ${t("Qualified Leads")}: ${imported.leads.filter((lead) => activeLevels.has(lead.intentLevel)).length}.`;
     renderShell();
   } catch (error) {
-    if (status) status.textContent = t(error?.message || "Social provider could not be reached.");
+    scanMessage = t(error?.message || "Social provider could not be reached.");
+    if (status) status.textContent = scanMessage;
   } finally {
     activeScanController = null;
     if (startButton) startButton.disabled = false;
@@ -451,6 +499,49 @@ function parseCsv(text) {
   if (matrix.length < 2) return [];
   const headers = matrix[0].map((value) => normalize(value).replace(/\s+/g, "_"));
   return matrix.slice(1).map((values) => Object.fromEntries(headers.map((header, index) => [header, values[index] || ""])));
+}
+
+function pastedCommentRecords(text) {
+  const normalized = String(text || "").replace(/\r\n?/g, "\n").trim();
+  if (!normalized) return [];
+  const blocks = normalized.split(/\n\s*\n+/).map((value) => value.trim()).filter(Boolean);
+  if (blocks.length > 1) return blocks;
+  return normalized.split("\n").map((value) => value.trim()).filter(Boolean);
+}
+
+function parsePastedRecord(record, index, platform) {
+  const lines = String(record || "").split("\n").map((value) => value.trim()).filter(Boolean);
+  const joined = lines.join(" ");
+  const pipeParts = joined.split("|").map((value) => value.trim());
+  let profileUrl = "";
+  let username = "";
+  let displayName = "";
+  let comment = "";
+  if (pipeParts.length >= 3 && safePublicUrl(pipeParts[0])) {
+    profileUrl = safePublicUrl(pipeParts.shift());
+    username = String(pipeParts.shift() || "").replace(/^@/, "");
+    comment = pipeParts.join(" | ");
+  } else if (pipeParts.length >= 2) {
+    username = String(pipeParts.shift() || "").replace(/^@/, "");
+    comment = pipeParts.join(" | ");
+  } else if (lines.length >= 2) {
+    username = lines.shift().replace(/^@/, "");
+    comment = lines.join(" ");
+  } else {
+    const match = joined.match(/^@?([^:：]{1,80})\s*[:：]\s*(.+)$/);
+    if (match) {
+      username = match[1].trim();
+      comment = match[2].trim();
+    } else {
+      username = `comment-${index + 1}`;
+      comment = joined;
+    }
+  }
+  displayName = username.startsWith("comment-") ? "Public commenter" : username;
+  if (!profileUrl && platform === "tiktok" && !username.startsWith("comment-") && /^[a-z0-9._-]+$/i.test(username)) {
+    profileUrl = `https://www.tiktok.com/@${username}`;
+  }
+  return { username, displayName, profileUrl, comment, commentedAt: "", region: "" };
 }
 
 function leadStats(leads) {

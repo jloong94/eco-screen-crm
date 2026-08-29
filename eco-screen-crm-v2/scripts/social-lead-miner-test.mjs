@@ -23,6 +23,7 @@ globalThis.window = globalThis;
 const {
   canQueueSocialLead,
   ingestProviderComments,
+  parsePastedSocialComments,
   parseSocialLeadCsv,
   scoreSocialLead
 } = await import("../src/socialLeadMiner.js");
@@ -99,6 +100,22 @@ assert(multiPlatform.errors.length === 0 && multiPlatform.leads.length === 2, "F
 assert(multiPlatform.leads.some((lead) => lead.platform === "facebook"), "Facebook leads must preserve their canonical platform");
 assert(multiPlatform.leads.some((lead) => lead.platform === "rednote"), "Xiaohongshu aliases must normalize to RedNote");
 assert(multiPlatform.leads.find((lead) => lead.platform === "rednote")?.intentLevel === "HOT", "Chinese installation enquiries must receive buying-intent scoring");
+
+const pasted = parsePastedSocialComments([
+  "@amin: berapa harga sliding door area BM?",
+  "mei | Batu Kawan 可以安装防蚊纱窗吗？",
+  "nice sharing"
+].join("\n"), {
+  platform: "tiktok",
+  sourceUrl: "https://www.tiktok.com/@brand/video/7591511969182649621",
+  maximum: 50,
+  contactEligibility: "direct_brand_interaction"
+});
+assert(pasted.leads.length === 3 && pasted.errors.length === 0, "Pasted comments must be split and analysed without CSV");
+assert(pasted.leads.find((lead) => lead.username === "amin")?.intentLevel === "HOT", "Pasted Malay buying enquiries must score HOT");
+assert(pasted.leads.find((lead) => lead.username === "mei")?.intentLevel === "HOT", "Pasted Chinese buying enquiries must score HOT");
+assert(pasted.leads.find((lead) => lead.username === "amin")?.profileUrl === "https://www.tiktok.com/@amin", "TikTok usernames must produce a public profile URL");
+assert(pasted.leads.find((lead) => lead.username === "comment-3")?.intentLevel === "NOT_LEAD", "Plain comments must remain analysable without inventing a real username");
 
 const providerImport = ingestProviderComments([
   { username: "siti", displayName: "Siti", profileUrl: "https://www.tiktok.com/@siti", comment: "price please roller screen Penang", commentedAt: "2026-08-25T12:00:00+08:00" },
