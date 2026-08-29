@@ -1,11 +1,16 @@
 :root {
-  --bg: #f7faf9;
+  --bg: #eef4f1;
   --card: #ffffff;
-  --ink: #10201b;
-  --muted: #66756f;
-  --line: #dfe8e4;
-  --soft: #eef6f3;
-  --brand: #047857;
+  --ink: #15352d;
+  --muted: #667a72;
+  --line: #d4e2dc;
+  --soft: #f1f7f4;
+  --brand: #0b6b50;
+  --brand-deep: #0b3d32;
+  --brand-bright: #16856a;
+  --accent: #c3a45d;
+  --accent-soft: #f7f0df;
+  --accent-strong: #8a6a26;
   --danger: #b91c1c;
 }
 
@@ -13,7 +18,10 @@
 [hidden] { display: none !important; }
 body {
   margin: 0;
-  background: var(--bg);
+  background:
+    radial-gradient(circle at 8% 0%, rgba(22, 133, 106, .10), transparent 30rem),
+    radial-gradient(circle at 94% 18%, rgba(195, 164, 93, .10), transparent 24rem),
+    var(--bg);
   color: var(--ink);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   overflow-x: hidden;
@@ -29,9 +37,17 @@ button { cursor: pointer; }
   justify-content: space-between;
   gap: 16px;
   padding: 14px 18px;
-  border-bottom: 1px solid var(--line);
-  background: rgba(255, 255, 255, .96);
+  border-bottom: 1px solid rgba(255, 255, 255, .13);
+  background: linear-gradient(118deg, #082f28 0%, var(--brand-deep) 55%, #0f604c 100%);
+  color: white;
+  box-shadow: 0 12px 32px rgba(8, 47, 40, .18);
 }
+.topbar .brand p,
+.topbar .eyebrow,
+.topbar .version-label { color: #cce7dd; }
+.topbar .pill { background: rgba(255, 255, 255, .12); color: #f8fbfa; border-color: rgba(255, 255, 255, .18); }
+.topbar .btn { background: rgba(255, 255, 255, .10); color: white; border-color: rgba(255, 255, 255, .24); }
+.topbar .btn:hover { background: rgba(255, 255, 255, .18); }
 .brand { display: flex; align-items: center; gap: 12px; }
 .brand p, .eyebrow { margin: 0; color: var(--muted); font-size: 12px; font-weight: 800; text-transform: uppercase; }
 h1, h2, h3, p { margin: 0; }
@@ -51,8 +67,9 @@ h3 { font-size: 17px; }
   display: grid;
   place-items: center;
   border-radius: 10px;
-  background: var(--brand);
-  color: white;
+  background: linear-gradient(145deg, #e1cc91, var(--accent));
+  color: var(--brand-deep);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .18);
   font-weight: 900;
 }
 .role-selector, .actions, .user-toolbar { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -96,9 +113,11 @@ h3 { font-size: 17px; }
   color: var(--ink);
   padding: 0 12px;
   font-weight: 800;
+  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease, background .18s ease;
 }
+.role-btn:hover, .btn:hover { transform: translateY(-1px); border-color: #a9c7bc; box-shadow: 0 7px 18px rgba(11, 61, 50, .10); }
 .role-btn.active, .btn.primary {
-  background: var(--brand);
+  background: linear-gradient(135deg, var(--brand), var(--brand-bright));
   border-color: var(--brand);
   color: white;
 }
@@ -110,7 +129,8 @@ h3 { font-size: 17px; }
   gap: 8px;
   overflow-x: auto;
   border-bottom: 1px solid var(--line);
-  background: rgba(247, 250, 249, .96);
+  background: rgba(238, 244, 241, .90);
+  backdrop-filter: blur(14px);
   padding: 10px 18px;
 }
 .module-tab {
@@ -122,11 +142,13 @@ h3 { font-size: 17px; }
   color: var(--ink);
   padding: 0 14px;
   font-weight: 900;
+  box-shadow: 0 4px 12px rgba(11, 61, 50, .05);
 }
 .module-tab.active {
-  background: var(--ink);
-  border-color: var(--ink);
+  background: linear-gradient(135deg, var(--brand-deep), var(--brand));
+  border-color: var(--brand-deep);
   color: white;
+  box-shadow: 0 8px 20px rgba(11, 61, 50, .20), inset 0 -2px 0 rgba(195, 164, 93, .65);
 }
 .btn.danger { color: var(--danger); border-color: #fecaca; }
 .layout {
@@ -162,9 +184,14 @@ h3 { font-size: 17px; }
 .metric-card {
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: var(--soft);
+  background: linear-gradient(145deg, #ffffff 0%, #eef8f4 100%);
   padding: 16px;
+  box-shadow: 0 10px 25px rgba(11, 61, 50, .07);
 }
+.dashboard-grid .metric-card:nth-child(3n + 2),
+.monthly-summary-grid .metric-card:nth-child(3n + 2) { background: linear-gradient(145deg, #ffffff 0%, var(--accent-soft) 100%); }
+.dashboard-grid .metric-card:nth-child(3n),
+.monthly-summary-grid .metric-card:nth-child(3n) { background: linear-gradient(145deg, #ffffff 0%, #edf3fb 100%); }
 .metric-card span {
   display: block;
   color: var(--muted);
@@ -181,7 +208,7 @@ h3 { font-size: 17px; }
   border: 1px solid var(--line);
   border-radius: 14px;
   background: var(--card);
-  box-shadow: 0 16px 40px rgba(16, 32, 27, .06);
+  box-shadow: 0 18px 44px rgba(11, 61, 50, .08);
   padding: 16px;
   min-width: 0;
 }
@@ -241,6 +268,7 @@ input:focus, select:focus, textarea:focus {
   padding: 0 10px;
   font-size: 12px;
   font-weight: 900;
+  border: 1px solid rgba(11, 107, 80, .12);
 }
 .pill.muted { color: var(--muted); }
 .pill[data-type="success"] { background: #dcfce7; color: #166534; }
@@ -250,8 +278,9 @@ input:focus, select:focus, textarea:focus {
 .item-card, .card {
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: var(--soft);
+  background: linear-gradient(145deg, #ffffff 0%, #f2f8f5 100%);
   padding: 12px;
+  box-shadow: 0 8px 20px rgba(11, 61, 50, .05);
 }
 .item-head strong { display: block; }
 .muted-text { color: var(--muted); font-size: 13px; margin-top: 8px; }
@@ -768,8 +797,11 @@ input:focus, select:focus, textarea:focus {
 }
 .progress-summary-card.active {
   border-color: var(--brand);
-  box-shadow: 0 0 0 3px rgba(22, 163, 74, .14);
+  background: linear-gradient(135deg, var(--brand-deep), var(--brand));
+  color: white;
+  box-shadow: 0 0 0 3px rgba(11, 107, 80, .14), 0 10px 24px rgba(11, 61, 50, .18);
 }
+.progress-summary-card.active span { color: #d9eee7; }
 .legacy-order-panel {
   border-top: 1px solid var(--line);
   padding-top: 14px;
@@ -835,8 +867,34 @@ input:focus, select:focus, textarea:focus {
   align-items: center;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: white;
+  background: linear-gradient(145deg, #ffffff 0%, #f7fbf9 100%);
   padding: 10px;
+  box-shadow: 0 7px 18px rgba(11, 61, 50, .045);
+}
+.order-financial-summary {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 4px;
+  border: 1px solid #d5e5df;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #edf8f4, #fbf7ec);
+  padding: 10px;
+}
+.order-financial-summary span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.order-financial-summary strong {
+  color: var(--brand-deep);
+  font-size: 16px;
+  white-space: nowrap;
 }
 .compact-order-row > div {
   display: grid;
@@ -1533,7 +1591,7 @@ input:focus, select:focus, textarea:focus {
     padding: 8px;
     border-top: 1px solid var(--line);
     border-bottom: 0;
-    background: rgba(255, 255, 255, .98);
+    background: rgba(244, 248, 246, .98);
     box-shadow: 0 -12px 30px rgba(16, 32, 27, .12);
   }
   .module-tab {
@@ -1685,6 +1743,7 @@ input:focus, select:focus, textarea:focus {
   .installer-installation-search .actions .btn { flex: 1 1 140px; }
   .installation-issue-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .installation-assigned-summary { grid-template-columns: 1fr; }
+  .order-financial-summary { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 430px) {

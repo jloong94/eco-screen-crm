@@ -1300,6 +1300,7 @@ function renderCompactOrderRow(order) {
       <div><span>${order.customer?.area || "-"}</span><span>${order.installationDate || installationJob?.installationDate || "-"}</span></div>
       <div><span>${t("Production")}: ${statusLabel(getOrderProductionStatus(order, productionJob))}</span><span>${t("Installation")}: ${statusLabel(getOrderInstallationStatus(order, installationJob))}</span></div>
       <div><span>${t("Remaining Balance")}: ${money(getRemainingBalance(order, installationJob))}</span><span>${t("Updated")}: ${formatShortDate(order.updatedAt || order.createdAt)}</span></div>
+      ${orderFinancialSummaryHtml(order, installationJob)}
       ${orderActionsHtml(order)}
       ${editingOrderId === order.id && orderEditorDraft ? orderItemEditorHtml(orderEditorDraft) : ""}
     </article>
@@ -1820,6 +1821,7 @@ function renderOrderProgressCard(order) {
         <span>${t("Balance")}: ${money(getOrderBalance(order))}</span>
         <span>${t("Updated")}: ${formatShortDate(order.updatedAt || order.createdAt)}</span>
       </div>
+      ${orderFinancialSummaryHtml(order, installationJob)}
       ${orderActionsHtml(order)}
     </article>
   `;
@@ -2560,6 +2562,18 @@ function getRemainingBalance(order, installationJob = getOrderInstallationJob(or
   return Math.max(0, baseBalance - collected);
 }
 
+function orderFinancialSummaryHtml(order, installationJob = null) {
+  if (!order?.id) return "";
+  const paymentSummary = getOrderPaymentSummary(order);
+  const finalTotal = normalizedFinalOrderTotal(order) ?? paymentSummary.total;
+  const balance = getRemainingBalance(order, installationJob || getOrderInstallationJob(order));
+  return `<div class="order-financial-summary" aria-label="${t("Order Total")}">
+    <span>${t("Order Total")}<strong>${money(finalTotal)}</strong></span>
+    <span>${t("Paid / Deposit")}<strong>${money(paymentSummary.totalPaid)}</strong></span>
+    <span>${t("Remaining Balance")}<strong>${money(balance)}</strong></span>
+  </div>`;
+}
+
 function getOrderWorkflowStage(order) {
   const productionJob = getOrderProductionJob(order);
   const installationJob = getOrderInstallationJob(order);
@@ -2641,6 +2655,7 @@ function renderProductionJobs() {
         </div>
         <span class="pill">${statusLabel(job.status)}</span>
       </div>
+      ${orderFinancialSummaryHtml(order)}
       ${!order && isBossOrAdmin() ? `<p class="warning-text"><strong>${t("Linked Order record is missing.")}</strong> ${t("Production Job ID")}: ${escapeHtml(job.id || "-")}. ${t("Repair the order relationship before production.")}</p>` : ""}
       <label>${t("Production Status")}<select data-production-id="${job.id}" data-production-field="status" ${canEditProduction() && !isArchivedProductionJob(job) ? "" : "disabled"}>${isArchivedProductionJob(job) ? `<option selected value="duplicate_archived">${statusLabel("duplicate_archived")}</option>` : productionStatuses.map((status) => `<option value="${status}" ${normalizeProductionStatus(job.status, true) === status ? "selected" : ""}>${statusLabel(status)}</option>`).join("")}</select></label>
       <label>${t("Production Remark")}<textarea rows="2" data-production-id="${job.id}" data-production-field="remark" ${canEditProduction() && !isArchivedProductionJob(job) ? "" : "readonly"}>${job.remark || ""}</textarea></label>
@@ -3647,6 +3662,7 @@ function installationJobCardHtml(job) {
         </div>
         <div><span class="pill">${t(installationDispatchLabel(job))}</span><span class="pill">${money(getRemainingBalance(findOrder(job.orderId) || {}, job))} ${t("Remaining Balance")}</span></div>
       </div>
+      ${orderFinancialSummaryHtml(details.order, job)}
       ${canScheduleInstallation() ? installationArrangementHtml(job, stage) : installationAssignedSummaryHtml(job)}
       ${itemsSummary(job.items)}
       ${completionSummaryHtml(job)}
@@ -3864,7 +3880,7 @@ function itemsSummary(items = []) {
   return `<div class="mini-table">${items.map((item) => `
     <div>
       <strong>${item.productName}</strong>
-      <span>${item.width || 0} x ${item.height || 0} | ${t("Quantity")} ${item.quantity || 0} | ${t("Color")}: ${colorLabel(item.color)} | ${t("Install Type / Inside Outside")}: ${t(item.installType || "-")} | ${t("Installation Location")}: ${item.installationLocation || "-"} | ${t("Opening Direction")}: ${openingDirectionLabel(item.openingDirection)} | ${t("Track Size")}: ${item.trackSize || "-"} | ${t("Handle Height")}: ${item.handleHeight || "-"} | ${t("Track Type")}: ${t(item.trackType || item.trackOpening || "-")} | ${t("Mesh / Net Type")}: ${t(meshValue(item) || "-")} | ${t("Powdercoat / Powercoat")}: ${item.powdercoat ? `${t("Yes")} ${money(powdercoatAmount(item))}` : t("No")} | ${item.remark || "-"}</span>
+      <span>${item.width || 0} x ${item.height || 0} | ${t("Quantity")} ${item.quantity || 0} | ${t("Unit Price")}: ${money(item.unitPrice)} | ${t("Line Total")}: ${money(lineTotal(item))} | ${t("Color")}: ${colorLabel(item.color)} | ${t("Install Type / Inside Outside")}: ${t(item.installType || "-")} | ${t("Installation Location")}: ${item.installationLocation || "-"} | ${t("Opening Direction")}: ${openingDirectionLabel(item.openingDirection)} | ${t("Track Size")}: ${item.trackSize || "-"} | ${t("Handle Height")}: ${item.handleHeight || "-"} | ${t("Track Type")}: ${t(item.trackType || item.trackOpening || "-")} | ${t("Mesh / Net Type")}: ${t(meshValue(item) || "-")} | ${t("Powdercoat / Powercoat")}: ${item.powdercoat ? `${t("Yes")} ${money(powdercoatAmount(item))}` : t("No")} | ${item.remark || "-"}</span>
     </div>
   `).join("")}</div>`;
 }
@@ -9632,6 +9648,7 @@ function viewProductionJob(id) {
     <p><strong>${t("Installation Date")}:</strong> ${escapeHtml(job.installationDate || "-")}</p>
     <p><strong>${t("Production Status")}:</strong> ${statusLabel(job.status)}</p>
     <p><strong>${t("Production Remark")}:</strong> ${escapeHtml(job.remark || "-")}</p>
+    ${orderFinancialSummaryHtml(order)}
     ${itemsSummary(job.items || [])}
     ${isBossOrAdmin() ? `<details class="internal-details"><summary>${t("Internal Details")}</summary><p>${t("Production Job ID")}: ${escapeHtml(job.id || "-")}</p><p>${t("ESP reference")}: ${escapeHtml(job.productionNumber || "-")}</p></details>` : ""}
   `;
