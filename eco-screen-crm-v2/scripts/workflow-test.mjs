@@ -29,6 +29,7 @@ const {
   nextQuoteNumber,
   state
 } = await import("../src/state.js");
+state.language = "en";
 const { runtimeEnv } = await import("../src/env.js");
 const { mergeRows, safeSyncWithCloud } = await import("../src/cloudSync.js");
 const { lineTotal } = await import("../src/calculations.js");

@@ -16,7 +16,7 @@ const currentUserId = localStorage.getItem(storageKeys.currentUserId) || "";
 const currentUser = users.find((user) => user.userId === currentUserId && user.active !== false) || null;
 
 export const state = {
-  language: localStorage.getItem(storageKeys.language) || "en",
+  language: localStorage.getItem(storageKeys.language) || "zh",
   users,
   currentUser,
   role: currentUser?.role || localStorage.getItem(storageKeys.role) || "",

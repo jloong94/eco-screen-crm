@@ -57,6 +57,10 @@ export function renderSocialLeadMinerPage() {
       </div>
 
       <section class="card social-scan-card">
+        <div class="social-simple-notice">
+          <strong>${t("How to find customers")}</strong>
+          <span>${t("A link alone cannot provide comments. Paste the public comments below, then click Start Analysis.")}</span>
+        </div>
         <div class="form-grid compact">
           <label>${t("Platform")}<select id="socialPlatform"><option value="tiktok">TikTok</option><option value="facebook">Facebook</option><option value="rednote">${t("Xiaohongshu / RedNote")}</option></select></label>
           <label class="wide">${t("Post / Video URL")}<input id="socialSourceUrl" type="url" placeholder="${t("Paste a public post or video URL")}" /></label>
@@ -91,11 +95,19 @@ export function renderSocialLeadMinerPage() {
         <p id="socialScanStatus" class="muted-text">${escapeHtml(scanMessage || t("Paste comments above and click Start Analysis. If the box is empty, the system will try the approved platform connector."))}</p>
       </section>
 
+      <section class="card social-result-guide">
+        <strong>${t("Results Guide")}</strong>
+        <span><b>${t("HOT / High Intent")}</b> — ${t("Asked about price, installation or service area.")}</span>
+        <span><b>${t("WARM / Interested")}</b> — ${t("Interested in the product but has not asked to buy yet.")}</span>
+        <span><b>${t("COLD / Low Intent")}</b> — ${t("Related comment with weak buying intent.")}</span>
+        <span><b>${t("Not a Lead")}</b> — ${t("General comment or excluded content.")}</span>
+      </section>
+
       <section class="card social-filter-card">
         <div class="form-grid compact social-filters">
           <label>${t("Search")}<input id="socialFilterQuery" value="${escapeHtml(filters.query)}" placeholder="${t("User or comment")}" /></label>
           <label>${t("Platform")}<select id="socialFilterPlatform"><option value="">${t("All Platforms")}</option>${option("tiktok", filters.platform, "TikTok")}${option("facebook", filters.platform, "Facebook")}${option("rednote", filters.platform, t("RedNote"))}</select></label>
-          <label>${t("Intent Level")}<select id="socialFilterLevel"><option value="">${t("All")}</option>${option("HOT", filters.level)}${option("WARM", filters.level)}${option("COLD", filters.level)}${option("NOT_LEAD", filters.level)}</select></label>
+          <label>${t("Intent Level")}<select id="socialFilterLevel"><option value="">${t("All")}</option>${option("HOT", filters.level, t("HOT / High Intent"))}${option("WARM", filters.level, t("WARM / Interested"))}${option("COLD", filters.level, t("COLD / Low Intent"))}${option("NOT_LEAD", filters.level, t("Not a Lead"))}</select></label>
           <label>${t("Status")}<select id="socialFilterStatus"><option value="">${t("All")}</option>${["New", "Queued", "Contacted", "Rejected"].map((value) => option(value, filters.status, t(value))).join("")}</select></label>
           <label>${t("Location")}<input id="socialFilterLocation" value="${escapeHtml(filters.location)}" /></label>
           <label>${t("Need")}<input id="socialFilterNeed" value="${escapeHtml(filters.need)}" /></label>
@@ -293,11 +305,11 @@ function socialLeadResultsHtml() {
 function leadRowHtml(lead) {
   const canQueue = canQueueSocialLead(lead) && lead.status === "New";
   return `<tr>
-    <td><strong>${Number(lead.intentScore || 0)}</strong><span class="pill intent-${String(lead.intentLevel || "").toLowerCase()}">${escapeHtml(lead.intentLevel || "-")}</span></td>
+    <td><strong>${Number(lead.intentScore || 0)}</strong><span class="pill intent-${String(lead.intentLevel || "").toLowerCase()}">${escapeHtml(intentLevelLabel(lead.intentLevel))}</span></td>
     <td><strong>${escapeHtml(lead.displayName || lead.username)}</strong><small>@${escapeHtml(lead.username)}</small></td>
-    <td><p>${escapeHtml(lead.comment)}</p><small>${escapeHtml(lead.intentReason)}</small></td>
-    <td>${escapeHtml(lead.estimatedLocation || "-")}</td>
-    <td>${escapeHtml(lead.estimatedNeed || "-")}</td>
+    <td><p>${escapeHtml(lead.comment)}</p><small>${escapeHtml(intentReasonLabel(lead.intentReason))}</small></td>
+    <td>${escapeHtml(locationLabel(lead.estimatedLocation))}</td>
+    <td>${escapeHtml(needLabel(lead.estimatedNeed))}</td>
     <td><a href="${escapeHtml(lead.sourceUrl)}" target="_blank" rel="noreferrer">${t("View Source")}</a><small>${escapeHtml(platformLabel(lead.platform))}${lead.sourceAuthor ? ` · ${escapeHtml(lead.sourceAuthor)}` : ""}</small></td>
     <td>${escapeHtml(formatDate(lead.commentedAt || lead.importedAt))}</td>
     <td><span class="pill">${t(lead.status || "New")}</span><small>${escapeHtml(contactEligibilityLabel(lead.contactEligibility))}</small></td>
@@ -568,6 +580,18 @@ function csvCell(value) { const text = String(value ?? ""); return /[",\r\n]/.te
 function escapeHtml(value) { return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[char]); }
 function contactEligibilityLabel(value) { return ({ direct_brand_interaction: t("Direct brand interaction"), user_consented: t("User consented"), not_eligible: t("Not eligible for contact") })[value] || t("Not eligible for contact"); }
 function platformLabel(value) { return ({ tiktok: "TikTok", facebook: "Facebook", rednote: t("Xiaohongshu / RedNote") })[normalizeSocialPlatform(value)] || value || "-"; }
+function intentLevelLabel(value) { return ({ HOT: t("HOT / High Intent"), WARM: t("WARM / Interested"), COLD: t("COLD / Low Intent"), NOT_LEAD: t("Not a Lead") })[value] || value || "-"; }
+function needLabel(value) { return ({ "Sliding Screen": t("Sliding Screen"), "Roller Screen": t("Roller Screen"), "Security Screen / Door": t("Security Screen / Door"), "Mosquito Screen": t("Mosquito Screen"), "Window Screen": t("Window Screen"), "Eco Screen enquiry": t("Eco Screen enquiry") })[value] || value || "-"; }
+function locationLabel(value) { return !value || value === "Not stated" ? t("Not stated") : value; }
+function intentReasonLabel(value) {
+  const reason = String(value || "");
+  if (state.language !== "zh") return reason;
+  if (reason.startsWith("Explicit buying-intent phrase:")) return `发现明确购买词：${reason.replace("Explicit buying-intent phrase:", "").replace(/\.$/, "").trim()}`;
+  if (reason.startsWith("Product or problem interest detected:")) return `发现产品或问题需求：${reason.replace("Product or problem interest detected:", "").replace(/\.$/, "").trim()}`;
+  if (reason === "Excluded by administrator keyword.") return "已被排除关键词过滤。";
+  if (reason === "No strong buying-intent phrase detected.") return "未发现明确购买意向。";
+  return reason;
+}
 function outreachMessages({ need, location }) {
   const area = location && location !== "Not stated" ? ` in ${location}` : "";
   return {
