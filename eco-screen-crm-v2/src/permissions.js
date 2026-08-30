@@ -9,6 +9,7 @@ export const pageDefinitions = [
   { id: "installation", label: "Installation", title: "Installation Jobs" },
   { id: "scheduling", label: "Scheduling", title: "Scheduling" },
   { id: "warranty", label: "Warranty", title: "Warranty" },
+  { id: "social-lead-miner", label: "Social Lead Miner", title: "Social Lead Miner" },
   { id: "products", label: "Product Management / Settings", title: "Product Management" },
   { id: "users", label: "Staff Management", title: "Staff Management" }
 ];

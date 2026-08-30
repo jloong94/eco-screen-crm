@@ -29,6 +29,8 @@ export const state = {
   productionJobs: loadJson(storageKeys.productionJobs, []),
   installationJobs: loadJson(storageKeys.installationJobs, []),
   warrantyCards: loadJson(storageKeys.warrantyCards, []),
+  socialLeads: loadJson(storageKeys.socialLeads, []),
+  socialLeadDuplicateCount: Number(localStorage.getItem(storageKeys.socialLeadDuplicateCount) || 0),
   companySettings: normalizeCompanySettings(loadJson(storageKeys.companySettings, defaultCompanySettings)),
   cloud: {
     status: isCloudConfigured() ? "Syncing..." : "Local Mode",
@@ -197,6 +199,12 @@ export function persistInstallationJobs() {
 export function persistWarrantyCards() {
   saveJson(storageKeys.warrantyCards, state.warrantyCards);
   return syncCollectionNow("warrantyCards");
+}
+
+export function persistSocialLeads() {
+  saveJson(storageKeys.socialLeads, state.socialLeads);
+  localStorage.setItem(storageKeys.socialLeadDuplicateCount, String(Number(state.socialLeadDuplicateCount || 0)));
+  return syncCollectionNow("socialLeads");
 }
 
 export function persistUsers() {
@@ -372,6 +380,7 @@ export function stateSnapshot() {
     productionJobs: state.productionJobs,
     installationJobs: state.installationJobs,
     warrantyCards: state.warrantyCards,
+    socialLeads: state.socialLeads,
     companySettings: [state.companySettings]
   };
 }
@@ -386,6 +395,7 @@ export function applyCloudSnapshot(snapshot = {}) {
   applyCollection("productionJobs", snapshot.productionJobs);
   applyCollection("installationJobs", snapshot.installationJobs);
   applyCollection("warrantyCards", snapshot.warrantyCards);
+  applyCollection("socialLeads", snapshot.socialLeads);
   applyCompanySettings(snapshot.companySettings);
 }
 
@@ -399,6 +409,7 @@ export function replaceStateFromBackup(snapshot = {}) {
   state.productionJobs = Array.isArray(snapshot.productionJobs) ? snapshot.productionJobs : [];
   state.installationJobs = Array.isArray(snapshot.installationJobs) ? snapshot.installationJobs : [];
   state.warrantyCards = Array.isArray(snapshot.warrantyCards) ? snapshot.warrantyCards : [];
+  state.socialLeads = Array.isArray(snapshot.socialLeads) ? snapshot.socialLeads : [];
   state.companySettings = normalizeCompanySettings(Array.isArray(snapshot.companySettings) ? snapshot.companySettings[0] : snapshot.companySettings);
   persistLocalSnapshot();
 }
@@ -522,6 +533,8 @@ function persistLocalSnapshot() {
   saveJson(storageKeys.productionJobs, state.productionJobs);
   saveJson(storageKeys.installationJobs, state.installationJobs);
   saveJson(storageKeys.warrantyCards, state.warrantyCards);
+  saveJson(storageKeys.socialLeads, state.socialLeads);
+  localStorage.setItem(storageKeys.socialLeadDuplicateCount, String(Number(state.socialLeadDuplicateCount || 0)));
   saveJson(storageKeys.companySettings, state.companySettings);
 }
 
