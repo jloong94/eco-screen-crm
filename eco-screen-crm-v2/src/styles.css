@@ -1544,6 +1544,19 @@ input:focus, select:focus, textarea:focus {
 .social-empty {
   margin-bottom: 16px;
 }
+.meta-page-connect {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  border: 1px solid #bbd8cd;
+  border-radius: 12px;
+  background: #f3faf7;
+  padding: 12px;
+}
+.meta-page-connect div { display: grid; gap: 4px; }
+.meta-page-connect span { color: var(--muted); font-size: 13px; }
 
 .social-simple-notice {
   display: grid;
@@ -1863,6 +1876,7 @@ input:focus, select:focus, textarea:focus {
   .btn, .role-btn, input, select { min-height: 48px; }
   h2 { font-size: 18px; }
   h3 { font-size: 16px; }
+  .meta-page-connect { align-items: stretch; flex-direction: column; }
 }
 
 @media (max-width: 360px) {

@@ -26,6 +26,7 @@ async function listFiles(dir) {
 }
 
 const sourceFiles = await listFiles("src");
+sourceFiles.push(...await listFiles("api"));
 for (const file of sourceFiles) {
   const text = await readFile(file, "utf8");
   if (/\bdebugger\b|TODO|FIXME/.test(text)) throw new Error(`Remove debug marker from ${file}`);

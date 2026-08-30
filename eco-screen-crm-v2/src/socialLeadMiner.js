@@ -57,6 +57,10 @@ export function renderSocialLeadMinerPage() {
       </div>
 
       <section class="card social-scan-card">
+        <div class="meta-page-connect">
+          <div><strong>Facebook 专页自动连接</strong><span id="metaPageStatus">正在检查授权状态…</span></div>
+          <button class="btn primary" id="metaPageConnectButton" type="button" hidden>连接 Facebook 专页</button>
+        </div>
         <div class="social-simple-notice">
           <strong>${t("How to find customers")}</strong>
           <span>${t("A link alone cannot provide comments. Paste the public comments below, then click Start Analysis.")}</span>
@@ -121,6 +125,8 @@ export function renderSocialLeadMinerPage() {
 
 export function attachSocialLeadMinerEvents(renderShell) {
   if (!isBossOrAdmin()) return;
+  void loadMetaPageStatus();
+  document.querySelector("#metaPageConnectButton")?.addEventListener("click", () => window.location.assign("/api/meta/oauth/start"));
   document.querySelector("#socialStartScanButton")?.addEventListener("click", () => startDirectScan(renderShell));
   document.querySelector("#socialStopScanButton")?.addEventListener("click", stopDirectScan);
   document.querySelector("#socialTemplateButton")?.addEventListener("click", downloadTemplate);
@@ -591,6 +597,29 @@ function intentReasonLabel(value) {
   if (reason === "Excluded by administrator keyword.") return "已被排除关键词过滤。";
   if (reason === "No strong buying-intent phrase detected.") return "未发现明确购买意向。";
   return reason;
+}
+
+async function loadMetaPageStatus() {
+  const status = document.querySelector("#metaPageStatus");
+  const button = document.querySelector("#metaPageConnectButton");
+  try {
+    const response = await fetch("/api/meta/status", { credentials: "same-origin" });
+    const payload = await response.json();
+    if (!payload.configured) {
+      if (status) status.textContent = "尚未配置 Meta App；配置后即可授权自己的 Facebook 专页。";
+      if (button) button.hidden = true;
+      return;
+    }
+    if (payload.connected) {
+      if (status) status.textContent = `已连接：${payload.pageName || "Facebook Page"}。贴上该专页的贴文链接即可读取已收到的公开评论。`;
+      if (button) button.hidden = true;
+      return;
+    }
+    if (status) status.textContent = "尚未授权 Facebook 专页。";
+    if (button) button.hidden = false;
+  } catch {
+    if (status) status.textContent = "暂时无法检查 Facebook 授权状态。";
+  }
 }
 function outreachMessages({ need, location }) {
   const area = location && location !== "Not stated" ? ` in ${location}` : "";

@@ -9,6 +9,7 @@
     "preview": "node scripts/dev-server.mjs dist",
     "lint": "node scripts/lint.mjs",
     "test:social-leads": "node scripts/social-lead-miner-test.mjs",
+    "test:meta-page": "node scripts/meta-page-connection-test.mjs",
     "test:workflow": "node scripts/workflow-test.mjs"
   },
   "dependencies": {},
