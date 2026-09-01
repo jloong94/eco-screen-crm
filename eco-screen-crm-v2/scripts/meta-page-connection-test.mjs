@@ -13,7 +13,7 @@ process.env.PUBLIC_APP_URL = "https://example.test";
 process.env.SUPABASE_URL = "https://db.example.test";
 process.env.SUPABASE_SECRET_KEY = "server-only";
 
-const { encryptToken, metaConfig, signState, verifyState, verifyWebhookSignature } = await import("../api/_lib/meta.js");
+const { encryptToken, metaConfig, openPageConnection, sealPageConnection, signState, verifyState, verifyWebhookSignature } = await import("../api/_lib/meta.js");
 const config = metaConfig();
 assert.deepEqual(config.missing, []);
 const state = signState(config, "nonce");
@@ -21,6 +21,9 @@ assert.equal(verifyState(config, state, "nonce"), true);
 assert.equal(verifyState(config, state, "wrong"), false);
 const encrypted = encryptToken(config, "page-access-token");
 assert.equal(JSON.stringify(encrypted).includes("page-access-token"), false);
+const connection = sealPageConnection(config, { pageId: "123", pageName: "Test Page", accessToken: "page-access-token" });
+assert.equal(connection.includes("page-access-token"), false);
+assert.equal(openPageConnection(config, connection).pageName, "Test Page");
 const raw = Buffer.from('{"object":"page"}');
 const signature = `sha256=${crypto.createHmac("sha256", config.appSecret).update(raw).digest("hex")}`;
 assert.equal(verifyWebhookSignature(config, raw, signature), true);

@@ -2,6 +2,7 @@ import { metaConfig, readRawBody, sendJson, supabase, verifyWebhookSignature } f
 
 export default async function handler(req, res) {
   const config = metaConfig();
+  if (!config.webhookVerifyToken || !config.supabaseUrl || !config.supabaseKey) return sendJson(res, 503, { code: "META_WEBHOOK_NOT_CONFIGURED" });
   if (req.method === "GET") {
     const url = new URL(req.url, config.appUrl || "https://localhost");
     if (url.searchParams.get("hub.mode") === "subscribe" && url.searchParams.get("hub.verify_token") === config.webhookVerifyToken) {

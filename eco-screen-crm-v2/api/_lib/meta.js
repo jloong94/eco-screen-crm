@@ -18,14 +18,10 @@ export function metaConfig() {
   const required = {
     META_APP_ID: values.appId,
     META_APP_SECRET: values.appSecret,
-    META_PAGE_ID: values.pageId,
     META_GRAPH_API_VERSION: values.graphVersion,
     META_STATE_SECRET: values.stateSecret,
     META_TOKEN_ENCRYPTION_KEY: values.encryptionKey,
-    META_WEBHOOK_VERIFY_TOKEN: values.webhookVerifyToken,
-    PUBLIC_APP_URL: values.appUrl,
-    SUPABASE_URL: values.supabaseUrl,
-    SUPABASE_SECRET_KEY: values.supabaseKey
+    PUBLIC_APP_URL: values.appUrl
   };
   return { ...values, missing: Object.entries(required).filter(([, value]) => !value).map(([name]) => name) };
 }
@@ -115,6 +111,23 @@ export function encryptToken(config, token) {
   const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
   const encrypted = Buffer.concat([cipher.update(token, "utf8"), cipher.final()]);
   return { encrypted_token: encrypted.toString("base64"), token_iv: iv.toString("base64"), token_tag: cipher.getAuthTag().toString("base64") };
+}
+
+export function sealPageConnection(config, value) {
+  const sealed = encryptToken(config, JSON.stringify(value));
+  return Buffer.from(JSON.stringify(sealed)).toString("base64url");
+}
+
+export function openPageConnection(config, value) {
+  try {
+    const sealed = JSON.parse(Buffer.from(String(value || ""), "base64url").toString("utf8"));
+    const key = Buffer.from(config.encryptionKey, "base64");
+    const decipher = crypto.createDecipheriv("aes-256-gcm", key, Buffer.from(sealed.token_iv, "base64"));
+    decipher.setAuthTag(Buffer.from(sealed.token_tag, "base64"));
+    const plain = Buffer.concat([decipher.update(Buffer.from(sealed.encrypted_token, "base64")), decipher.final()]).toString("utf8");
+    const payload = JSON.parse(plain);
+    return payload?.pageId && payload?.accessToken ? payload : null;
+  } catch { return null; }
 }
 
 export async function supabase(config, path, init = {}) {
