@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 
-const META_SCOPES = ["pages_show_list", "pages_read_engagement", "pages_read_user_content", "pages_manage_metadata"];
+const META_SCOPES = ["pages_show_list", "pages_read_engagement", "pages_read_user_content"];
 
 export function metaConfig() {
   const values = {
