@@ -84,7 +84,7 @@ export async function graph(config, path, token, init = {}) {
   const url = new URL(`https://graph.facebook.com/${config.graphVersion}/${path.replace(/^\//, "")}`);
   if (token) {
     url.searchParams.set("access_token", token);
-    url.searchParams.set("appsecret_proof", hmac(config.appSecret, token));
+    url.searchParams.set("appsecret_proof", hmacHex(config.appSecret, token));
   }
   const response = await fetch(url, { ...init, signal: AbortSignal.timeout(15_000) });
   const payload = await response.json().catch(() => ({}));
@@ -153,6 +153,7 @@ export function verifyWebhookSignature(config, rawBody, signatureHeader) {
 }
 
 function hmac(secret, value) { return crypto.createHmac("sha256", secret).update(value).digest("base64url"); }
+function hmacHex(secret, value) { return crypto.createHmac("sha256", secret).update(value).digest("hex"); }
 function safeEqual(a, b) {
   const left = Buffer.from(String(a)); const right = Buffer.from(String(b));
   return left.length === right.length && crypto.timingSafeEqual(left, right);

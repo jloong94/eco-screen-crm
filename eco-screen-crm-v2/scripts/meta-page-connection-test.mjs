@@ -13,12 +13,21 @@ process.env.PUBLIC_APP_URL = "https://example.test";
 process.env.SUPABASE_URL = "https://db.example.test";
 process.env.SUPABASE_SECRET_KEY = "server-only";
 
-const { encryptToken, metaConfig, oauthUrl, openPageConnection, sealPageConnection, signState, verifyState, verifyWebhookSignature } = await import("../api/_lib/meta.js");
+const { encryptToken, graph, metaConfig, oauthUrl, openPageConnection, sealPageConnection, signState, verifyState, verifyWebhookSignature } = await import("../api/_lib/meta.js");
 const config = metaConfig();
 assert.deepEqual(config.missing, []);
 const authorizationUrl = new URL(oauthUrl(config, "test-state"));
 assert.equal(authorizationUrl.searchParams.get("scope"), "pages_show_list,pages_read_engagement,pages_read_user_content");
 assert.equal(authorizationUrl.searchParams.get("scope").includes("pages_manage_metadata"), false);
+const originalFetch = globalThis.fetch;
+let graphRequestUrl = "";
+globalThis.fetch = async (url) => {
+  graphRequestUrl = String(url);
+  return new Response(JSON.stringify({ data: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+};
+await graph(config, "me/accounts", "page-token");
+globalThis.fetch = originalFetch;
+assert.match(new URL(graphRequestUrl).searchParams.get("appsecret_proof"), /^[a-f0-9]{64}$/);
 const state = signState(config, "nonce");
 assert.equal(verifyState(config, state, "nonce"), true);
 assert.equal(verifyState(config, state, "wrong"), false);
