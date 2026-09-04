@@ -1354,6 +1354,7 @@ input:focus, select:focus, textarea:focus {
   white-space: nowrap;
 }
 .installation-arrangement,
+.installer-self-arrangement,
 .installation-dispatch-preview,
 .warranty-card-preview {
   display: grid;
@@ -1363,6 +1364,27 @@ input:focus, select:focus, textarea:focus {
   border-radius: 14px;
   background: #f0fdf4;
   padding: 14px;
+}
+.installer-work-pool-notice {
+  margin: 0 0 12px;
+  border-left: 4px solid var(--brand);
+  border-radius: 10px;
+  background: #ecfdf5;
+  padding: 10px 12px;
+  color: #065f46;
+  font-weight: 700;
+}
+.installer-self-arrangement {
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+.installer-assignment-locked {
+  margin: 12px 0;
+  border-radius: 10px;
+  background: #fff7ed;
+  padding: 10px 12px;
+  color: #9a3412;
+  font-weight: 700;
 }
 .installation-assigned-summary {
   display: grid;
