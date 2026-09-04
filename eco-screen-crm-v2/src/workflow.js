@@ -3295,7 +3295,7 @@ export function setInstallationDateRange(dateFrom = "", dateTo = "") {
 export function installationJobMatchesStatusFilter(job = {}, status = installationStatusFilter) {
   if (!status) return true;
   const stage = installationDispatchStage(job);
-  return status === "pending" ? stage === "sent_to_installer" : status === "completed" && stage === "completed";
+  return status === "pending" ? stage !== "completed" : status === "completed" && stage === "completed";
 }
 
 function installationJobsForUserFromSource(user = state.currentUser, source = state) {
@@ -3305,8 +3305,7 @@ function installationJobsForUserFromSource(user = state.currentUser, source = st
   if (userRole !== "installer") return [];
   const exactInstallerId = String(user?.userId || "").trim();
   if (!exactInstallerId) return [];
-  return activeJobs.filter((job) => ["sent_to_installer", "completed"].includes(installationDispatchStage(job))
-    && String(job.assignedInstallerId || "").trim() === exactInstallerId);
+  return activeJobs;
 }
 
 export function setInstallationSearch(value = "") {
@@ -3361,10 +3360,10 @@ function compareInstallationSchedule(left, right) {
 function installerInstallationSummaryHtml() {
   const visibleJobs = installationJobsForUserFromSource(state.currentUser, state);
   const counts = {
-    pending: visibleJobs.filter((job) => installationDispatchStage(job) === "sent_to_installer").length,
+    pending: visibleJobs.filter((job) => installationDispatchStage(job) !== "completed").length,
     completed: visibleJobs.filter((job) => installationDispatchStage(job) === "completed").length
   };
-  return `<div class="progress-summary-grid installer-stage-summary" aria-label="${t("Installation Status")}">
+  return `<p class="installer-work-pool-notice">${t("All active Installation jobs are visible. You may claim an unassigned job and arrange its date.")}</p><div class="progress-summary-grid installer-stage-summary" aria-label="${t("Installation Status")}">
     ${[["pending", "Pending Installation"], ["completed", "Completed"]].map(([status, label]) => `<button class="metric-card progress-summary-card ${installationStatusFilter === status ? "active" : ""}" type="button" data-installer-installation-status-filter="${status}" aria-pressed="${installationStatusFilter === status}"><span>${t(label)}</span><strong>${counts[status]}</strong></button>`).join("")}
   </div>`;
 }
@@ -3663,7 +3662,7 @@ function installationJobCardHtml(job) {
         <div><span class="pill">${t(installationDispatchLabel(job))}</span><span class="pill">${money(getRemainingBalance(findOrder(job.orderId) || {}, job))} ${t("Remaining Balance")}</span></div>
       </div>
       ${orderFinancialSummaryHtml(details.order, job)}
-      ${canScheduleInstallation() ? installationArrangementHtml(job, stage) : installationAssignedSummaryHtml(job)}
+      ${canScheduleInstallation() ? installationArrangementHtml(job, stage) : installerArrangementAccessHtml(job, stage)}
       ${itemsSummary(job.items)}
       ${completionSummaryHtml(job)}
       ${historicalCompletionMediaHtml(job)}
@@ -3686,6 +3685,28 @@ function installationJobCardHtml(job) {
       ${warrantyPreview ? warrantyCardPreviewHtml(warrantyPreview) : ""}
     </article>
   `;
+}
+
+function installerArrangementAccessHtml(job, stage) {
+  if (normalizeText(role()) !== "installer") return installationAssignedSummaryHtml(job);
+  const installerId = String(state.currentUser?.userId || "").trim();
+  const assignedInstallerId = String(job.assignedInstallerId || "").trim();
+  const mayArrange = installerId
+    && !["sent_to_installer", "completed"].includes(stage)
+    && (!assignedInstallerId || assignedInstallerId === installerId);
+  const assignedElsewhere = assignedInstallerId && assignedInstallerId !== installerId;
+  return `${installationAssignedSummaryHtml(job)}${mayArrange ? installerSelfArrangementHtml(job) : assignedElsewhere ? `<p class="installer-assignment-locked">${t("Assigned to another Installer. Ask the office to reassign this job.")}</p>` : ""}`;
+}
+
+function installerSelfArrangementHtml(job) {
+  return `<section class="installer-self-arrangement" data-installer-self-arrangement="${escapeHtml(job.id)}">
+    <div class="form-grid compact">
+      <label>${t("Installation Date")}<input type="date" data-installer-self-field="installationDate" value="${escapeHtml(job.installationDate || "")}" /></label>
+      <label>${t("Installation Time")}<input type="time" data-installer-self-field="installationTime" value="${escapeHtml(job.installationTime || "")}" /></label>
+      <label class="wide">${t("Installation Remarks")}<textarea rows="2" data-installer-self-field="installationRemarks">${escapeHtml(job.installationRemarks || job.installerRemark || "")}</textarea></label>
+    </div>
+    <button class="btn primary" type="button" data-save-installer-self-arrangement="${escapeHtml(job.id)}">${t("Arrange for Me")}</button>
+  </section>`;
 }
 
 function installationArrangementHtml(job, stage) {
@@ -8286,7 +8307,7 @@ async function sendOrderToInstaller(orderId) {
   const plan = installationMutationPlan("prepare-installation", installationJob.id, changes, { installationJobs: [installationJob, ...state.installationJobs] });
   const result = await commitOrderActionPlan(plan, {
     local: "Installation job created locally. Syncing cloud...",
-    success: "Installation job created as Pending Arrangement. It is hidden from Installer users.",
+    success: "Installation job created as Pending Arrangement and added to the Installer work pool.",
     cloudFailure: "Installation preparation saved locally but cloud sync failed"
   });
   return { ...result, installationJob };
@@ -8482,6 +8503,7 @@ function handleInstallationClick(event) {
   const printWarrantyCardId = event.target.dataset.printWarrantyCard;
   const closeWarrantyPreviewId = event.target.dataset.closeWarrantyPreview;
   const saveArrangementId = event.target.dataset.saveInstallationArrangement;
+  const saveSelfArrangementId = event.target.dataset.saveInstallerSelfArrangement;
   const previewSendId = event.target.dataset.previewInstallationSend;
   const confirmSendId = event.target.dataset.confirmInstallationSend;
   const closeSendId = event.target.dataset.closeInstallationSend;
@@ -8502,6 +8524,7 @@ function handleInstallationClick(event) {
   if (clearSignatureId) clearSignature(clearSignatureId);
   if (removeMediaJobId) removeInstallationMedia(removeMediaJobId, event.target.dataset.removeMediaField, event.target.dataset.removeMediaIndex);
   if (saveArrangementId) saveInstallationArrangementFromPanel(saveArrangementId, event.target);
+  if (saveSelfArrangementId) saveInstallerSelfArrangementFromPanel(saveSelfArrangementId, event.target);
   if (previewSendId) previewInstallationDispatch(previewSendId);
   if (confirmSendId) confirmInstallationDispatch(confirmSendId, event.target);
   if (closeSendId) closeInstallationDispatchPreview();
@@ -8628,6 +8651,67 @@ function saveInstallationArrangementFromPanel(jobId, button) {
   });
 }
 
+function saveInstallerSelfArrangementFromPanel(jobId, button) {
+  const panel = button.closest("[data-installer-self-arrangement]");
+  if (!panel) return failInstallationAction("Installer arrangement form is unavailable.");
+  const read = (field) => panel.querySelector(`[data-installer-self-field="${field}"]`)?.value || "";
+  return saveInstallerSelfArrangement(jobId, {
+    installationDate: read("installationDate"),
+    installationTime: read("installationTime"),
+    installationRemarks: read("installationRemarks")
+  });
+}
+
+export async function saveInstallerSelfArrangement(jobId, values = {}, options = {}) {
+  if (normalizeText(state.currentUser?.role || role()) !== "installer") return failInstallationAction("Permission denied: only an Installer can arrange a job for themselves.");
+  const installerId = String(state.currentUser?.userId || "").trim();
+  const installer = installerId ? exactInstallerUser(installerId) : null;
+  if (!installerId || !installer) return failInstallationAction("The exact active Installer stable ID was not found.");
+  const exactJobId = String(jobId || "").trim();
+  const job = state.installationJobs.find((row) => String(row.id || "") === exactJobId);
+  if (!exactJobId || !job || !isActiveWorkflowRecord(job)) return failInstallationAction("The exact active Installation stable ID was not found.");
+  const stage = installationDispatchStage(job);
+  if (["sent_to_installer", "completed"].includes(stage)) return failInstallationAction("A sent or completed Installation cannot be self-arranged.");
+  const assignedInstallerId = String(job.assignedInstallerId || "").trim();
+  if (assignedInstallerId && assignedInstallerId !== installerId) return failInstallationAction("This job is already assigned to another Installer. Ask the office to reassign it.");
+  const installationDate = String(values.installationDate || "").trim();
+  if (!malaysiaCalendarDate(installationDate)) return failInstallationAction("Please select a valid Installation date.");
+  const now = new Date().toISOString();
+  const actor = currentActor();
+  const updatedJob = {
+    ...job,
+    installationDate,
+    installationTime: String(values.installationTime || "").trim(),
+    installationRemarks: String(values.installationRemarks ?? job.installationRemarks ?? job.installerRemark ?? "").trim(),
+    assignedInstallerId: installerId,
+    assignedInstallerName: installer.name || installer.username || installerId,
+    status: "ready_to_send",
+    dispatchStatus: "ready",
+    selfAssignedAt: assignedInstallerId ? job.selfAssignedAt : now,
+    selfAssignedBy: assignedInstallerId ? job.selfAssignedBy : actor,
+    arrangementUpdatedAt: now,
+    arrangementUpdatedBy: actor,
+    updatedAt: now
+  };
+  const order = state.orders.find((row) => String(row.id || "") === String(job.orderId || "") && isActiveOrderRecord(row));
+  if (!order) return failInstallationAction("The exact related active Order could not be identified.");
+  const updatedOrder = { ...order, installationDate, installationStatus: "ready_to_send", updatedAt: now };
+  const changes = [];
+  recordFieldChanges(changes, "installationJobs", job, updatedJob);
+  recordFieldChanges(changes, "orders", order, updatedOrder);
+  const plan = installationMutationPlan("installer-self-arrangement", exactJobId, changes, {
+    installationJobs: state.installationJobs.map((row) => String(row.id || "") === exactJobId ? updatedJob : row),
+    orders: state.orders.map((row) => String(row.id || "") === String(order.id) ? updatedOrder : row)
+  });
+  if (options.downloadBackup !== false && !downloadOrderActionBackup(plan)) return failInstallationAction("Full JSON backup download failed. Installation was not arranged.");
+  const result = await commitOrderActionPlan(plan, {
+    local: "Your Installation arrangement was saved locally. Syncing cloud...",
+    success: "This job is assigned to you and is Ready to Send. The office must still dispatch it.",
+    cloudFailure: "Your Installation arrangement was saved locally but cloud sync failed"
+  });
+  return { ...result, jobId: exactJobId, status: "ready_to_send", assignedInstallerId: installerId };
+}
+
 export async function saveInstallationArrangement(jobId, values = {}) {
   if (!canScheduleInstallation()) return failInstallationAction("Permission denied: only Boss, Admin or Secretary can arrange Installation.");
   const exactJobId = String(jobId || "").trim();
@@ -8670,7 +8754,7 @@ export async function saveInstallationArrangement(jobId, values = {}) {
   });
   const result = await commitOrderActionPlan(plan, {
     local: "Installation arrangement saved locally. Syncing cloud...",
-    success: nextStatus === "ready_to_send" ? "Installation is Ready to Send. It is still hidden from Installer users." : "Installation saved as Pending Arrangement.",
+    success: nextStatus === "ready_to_send" ? "Installation is Ready to Send and remains visible in the Installer work pool." : "Installation saved as Pending Arrangement.",
     cloudFailure: "Installation arrangement saved locally but cloud sync failed"
   });
   return { ...result, jobId: exactJobId, status: nextStatus };
@@ -8798,7 +8882,7 @@ export async function recallInstallationFromInstaller(jobId, recallReason) {
   });
   const result = await commitOrderActionPlan(plan, {
     local: "Installation recall saved locally. Syncing cloud...",
-    success: "Installation recalled. It is hidden from Installer users until explicitly sent again.",
+    success: "Installation recalled. It remains visible in the Installer work pool but cannot be completed until dispatched again.",
     cloudFailure: "Installation recall saved locally but cloud sync failed"
   });
   return { ...result, jobId: exactJobId, status: "pending_arrangement" };

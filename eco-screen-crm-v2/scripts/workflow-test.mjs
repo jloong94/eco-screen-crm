@@ -120,6 +120,7 @@ const {
   warrantySummaryCounts,
   recallInstallationFromInstaller,
   saveInstallationArrangement,
+  saveInstallerSelfArrangement,
   scanProductionDispatchIntegrity,
   scanWorkflowIntegrity,
   scanCoveredOrderReferences,
@@ -1684,7 +1685,8 @@ state.orders = [dispatchOrder];
 const pendingInstallation = createInstallationJobFromOrder(dispatchOrder);
 state.installationJobs = [pendingInstallation];
 assert(pendingInstallation.status === "pending_arrangement" && pendingInstallation.dispatchStatus === "pending", "Z1: a new Installation must default to pending_arrangement and must not auto-dispatch");
-assert(installationJobsForUser({ userId: "installer-exact-a", role: "Installer" }).length === 0, "Z1: a pending Installation must be invisible to Installer users");
+assert(installationJobsForUser({ userId: "installer-exact-a", role: "Installer" }).map((job) => job.id).includes(pendingInstallation.id), "Z1: an Installer with an exact stable ID must see every active Installation job");
+assert(installationJobsForUser({ role: "Installer" }).length === 0, "Z1: Installer visibility must fail closed when the logged-in stable ID is missing");
 
 const arranged = await saveInstallationArrangement(pendingInstallation.id, {
   installationDate: "2026-07-25",
@@ -1698,13 +1700,14 @@ const arranged = await saveInstallationArrangement(pendingInstallation.id, {
 });
 assert(arranged.ok && arranged.status === "ready_to_send", "Z2: date plus an exact Installer ID must set ready_to_send");
 assert(state.installationJobs[0].assignedInstallerId === "installer-exact-a" && state.installationJobs[0].assignedInstallerName === "Installer A", "Z2: arrangement must store the selected exact staff/user ID and display name");
-assert(installationJobsForUser({ userId: "installer-exact-a", role: "Installer" }).length === 0, "Z2: arranging a date and Installer alone must not expose the job");
+assert(installationJobsForUser({ userId: "installer-exact-a", role: "Installer" }).length === 1
+  && installationJobsForUser({ userId: "installer-exact-b", role: "Installer" }).length === 1, "Z2: ready jobs remain visible to all authenticated Installers");
 
 const sent = await sendInstallationToInstaller(pendingInstallation.id);
 assert(sent.ok && state.installationJobs[0].status === "sent_to_installer" && state.installationJobs[0].dispatchStatus === "sent"
   && state.installationJobs[0].sentAt && state.installationJobs[0].sentBy, "Z3: explicit Send to Installer must store dispatch state and audit fields");
 assert(installationJobsForUser({ userId: "installer-exact-a", role: "Installer" }).map((job) => job.id).includes(pendingInstallation.id), "Z3: the exact assigned Installer must see the sent job");
-assert(installationJobsForUser({ userId: "installer-exact-b", role: "Installer" }).length === 0, "Z3: a different Installer stable ID must not see the sent job");
+assert(installationJobsForUser({ userId: "installer-exact-b", role: "Installer" }).map((job) => job.id).includes(pendingInstallation.id), "Z3: another Installer may view the sent job but mutation permissions remain exact-ID protected");
 const firstSentAt = state.installationJobs[0].sentAt;
 const recall = await recallInstallationFromInstaller(pendingInstallation.id, "Wrong appointment time");
 assert(recall.ok && state.installationJobs[0].status === "pending_arrangement" && state.installationJobs[0].dispatchStatus === "recalled"
@@ -1712,10 +1715,10 @@ assert(recall.ok && state.installationJobs[0].status === "pending_arrangement" &
 assert(state.installationJobs[0].assignedInstallerId === "installer-exact-a" && state.installationJobs[0].sentAt === firstSentAt
   && state.installationJobs[0].dispatchHistory.some((event) => event.action === "sent")
   && state.installationJobs[0].dispatchHistory.some((event) => event.action === "recalled"), "Z4: recall must preserve the prior exact assignment and complete dispatch history");
-assert(installationJobsForUser({ userId: "installer-exact-a", role: "Installer" }).length === 0, "Z4: a recalled job must disappear from Installer visibility");
+assert(installationJobsForUser({ userId: "installer-exact-a", role: "Installer" }).map((job) => job.id).includes(pendingInstallation.id), "Z4: a recalled active job remains visible in the shared Installer work pool");
 state.installationJobs.push({ id: "installation-archived-hidden", orderId: dispatchOrder.id, assignedInstallerId: "installer-exact-a", status: "sent_to_installer", isArchived: true });
 state.installationJobs.push({ id: "installation-cancelled-hidden", orderId: dispatchOrder.id, assignedInstallerId: "installer-exact-a", status: "cancelled_archived" });
-assert(installationJobsForUser({ userId: "installer-exact-a", role: "Installer" }).length === 0, "Z4: archived and cancelled jobs must remain hidden from Installer users");
+assert(installationJobsForUser({ userId: "installer-exact-a", role: "Installer" }).map((job) => job.id).join(",") === pendingInstallation.id, "Z4: archived and cancelled jobs must remain hidden while the active recalled job remains visible");
 
 const resent = await sendInstallationToInstaller(pendingInstallation.id);
 assert(resent.ok, "Z5: editing or recall must not auto-send, but a later explicit send must be allowed");
@@ -1811,23 +1814,26 @@ const installerSearchSource = {
     isArchived: true
   }]
 };
-assert(installationJobsForCurrentView(installerSearchUser, "SO2607020", installerSearchSource).map((job) => job.id).join(",") === "installation-search-sent",
-"Z5A: normalized SO search must return only the exact Installer's already-visible sent job");
-assert(installationJobsForCurrentView(installerSearchUser, "search customer", installerSearchSource).map((job) => job.id).join(",") === "installation-search-sent"
-  && installationJobsForCurrentView(installerSearchUser, "0123456789", installerSearchSource).map((job) => job.id).join(",") === "installation-search-sent",
-"Z5A: Installer customer and normalized phone search must work without exposing another Installer's matching job");
+assert(installationJobsForCurrentView(installerSearchUser, "SO2607020", installerSearchSource).map((job) => job.id).sort().join(",")
+  === ["installation-search-sent", "installation-search-other-installer", "installation-search-pending", "installation-search-ready"].sort().join(","),
+"Z5A: normalized SO search must search every active job in the shared Installer work pool");
+assert(installationJobsForCurrentView(installerSearchUser, "search customer", installerSearchSource).map((job) => job.id).sort().join(",")
+  === ["installation-search-sent", "installation-search-other-installer", "installation-search-pending", "installation-search-ready"].sort().join(",")
+  && installationJobsForCurrentView(installerSearchUser, "0123456789", installerSearchSource).map((job) => job.id).sort().join(",")
+  === ["installation-search-sent", "installation-search-other-installer"].sort().join(","),
+"Z5A: Installer customer and normalized phone search must cover the active work pool");
 assert(installationJobMatchesSearch(installerSearchSource.installationJobs[0], "taman search project", installerSearchSource)
   && installationJobMatchesSearch(installerSearchSource.installationJobs[0], "installation search address", installerSearchSource),
 "Z5A: Installer search must include Location / Project and installation address");
 assert(installationJobsForCurrentView(installerSearchUser, "", installerSearchSource).map((job) => job.id).sort().join(",")
-  === ["installation-search-completed", "installation-search-sent"].sort().join(","),
-"Z5A: the unfiltered Installer list must contain only assigned sent/completed active jobs");
+  === ["installation-search-completed", "installation-search-sent", "installation-search-other-installer", "installation-search-pending", "installation-search-ready"].sort().join(","),
+"Z5A: the unfiltered Installer list must contain every active job and exclude archived records");
 setInstallationSearch("Second Assigned Customer");
 assert(installationJobsForCurrentView(installerSearchUser, undefined, installerSearchSource).map((job) => job.id).join(",") === "installation-search-completed",
 "Z5A: applied Installer search must filter the current assigned list");
 setInstallationSearch("");
-assert(installationJobsForCurrentView(installerSearchUser, undefined, installerSearchSource).length === 2,
-"Z5A: Clear Search must restore every assigned sent/completed Installation");
+assert(installationJobsForCurrentView(installerSearchUser, undefined, installerSearchSource).length === 5,
+"Z5A: Clear Search must restore every active Installation in the shared work pool");
 setInstallationSearch("retained search");
 resetWorkflowNavigationState("installation");
 assert(workflowNavigationState().installation.search === "",
@@ -1841,6 +1847,34 @@ assert(installationJobMatchesDateRange(installerSearchSource.installationJobs[0]
   && installationJobsForCurrentView(installerSearchUser, "", installerSearchSource).map((job) => job.id).join(",") === "installation-search-sent",
 "Z5B: Installer date range must find the exact assigned unfinished job without exposing completed jobs outside the range");
 setInstallationDateRange("", "");
+
+const selfArrangePreviousState = { currentUser: state.currentUser, role: state.role, users: state.users, orders: state.orders, installationJobs: state.installationJobs };
+const selfArrangeInstaller = { userId: "installer-self-exact", username: "installer-self", name: "Installer Self", role: "Installer", active: true };
+const otherArrangeInstaller = { userId: "installer-self-other", username: "installer-other", name: "Installer Other", role: "Installer", active: true };
+const selfArrangeOrder = { id: "order-installer-self-arrange", orderNo: "SO2608990", status: "Confirmed", isArchived: false };
+const selfArrangeJob = { id: "installation-self-arrange", orderId: selfArrangeOrder.id, orderNo: selfArrangeOrder.orderNo, status: "pending_arrangement", isArchived: false, installationRemarks: "Preserve this note" };
+const otherArrangeJob = { id: "installation-self-other", orderId: selfArrangeOrder.id, orderNo: selfArrangeOrder.orderNo, status: "pending_arrangement", assignedInstallerId: otherArrangeInstaller.userId, assignedInstallerName: otherArrangeInstaller.name, isArchived: false };
+state.currentUser = selfArrangeInstaller;
+state.role = selfArrangeInstaller.role;
+state.users = [selfArrangeInstaller, otherArrangeInstaller];
+state.orders = [selfArrangeOrder];
+state.installationJobs = [selfArrangeJob, otherArrangeJob];
+const selfArranged = await saveInstallerSelfArrangement(selfArrangeJob.id, { installationDate: "2026-09-08", installationTime: "09:30", installationRemarks: "Customer confirmed" }, { downloadBackup: false });
+const savedSelfJob = state.installationJobs.find((job) => job.id === selfArrangeJob.id);
+assert(selfArranged.ok && savedSelfJob.assignedInstallerId === selfArrangeInstaller.userId && savedSelfJob.status === "ready_to_send"
+  && savedSelfJob.dispatchStatus === "ready" && savedSelfJob.installationDate === "2026-09-08" && savedSelfJob.installationTime === "09:30"
+  && state.orders[0].installationDate === "2026-09-08" && state.orders[0].installationStatus === "ready_to_send",
+"Z5C: an Installer must claim an unassigned exact job for self and arrange its date without dispatching it");
+const otherBefore = structuredClone(state.installationJobs.find((job) => job.id === otherArrangeJob.id));
+const stealBlocked = await saveInstallerSelfArrangement(otherArrangeJob.id, { installationDate: "2026-09-09" }, { downloadBackup: false });
+assert(!stealBlocked.ok && JSON.stringify(state.installationJobs.find((job) => job.id === otherArrangeJob.id)) === JSON.stringify(otherBefore),
+"Z5C: an Installer must not take or mutate a job already assigned to another exact Installer ID");
+const sentBefore = structuredClone(savedSelfJob);
+state.installationJobs = state.installationJobs.map((job) => job.id === savedSelfJob.id ? { ...job, status: "sent_to_installer", dispatchStatus: "sent" } : job);
+const sentSelfBlocked = await saveInstallerSelfArrangement(savedSelfJob.id, { installationDate: "2026-09-10" }, { downloadBackup: false });
+assert(!sentSelfBlocked.ok && state.installationJobs.find((job) => job.id === savedSelfJob.id).installationDate === sentBefore.installationDate,
+"Z5C: self-arrangement must not alter a sent Installation");
+Object.assign(state, selfArrangePreviousState);
 
 const issueBoss = { userId: "boss-installation-issue", username: "boss-issue", name: "Boss Issue", role: "Boss", active: true };
 const issueInstaller = { userId: "installer-issue-exact", username: "installer-issue", name: "Issue Installer", role: "Installer", active: true };
