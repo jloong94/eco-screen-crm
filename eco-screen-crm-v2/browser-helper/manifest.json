@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "Eco Screen 找客户助手",
+  "version": "1.0.0",
+  "description": "在您打开的公开贴文中读取评论，交给 Eco Screen 分析购买意向。",
+  "permissions": ["scripting"],
+  "host_permissions": ["https://*.tiktok.com/*", "https://*.facebook.com/*", "https://*.xiaohongshu.com/*", "https://xhslink.com/*", "https://fb.watch/*"],
+  "background": {"service_worker": "background.js", "type": "module"},
+  "content_scripts": [{"matches": ["https://eco-screen-crm-v2.vercel.app/*"], "js": ["bridge.js"], "run_at": "document_idle"}]
+}

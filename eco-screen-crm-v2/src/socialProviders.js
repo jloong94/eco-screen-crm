@@ -75,11 +75,12 @@ const tiktokProvider = {
   async scan(request = {}) {
     const sourceUrl = validateTikTokVideoUrl(request.sourceUrl);
     if (!sourceUrl) throw new SocialProviderError("INVALID_SOURCE_URL", "Enter a valid public TikTok video URL.");
+    if (browserCollectorReady()) return scanBrowserCollector({ ...request, sourceUrl, platform: "tiktok" });
     const endpoint = String(runtimeEnv.VITE_TIKTOK_SCAN_ENDPOINT || "").trim();
     if (!endpoint) {
       throw new SocialProviderError(
         "PROVIDER_NOT_CONFIGURED",
-        "TikTok comment access is not configured. An approved server-side provider is required; no scraping or mock comments will be used."
+        "请先安装找客户助手，再刷新此页。助手会打开同行视频，读取可见公开评论。"
       );
     }
     return scanApprovedEndpoint(endpoint, { ...request, sourceUrl, platform: "tiktok", providerLabel: "TikTok" });
@@ -117,11 +118,45 @@ function createEndpointProvider({ platform, label, endpointKey, validateSourceUr
     async scan(request = {}) {
       const sourceUrl = validateSourceUrl(request.sourceUrl);
       if (!sourceUrl) throw new SocialProviderError("INVALID_SOURCE_URL", invalidMessage);
+      if (browserCollectorReady()) return scanBrowserCollector({ ...request, sourceUrl, platform });
       const endpoint = String(runtimeEnv[endpointKey] || "").trim();
-      if (!endpoint) throw new SocialProviderError("PROVIDER_NOT_CONFIGURED", configurationMessage);
+      if (!endpoint) throw new SocialProviderError("PROVIDER_NOT_CONFIGURED", "请先安装找客户助手，再刷新此页。当前平台尚无可用的自动读取连接。");
       return scanApprovedEndpoint(endpoint, { ...request, sourceUrl, platform, providerLabel: label });
     }
   };
+}
+
+function browserCollectorReady() {
+  return typeof document !== "undefined" && document.documentElement?.dataset.ecoCollector === "ready";
+}
+
+function scanBrowserCollector(request) {
+  return new Promise((resolve, reject) => {
+    const id = crypto.randomUUID();
+    const finish = (error, value) => {
+      clearTimeout(timer);
+      window.removeEventListener("eco-collector-result", receive);
+      request.signal?.removeEventListener("abort", stop);
+      if (error) reject(new SocialProviderError("BROWSER_COLLECTOR_ERROR", error));
+      else resolve(value);
+    };
+    const stop = () => {
+      window.dispatchEvent(new CustomEvent("eco-collector-request", {detail: {id: `${id}-stop`, type: "stop"}}));
+      finish("已停止扫描。");
+    };
+    const receive = event => {
+      if (event.detail?.id !== id) return;
+      const result = event.detail;
+      if (result.error) return finish(String(result.error));
+      if (!Array.isArray(result.comments)) return finish("采集结果不完整，请重试。");
+      finish(null, {comments: result.comments.slice(0, clampMaximum(request.maximum)).map(row => ({...row, contactEligibility: "not_eligible"})), partial: true});
+    };
+    const timer = setTimeout(stop, 100000);
+    window.addEventListener("eco-collector-result", receive);
+    request.signal?.addEventListener("abort", stop, {once: true});
+    if (request.signal?.aborted) return stop();
+    window.dispatchEvent(new CustomEvent("eco-collector-request", {detail: {id, type: "scan", platform: request.platform, sourceUrl: request.sourceUrl, maximum: clampMaximum(request.maximum)}}));
+  });
 }
 
 async function scanApprovedEndpoint(endpoint, request) {

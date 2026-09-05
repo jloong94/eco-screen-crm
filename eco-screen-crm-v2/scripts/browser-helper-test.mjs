@@ -1,0 +1,35 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { collectPublicComments } from "../browser-helper/collector.js";
+
+const manifest = JSON.parse(await readFile("browser-helper/manifest.json", "utf8"));
+assert.deepEqual(manifest.permissions, ["scripting"]);
+assert.deepEqual(manifest.content_scripts[0].matches, ["https://eco-screen-crm-v2.vercel.app/*"]);
+for (const name of ["collector", "background", "bridge"]) execFileSync(process.execPath, ["--check", `browser-helper/${name}.js`]);
+globalThis.window = {scrollBy() {}};
+globalThis.location = {href: "https://www.tiktok.com/@brand/video/123", hostname: "www.tiktok.com", pathname: "/@brand/video/123"};
+globalThis.document = {body: {innerText: "Verify to continue"}, querySelectorAll() { throw new Error("Must not extract while gated"); }};
+assert.match((await collectPublicComments("tiktok", 1)).error, /验证/);
+document.body.innerText = "This content isn't available";
+assert.match((await collectPublicComments("facebook", 1)).error, /未公开/);
+const visible = value => ({innerText: value, getClientRects: () => [1]});
+const profile = {...visible("Ali"), href: "https://www.tiktok.com/@ali"};
+const body = visible("berapa harga sliding door BM?");
+const node = {...visible(""), querySelector(selector) {
+  if (selector.includes('a[href')) return profile;
+  if (selector.includes("comment-level")) return body;
+  return null;
+}};
+document.body.innerText = "Public comments";
+document.querySelectorAll = () => [node];
+const result = await collectPublicComments("tiktok", 1);
+assert.equal(result.comments.length, 1);
+assert.equal(result.comments[0].comment, body.innerText);
+assert.equal(result.comments[0].profileUrl, profile.href);
+assert.equal(result.comments[0].contactEligibility, "not_eligible");
+assert.equal(result.comments[0].region, "");
+assert.equal(result.partial, true);
+assert.equal(result.exhausted, false);
+assert.equal("phone" in result.comments[0], false);
+console.log("Browser helper fixture tests passed; live browser installation is still required.");

@@ -57,22 +57,22 @@ export function renderSocialLeadMinerPage() {
       </div>
 
       <section class="card social-scan-card">
-        <div class="meta-page-connect">
+        <details><summary>连接自己的 Facebook 专页（可选）</summary><div class="meta-page-connect">
           <div><strong>Facebook 专页自动连接</strong><span id="metaPageStatus">正在检查授权状态…</span></div>
           <button class="btn primary" id="metaPageConnectButton" type="button" hidden>连接 Facebook 专页</button>
-        </div>
+        </div></details>
         <div class="social-simple-notice">
           <strong>${t("How to find customers")}</strong>
-          <span>${t("A link alone cannot provide comments. Paste the public comments below, then click Start Analysis.")}</span>
+          <span>贴同行链接 → 开始找客户 → 查看询价者和公开主页。首次使用请安装 <a href="/public/eco-screen-helper.zip" download>找客户助手</a>（<a href="/public/helper-install.html" target="_blank" rel="noopener">安装方法</a>）。</span>
         </div>
         <div class="form-grid compact">
           <label>${t("Platform")}<select id="socialPlatform"><option value="tiktok">TikTok</option><option value="facebook">Facebook</option><option value="rednote">${t("Xiaohongshu / RedNote")}</option></select></label>
           <label class="wide">${t("Post / Video URL")}<input id="socialSourceUrl" type="url" placeholder="${t("Paste a public post or video URL")}" /></label>
           <label>${t("Maximum Leads")}<select id="socialMaximumLeads"><option>50</option><option>100</option><option>200</option></select></label>
-          <label class="wide">${t("Paste Comments")}<textarea id="socialPastedComments" rows="7" placeholder="${t("One comment per line, for example: @username: berapa harga?")}"></textarea><small>${t("Copy only lawful public comments. Plain comments can be analysed; include a username or public profile URL when available.")}</small></label>
         </div>
         <details class="social-advanced">
           <summary>${t("Advanced Settings")}</summary>
+          <label class="wide">备用：粘贴公开评论<textarea id="socialPastedComments" rows="5" placeholder="@用户名: 多少钱？"></textarea></label>
           <div class="form-grid compact">
             <label>${t("Trigger Keywords")}<input id="socialTriggerKeywords" placeholder="berapa harga, interested" /></label>
             <label>${t("Exclude Keywords")}<input id="socialExcludeKeywords" placeholder="spam, giveaway" /></label>
@@ -92,11 +92,11 @@ export function renderSocialLeadMinerPage() {
           </section>
         </details>
         <div class="actions">
-          <button class="btn primary" id="socialStartScanButton" type="button">${t("Start Analysis")}</button>
+          <button class="btn primary" id="socialStartScanButton" type="button">开始找客户</button>
           <button class="btn danger" id="socialStopScanButton" type="button" hidden>${t("Stop Scan")}</button>
           <span class="pill">TikTok · Facebook · ${t("RedNote")}</span>
         </div>
-        <p id="socialScanStatus" class="muted-text">${escapeHtml(scanMessage || t("Paste comments above and click Start Analysis. If the box is empty, the system will try the approved platform connector."))}</p>
+        <p id="socialScanStatus" class="muted-text">${escapeHtml(scanMessage || "助手会在您的浏览器打开内容。请保持浏览器开启；如出现登录或验证，请自行完成后重试。")}</p>
       </section>
 
       <section class="card social-result-guide">
@@ -388,7 +388,7 @@ async function startDirectScan(renderShell) {
     state.socialLeads = [...imported.leads, ...socialLeadRows()];
     state.socialLeadDuplicateCount = Number(state.socialLeadDuplicateCount || 0) + imported.duplicates;
     await persistSocialLeads();
-    scanMessage = `${t("Comments Found")}: ${result.comments.length}. ${t("Qualified Leads")}: ${imported.leads.filter((lead) => activeLevels.has(lead.intentLevel)).length}.`;
+    scanMessage = `${t("Comments Found")}: ${result.comments.length}. ${t("Qualified Leads")}: ${imported.leads.filter((lead) => activeLevels.has(lead.intentLevel)).length}.${result.partial ? " 仅分析本次已加载评论，不代表全部评论。" : ""}`;
     renderShell();
   } catch (error) {
     scanMessage = t(error?.message || "Social provider could not be reached.");
