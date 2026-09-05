@@ -30,15 +30,25 @@ async function resolvePostId(config, connection, sourceUrl) {
     const response = await fetch(sourceUrl, { redirect: "follow", headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(10_000) });
     candidate = response.url || sourceUrl;
   } catch {}
-  for (const value of [candidate, sourceUrl]) {
-    try {
-      const url = new URL(value);
-      const direct = url.pathname.match(/\/(?:posts|videos|reel)\/([A-Za-z0-9_-]+)/i)?.[1] || url.searchParams.get("story_fbid");
-      if (direct) return direct;
-    } catch {}
-  }
   const feed = await graph(config, `${encodeURIComponent(connection.pageId)}/published_posts?fields=id,permalink_url&limit=100`, connection.accessToken);
   const normalize = (value) => String(value || "").replace(/^https?:\/\/(?:www\.|web\.|m\.)?facebook\.com/i, "").replace(/[?#].*$/, "").replace(/\/$/, "");
-  const match = (feed.data || []).find((post) => normalize(post.permalink_url) === normalize(candidate) || normalize(post.permalink_url) === normalize(sourceUrl));
+  const references = new Set([candidate, sourceUrl].map(facebookContentReference).filter(Boolean));
+  const match = (feed.data || []).find((post) => {
+    const postReference = facebookContentReference(post.permalink_url);
+    const graphReference = String(post.id || "").split("_").at(-1);
+    return normalize(post.permalink_url) === normalize(candidate)
+      || normalize(post.permalink_url) === normalize(sourceUrl)
+      || (postReference && references.has(postReference))
+      || (graphReference && references.has(graphReference));
+  });
   return match?.id || "";
+}
+
+export function facebookContentReference(value) {
+  try {
+    const url = new URL(value);
+    return url.pathname.match(/\/(?:posts|videos|reel)\/([A-Za-z0-9_-]+)/i)?.[1]
+      || url.searchParams.get("story_fbid")
+      || "";
+  } catch { return ""; }
 }

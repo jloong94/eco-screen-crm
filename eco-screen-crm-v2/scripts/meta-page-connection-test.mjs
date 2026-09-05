@@ -14,6 +14,7 @@ process.env.SUPABASE_URL = "https://db.example.test";
 process.env.SUPABASE_SECRET_KEY = "server-only";
 
 const { encryptToken, graph, metaConfig, oauthUrl, openPageConnection, sealPageConnection, signState, verifyState, verifyWebhookSignature } = await import("../api/_lib/meta.js");
+const { facebookContentReference } = await import("../api/meta/comments.js");
 const config = metaConfig();
 assert.deepEqual(config.missing, []);
 const authorizationUrl = new URL(oauthUrl(config, "test-state"));
@@ -28,6 +29,8 @@ globalThis.fetch = async (url) => {
 await graph(config, "me/accounts", "page-token");
 globalThis.fetch = originalFetch;
 assert.match(new URL(graphRequestUrl).searchParams.get("appsecret_proof"), /^[a-f0-9]{64}$/);
+assert.equal(facebookContentReference("https://www.facebook.com/example/posts/pfbidExample123"), "pfbidExample123");
+assert.equal(facebookContentReference("https://www.facebook.com/example/videos/123456789"), "123456789");
 const state = signState(config, "nonce");
 assert.equal(verifyState(config, state, "nonce"), true);
 assert.equal(verifyState(config, state, "wrong"), false);
