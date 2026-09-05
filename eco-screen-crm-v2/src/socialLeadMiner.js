@@ -63,16 +63,18 @@ export function renderSocialLeadMinerPage() {
         </div></details>
         <div class="social-simple-notice">
           <strong>${t("How to find customers")}</strong>
-          <span>贴同行链接 → 开始找客户 → 查看询价者和公开主页。首次使用请安装 <a href="/public/eco-screen-helper.zip" download>找客户助手</a>（<a href="/public/helper-install.html" target="_blank" rel="noopener">安装方法</a>）。</span>
+          <span>免安装：打开同行贴文，复制公开评论到下方，点击「找出有意向客户」。系统会评分、去重并整理名单。</span>
         </div>
         <div class="form-grid compact">
-          <label>${t("Platform")}<select id="socialPlatform"><option value="tiktok">TikTok</option><option value="facebook">Facebook</option><option value="rednote">${t("Xiaohongshu / RedNote")}</option></select></label>
-          <label class="wide">${t("Post / Video URL")}<input id="socialSourceUrl" type="url" placeholder="${t("Paste a public post or video URL")}" /></label>
-          <label>${t("Maximum Leads")}<select id="socialMaximumLeads"><option>50</option><option>100</option><option>200</option></select></label>
+          <label class="wide">① 同行贴文链接<input id="socialSourceUrl" type="url" placeholder="粘贴 TikTok、Facebook 或小红书链接，自动识别平台" /></label>
+          <button class="btn" id="socialOpenSourceButton" type="button">打开贴文，复制评论</button>
+          <label class="wide">② 粘贴公开评论<textarea id="socialPastedComments" rows="6" placeholder="例如：Ali: berapa harga?&#10;小陈: 槟城可以安装吗？"></textarea><small>尽量连同用户名和公开主页链接一起复制；没有主页链接的评论可能无法直接找到本人。</small></label>
         </div>
         <details class="social-advanced">
           <summary>${t("Advanced Settings")}</summary>
-          <label class="wide">备用：粘贴公开评论<textarea id="socialPastedComments" rows="5" placeholder="@用户名: 多少钱？"></textarea></label>
+          <label>${t("Platform")}<select id="socialPlatform"><option value="tiktok">TikTok</option><option value="facebook">Facebook</option><option value="rednote">${t("Xiaohongshu / RedNote")}</option></select></label>
+          <label>最多分析评论<select id="socialMaximumLeads"><option>50</option><option>100</option><option selected>200</option></select></label>
+          <label><input id="socialUseConnector" type="checkbox" /> 使用已配置的自动采集连接（可选）</label>
           <div class="form-grid compact">
             <label>${t("Trigger Keywords")}<input id="socialTriggerKeywords" placeholder="berapa harga, interested" /></label>
             <label>${t("Exclude Keywords")}<input id="socialExcludeKeywords" placeholder="spam, giveaway" /></label>
@@ -92,11 +94,11 @@ export function renderSocialLeadMinerPage() {
           </section>
         </details>
         <div class="actions">
-          <button class="btn primary" id="socialStartScanButton" type="button">开始找客户</button>
+          <button class="btn primary" id="socialStartScanButton" type="button">③ 找出有意向客户</button>
           <button class="btn danger" id="socialStopScanButton" type="button" hidden>${t("Stop Scan")}</button>
           <span class="pill">TikTok · Facebook · ${t("RedNote")}</span>
         </div>
-        <p id="socialScanStatus" class="muted-text">${escapeHtml(scanMessage || "助手会在您的浏览器打开内容。请保持浏览器开启；如出现登录或验证，请自行完成后重试。")}</p>
+        <p id="socialScanStatus" class="muted-text" role="status">${escapeHtml(scanMessage || "不需要安装插件。此方式分析您粘贴的评论，不会自动读取整条视频的评论。")}</p>
       </section>
 
       <section class="card social-result-guide">
@@ -128,6 +130,14 @@ export function attachSocialLeadMinerEvents(renderShell) {
   void loadMetaPageStatus();
   document.querySelector("#metaPageConnectButton")?.addEventListener("click", () => window.location.assign("/api/meta/oauth/start"));
   document.querySelector("#socialStartScanButton")?.addEventListener("click", () => startDirectScan(renderShell));
+  document.querySelector("#socialSourceUrl")?.addEventListener("input", detectSourcePlatform);
+  document.querySelector("#socialOpenSourceButton")?.addEventListener("click", () => {
+    detectSourcePlatform();
+    const platform = document.querySelector("#socialPlatform")?.value || "tiktok";
+    const url = socialProvider(platform).validateSourceUrl(document.querySelector("#socialSourceUrl")?.value || "");
+    if (url) window.open(url, "_blank", "noopener,noreferrer");
+    else document.querySelector("#socialScanStatus").textContent = "请先粘贴正确的 TikTok、Facebook 或小红书贴文链接。";
+  });
   document.querySelector("#socialStopScanButton")?.addEventListener("click", stopDirectScan);
   document.querySelector("#socialTemplateButton")?.addEventListener("click", downloadTemplate);
   document.querySelector("#socialCsvFile")?.addEventListener("change", (event) => importSelectedFile(event, renderShell));
@@ -331,7 +341,14 @@ function leadRowHtml(lead) {
   </tr>`;
 }
 
+function detectSourcePlatform() {
+  const sourceUrl = document.querySelector("#socialSourceUrl")?.value || "";
+  const platform = socialProviderPlatforms().find(value => socialProvider(value).validateSourceUrl(sourceUrl));
+  if (platform) document.querySelector("#socialPlatform").value = platform;
+}
+
 async function startDirectScan(renderShell) {
+  detectSourcePlatform();
   const status = document.querySelector("#socialScanStatus");
   const startButton = document.querySelector("#socialStartScanButton");
   const stopButton = document.querySelector("#socialStopScanButton");
@@ -348,6 +365,10 @@ async function startDirectScan(renderShell) {
     const triggerKeywords = document.querySelector("#socialTriggerKeywords")?.value || "";
     const excludeKeywords = document.querySelector("#socialExcludeKeywords")?.value || "";
     const pastedComments = document.querySelector("#socialPastedComments")?.value || "";
+    if (!pastedComments.trim() && !document.querySelector("#socialUseConnector")?.checked) {
+      document.querySelector("#socialPastedComments")?.focus();
+      throw new Error("请先打开贴文，把公开评论复制到上面的框里，再找客户。无需安装任何东西。");
+    }
     const contactEligibility = document.querySelector("#socialBrandInteraction")?.checked ? "direct_brand_interaction" : "not_eligible";
     if (pastedComments.trim()) {
       const validatedSourceUrl = provider.validateSourceUrl?.(sourceUrl) || "";
