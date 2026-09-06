@@ -1,5 +1,6 @@
 // Runs only after a user starts a scan. Reads rendered comments, never cookies or private APIs.
 export async function collectPublicComments(platform, maximum) {
+  if (Array.isArray(platform)) [platform, maximum] = platform;
   window.__ecoCollectorStop = false;
   const selectors = {
     tiktok: '[data-e2e="comment-item"], [class*="DivCommentItemContainer"]',

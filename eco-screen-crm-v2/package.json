@@ -4,6 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "collector": "node scripts/local-social-service.mjs",
+    "test:social-profiles": "node scripts/social-profile-test.mjs",
     "dev": "node scripts/dev-server.mjs",
     "build": "node scripts/build.mjs",
     "preview": "node scripts/dev-server.mjs dist",
@@ -12,6 +14,7 @@
     "test:meta-page": "node scripts/meta-page-connection-test.mjs",
     "test:workflow": "node scripts/workflow-test.mjs"
   },
-  "dependencies": {},
-  "devDependencies": {}
+  "devDependencies": {
+    "playwright-core": "^1.63.0"
+  }
 }

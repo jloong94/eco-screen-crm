@@ -1,4 +1,6 @@
 import { runtimeEnv } from "./env.js";
+import { socialSource } from "./socialSources.js";
+import { scanLocalSource } from "./localSocialProvider.js";
 
 const providers = new Map();
 
@@ -70,9 +72,10 @@ export function validateRedNoteSourceUrl(value) {
 const tiktokProvider = {
   platform: "tiktok",
   label: "TikTok",
-  validateSourceUrl: validateTikTokVideoUrl,
+  validateSourceUrl: value => socialSource(value)?.platform === "tiktok" ? socialSource(value).url : "",
   capabilities: Object.freeze({ comments: true, pagination: true, stop: true }),
   async scan(request = {}) {
+    if (request.local) return scanLocalSource(request);
     const sourceUrl = validateTikTokVideoUrl(request.sourceUrl);
     if (!sourceUrl) throw new SocialProviderError("INVALID_SOURCE_URL", "Enter a valid public TikTok video URL.");
     if (browserCollectorReady()) return scanBrowserCollector({ ...request, sourceUrl, platform: "tiktok" });
@@ -113,9 +116,10 @@ function createEndpointProvider({ platform, label, endpointKey, validateSourceUr
   return {
     platform,
     label,
-    validateSourceUrl,
+    validateSourceUrl: value => socialSource(value)?.platform === platform ? socialSource(value).url : "",
     capabilities: Object.freeze({ comments: true, pagination: true, stop: true }),
     async scan(request = {}) {
+      if (request.local) return scanLocalSource(request);
       const sourceUrl = validateSourceUrl(request.sourceUrl);
       if (!sourceUrl) throw new SocialProviderError("INVALID_SOURCE_URL", invalidMessage);
       if (browserCollectorReady()) return scanBrowserCollector({ ...request, sourceUrl, platform });
