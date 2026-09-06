@@ -1,0 +1,10 @@
+**/.local
+**/.local/**
+**/node_modules
+**/node_modules/**
+**/.env
+**/.env.local
+**/.env.*.local
+eco-screen-crm-stable
+eco-screen-crm-v2/scripts/local-social-service.mjs
+eco-screen-crm-v2/scripts/start-local-social.mjs
