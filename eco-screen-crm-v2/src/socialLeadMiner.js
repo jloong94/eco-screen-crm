@@ -1,6 +1,7 @@
 import { t } from "./i18n.js";
 import { isBossOrAdmin } from "./permissions.js";
 import { normalizeSocialPlatform, socialProvider, socialProviderPlatforms } from "./socialProviders.js";
+import { localCollectorStatus } from "./localSocialProvider.js";
 import { persistSocialLeads, state, uid } from "./state.js";
 
 const supportedPlatforms = new Set(socialProviderPlatforms());
@@ -32,6 +33,8 @@ const locationRules = [
 let filters = { query: "", platform: "", level: "", status: "", location: "", need: "" };
 let activeScanController = null;
 let scanMessage = "";
+let scanSourceUrl = "";
+let scanMaximum = "50";
 
 export function renderSocialLeadMinerPage() {
   const leads = socialLeadRows();
@@ -66,8 +69,8 @@ export function renderSocialLeadMinerPage() {
           <span>贴商家主页或贴文链接 → 找客户 → 查看公开询价名单。三个平台自动识别。</span>
         </div>
         <div class="form-grid compact">
-          <label class="wide">商家主页／贴文链接<input id="socialSourceUrl" type="url" placeholder="TikTok、Facebook、小红书主页均可" /></label>
-          <label>最多分析评论<select id="socialMaximumLeads"><option selected>50</option><option>100</option><option>200</option></select></label>
+          <label class="wide">商家主页／贴文链接<input id="socialSourceUrl" type="url" value="${escapeHtml(scanSourceUrl)}" placeholder="TikTok、Facebook、小红书主页均可" /></label>
+          <label>最多分析评论<select id="socialMaximumLeads">${["50", "100", "200"].map(value => option(value, scanMaximum)).join("")}</select></label>
         </div>
         <details class="social-advanced">
           <summary>${t("Advanced Settings")}</summary>
@@ -98,7 +101,8 @@ export function renderSocialLeadMinerPage() {
           <button class="btn danger" id="socialStopScanButton" type="button" hidden>${t("Stop Scan")}</button>
           <span class="pill">TikTok · Facebook · ${t("RedNote")}</span>
         </div>
-        <p id="socialScanStatus" class="muted-text" role="status">${escapeHtml(scanMessage || "需要本机采集服务运行；本次最多读取主页上已加载的 5 条贴文。遇到登录或验证码会停止，请本人完成后重试。")}</p>
+        <p id="socialCollectorStatus" class="muted-text">正在检查本机找客户服务…</p>
+        <p id="socialScanStatus" class="muted-text" role="status">${escapeHtml(scanMessage || "本次最多读取主页上已加载的 5 条贴文。遇到登录或验证码会停止，请本人完成后重试。")}</p>
       </section>
 
       <section class="card social-result-guide">
@@ -128,9 +132,11 @@ export function renderSocialLeadMinerPage() {
 export function attachSocialLeadMinerEvents(renderShell) {
   if (!isBossOrAdmin()) return;
   void loadMetaPageStatus();
+  void loadLocalCollectorStatus();
   document.querySelector("#metaPageConnectButton")?.addEventListener("click", () => window.location.assign("/api/meta/oauth/start"));
   document.querySelector("#socialStartScanButton")?.addEventListener("click", () => startDirectScan(renderShell));
-  document.querySelector("#socialSourceUrl")?.addEventListener("input", detectSourcePlatform);
+  document.querySelector("#socialSourceUrl")?.addEventListener("input", event => { scanSourceUrl = event.target.value; detectSourcePlatform(); });
+  document.querySelector("#socialMaximumLeads")?.addEventListener("change", event => { scanMaximum = event.target.value; });
   document.querySelector("#socialOpenSourceButton")?.addEventListener("click", () => {
     detectSourcePlatform();
     const platform = document.querySelector("#socialPlatform")?.value || "tiktok";
@@ -362,6 +368,8 @@ async function startDirectScan(renderShell) {
   try {
     const sourceUrl = document.querySelector("#socialSourceUrl")?.value || "";
     const maximum = document.querySelector("#socialMaximumLeads")?.value || 50;
+    scanSourceUrl = sourceUrl;
+    scanMaximum = String(maximum);
     const triggerKeywords = document.querySelector("#socialTriggerKeywords")?.value || "";
     const excludeKeywords = document.querySelector("#socialExcludeKeywords")?.value || "";
     const pastedComments = document.querySelector("#socialPastedComments")?.value || "";
@@ -411,7 +419,7 @@ async function startDirectScan(renderShell) {
     renderShell();
   } catch (error) {
     scanMessage = t(error?.message || "Social provider could not be reached.");
-    if (status) status.textContent = scanMessage;
+    renderShell();
   } finally {
     activeScanController = null;
     if (startButton) startButton.disabled = false;
@@ -616,6 +624,16 @@ function intentReasonLabel(value) {
   if (reason === "Excluded by administrator keyword.") return "已被排除关键词过滤。";
   if (reason === "No strong buying-intent phrase detected.") return "未发现明确购买意向。";
   return reason;
+}
+
+async function loadLocalCollectorStatus() {
+  const status = document.querySelector("#socialCollectorStatus");
+  const ready = await localCollectorStatus();
+  if (!status?.isConnected) return;
+  status.textContent = ready
+    ? "本机找客户服务：已连接。可以直接贴主页或贴文链接。"
+    : "本机找客户服务：未启动。请在这台电脑双击 Start Social Collector 后刷新页面；手机不能自动采集。";
+  status.classList.toggle("error-text", !ready);
 }
 
 async function loadMetaPageStatus() {

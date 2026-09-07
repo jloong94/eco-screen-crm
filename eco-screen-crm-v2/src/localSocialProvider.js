@@ -1,5 +1,13 @@
 const base = "http://127.0.0.1:4318";
 
+export async function localCollectorStatus() {
+  try {
+    const response = await fetch(`${base}/health`, {signal: AbortSignal.timeout(1800)});
+    const data = await response.json();
+    return Boolean(response.ok && data.ready);
+  } catch { return false; }
+}
+
 export async function scanLocalSource(request) {
   let id;
   let stopped = false;

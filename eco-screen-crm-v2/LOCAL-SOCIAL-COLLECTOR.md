@@ -10,12 +10,12 @@
 
 扫描结果只在本机服务内存保留，完成 10 分钟后于下次请求清理。正式网站收到结果后沿用现有 social leads 存储。已有 CRM 资料及 schema 没有迁移或修改。
 
-## 2026-09-06 验证
+## 2026-09-07 验证
 
 - Lint、主页路由／URL 检查、社交评分与去重测试、提取器样本测试、build：通过。
-- TikTok `@veemaxsecuremesh`：未能发现可读取贴文，0 条评论，BLOCKED。
-- Facebook `renexsteel`：发现 1 条贴文，评论未读取，0 条，BLOCKED。
-- 小红书给定贴文：跳转到登录／不支持地址，0 条，BLOCKED。未提供该商家主页，主页流程仅做自动测试，未通过真实主页验收。
+- TikTok `@veemaxsecuremesh` 主页未能发现可读取贴文；其指定视频也未读到评论，0 条，BLOCKED。
+- Facebook `renexsteel` 主页与指定视频均发现 1 条贴文，但评论未读取，0 条，BLOCKED。
+- 小红书给定贴文被平台中断／跳转，0 条，BLOCKED。未提供该商家主页，主页流程只有路由测试，未通过真实主页验收。
 - 上述不代表真实客户采集成功。三个平台均需真实评论读取后再验收。
 
 检查：`npm run test:social-profiles`、`npm run test:social-leads`、`node scripts/browser-helper-test.mjs`。
