@@ -94,7 +94,7 @@ async function scan(job, source) {
 }
 
 const server = http.createServer(async (req, res) => {
-  if (req.headers.host !== `127.0.0.1:${port}` || req.headers.origin !== origin) return reply(res, 403, {error: "Forbidden"});
+  if (![`127.0.0.1:${port}`, `localhost:${port}`].includes(req.headers.host) || req.headers.origin !== origin) return reply(res, 403, {error: "Forbidden"});
   res.setHeader("Access-Control-Allow-Origin", origin);
   res.setHeader("Vary", "Origin");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
