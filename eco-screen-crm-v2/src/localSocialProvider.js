@@ -19,7 +19,7 @@ export function scanLocalSource(request) {
   url.searchParams.set("source", request.sourceUrl);
   url.searchParams.set("maximum", String(request.maximum || 50));
   url.searchParams.set("nonce", nonce);
-  const popup = window.open(url, "eco-social-collector", "popup,width=560,height=620");
+  const popup = window.open(url, "_blank");
   if (!popup) return Promise.reject(new Error("浏览器阻止了采集窗口。请允许此网站弹出窗口后重试。"));
   return new Promise((resolve, reject) => {
     const initialTimer = setTimeout(() => finish(new Error("本机采集服务未启动。请双击 Start Social Collector 后重试。")), 12000);
