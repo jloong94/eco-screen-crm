@@ -8,12 +8,23 @@ import { collectPublicComments } from "../browser-helper/collector.js";
 
 const port = 4318;
 const origin = "https://eco-screen-crm-v2.vercel.app";
+const localOrigin = `http://localhost:${port}`;
 const jobs = new Map();
 let active;
 let browser;
 let lastStart = 0;
 const executablePath = [process.env.SOCIAL_BROWSER_PATH, "C:/Program Files/Google/Chrome/Application/chrome.exe", "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"].find(path => path && existsSync(path));
 const reply = (res, status, data) => { res.writeHead(status, {"Content-Type": "application/json", "Cache-Control": "no-store"}); res.end(JSON.stringify(data)); };
+const replyHtml = (res, status, html, scriptNonce) => {
+  res.writeHead(status, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store",
+    "Content-Security-Policy": `default-src 'none'; script-src 'nonce-${scriptNonce}'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'`,
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+  });
+  res.end(html);
+};
 const publicJob = job => ({id: job.id, status: job.status, postsFound: job.postsFound, postsScanned: job.postsScanned, commentsFound: job.comments.length, message: job.message, failures: job.failures, partial: true, ...(job.status === "complete" ? {comments: job.comments} : {})});
 
 async function open(url, job) {
@@ -93,16 +104,35 @@ async function scan(job, source) {
   } finally { active = null; job.finishedAt = Date.now(); }
 }
 
+function scanWindow({sourceUrl, maximum, nonce, scriptNonce}) {
+  const config = JSON.stringify({sourceUrl, maximum, nonce, origin});
+  return `<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Eco Screen 找客户</title><style>body{font-family:Arial,sans-serif;background:#f4f7f5;color:#173f35;margin:0;padding:28px}main{max-width:480px;margin:auto;background:white;border:1px solid #dce7e2;border-radius:18px;padding:24px;box-shadow:0 12px 30px #173f3515}h1{font-size:24px;margin-top:0}.spinner{width:28px;height:28px;border:4px solid #dce7e2;border-top-color:#236b58;border-radius:50%;animation:s 1s linear infinite;margin:18px 0}@keyframes s{to{transform:rotate(360deg)}}p{line-height:1.6}button{padding:10px 16px;border:0;border-radius:9px;background:#a33;color:white;font-weight:700}</style></head><body><main><h1>正在找客户</h1><div class="spinner"></div><p id="status">正在连接本机采集服务…</p><button id="stop" type="button">停止扫描</button></main><script nonce="${scriptNonce}">const config=${config};let jobId="";let stopped=false;const status=document.querySelector("#status");const send=(type,data={})=>window.opener?.postMessage({channel:"eco-social-collector",nonce:config.nonce,type,...data},config.origin);const fail=message=>{status.textContent=message;send("error",{message})};const call=async(path,options={})=>{const response=await fetch(path,options);const data=await response.json();if(!response.ok)throw new Error(data.error||"读取失败，请重试。");return data};document.querySelector("#stop").onclick=async()=>{stopped=true;if(jobId)await call("/jobs/"+jobId+"/stop",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}).catch(()=>{});fail("已停止扫描。");};window.addEventListener("message",event=>{if(event.origin===config.origin&&event.data?.channel==="eco-social-collector"&&event.data?.nonce===config.nonce&&event.data?.type==="stop")document.querySelector("#stop").click()});(async()=>{try{send("progress",{message:"本机采集窗口已连接，正在打开商家页面…"});const job=await call("/jobs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sourceUrl:config.sourceUrl,maximum:config.maximum})});jobId=job.id;while(!stopped){await new Promise(resolve=>setTimeout(resolve,1500));const current=await call("/jobs/"+jobId);status.textContent=current.message;send("progress",{message:current.message});if(current.status==="complete"){send("complete",{result:{comments:current.comments,partial:true,failures:current.failures,postsScanned:current.postsScanned}});status.textContent="扫描完成，可以返回客户名单。";setTimeout(()=>window.close(),800);break}if(current.status!=="running"){fail(current.message);break}}}catch(error){fail(error.message||"本机采集服务发生错误。")} })();</script></body></html>`;
+}
+
 const server = http.createServer(async (req, res) => {
-  if (![`127.0.0.1:${port}`, `localhost:${port}`].includes(req.headers.host) || req.headers.origin !== origin) return reply(res, 403, {error: "Forbidden"});
-  res.setHeader("Access-Control-Allow-Origin", origin);
+  const allowedHost = [`127.0.0.1:${port}`, `localhost:${port}`].includes(req.headers.host);
+  const requestUrl = new URL(req.url, localOrigin);
+  if (!allowedHost) return reply(res, 403, {error: "Forbidden"});
+  if (req.method === "GET" && requestUrl.pathname === "/scan") {
+    let referrerOrigin = "";
+    try { referrerOrigin = new URL(req.headers.referer || "").origin; } catch {}
+    const source = socialSource(requestUrl.searchParams.get("source"));
+    const nonce = requestUrl.searchParams.get("nonce") || "";
+    const maximum = Math.min(200, Math.max(1, Number(requestUrl.searchParams.get("maximum")) || 50));
+    if (referrerOrigin !== origin || !source || !/^[a-f0-9-]{20,64}$/i.test(nonce)) return reply(res, 403, {error: "Invalid scan request"});
+    const scriptNonce = randomUUID().replaceAll("-", "");
+    return replyHtml(res, 200, scanWindow({sourceUrl: source.url, maximum, nonce, scriptNonce}), scriptNonce);
+  }
+  const requestOrigin = req.headers.origin || "";
+  if (![origin, localOrigin].includes(requestOrigin)) return reply(res, 403, {error: "Forbidden"});
+  res.setHeader("Access-Control-Allow-Origin", requestOrigin);
   res.setHeader("Vary", "Origin");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   res.setHeader("Access-Control-Allow-Private-Network", "true");
   if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
   for (const [id, job] of jobs) if (job.finishedAt && Date.now() - job.finishedAt > 600000) jobs.delete(id);
-  const path = new URL(req.url, `http://127.0.0.1:${port}`).pathname;
+  const path = requestUrl.pathname;
   if (req.method === "GET" && path === "/health") return reply(res, 200, {ready: Boolean(executablePath), platforms: ["tiktok", "facebook", "rednote"], activeJobId: active?.id || null});
   const id = path.match(/^\/jobs\/([a-f0-9-]+)(?:\/stop)?$/)?.[1];
   if (id && req.method === "GET") return jobs.has(id) ? reply(res, 200, publicJob(jobs.get(id))) : reply(res, 404, {error: "任务已过期，请重试。"});

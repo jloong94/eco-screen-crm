@@ -1,7 +1,6 @@
 import { t } from "./i18n.js";
 import { isBossOrAdmin } from "./permissions.js";
 import { normalizeSocialPlatform, socialProvider, socialProviderPlatforms } from "./socialProviders.js";
-import { localCollectorStatus } from "./localSocialProvider.js";
 import { persistSocialLeads, state, uid } from "./state.js";
 
 const supportedPlatforms = new Set(socialProviderPlatforms());
@@ -626,14 +625,11 @@ function intentReasonLabel(value) {
   return reason;
 }
 
-async function loadLocalCollectorStatus() {
+function loadLocalCollectorStatus() {
   const status = document.querySelector("#socialCollectorStatus");
-  const ready = await localCollectorStatus();
   if (!status?.isConnected) return;
-  status.textContent = ready
-    ? "本机找客户服务：已连接。可以直接贴主页或贴文链接。"
-    : "本机找客户服务：未启动。请在这台电脑双击 Start Social Collector 后刷新页面；手机不能自动采集。";
-  status.classList.toggle("error-text", !ready);
+  status.textContent = "点击找客户后会自动打开本机采集窗口；手机暂不支持自动采集。";
+  status.classList.remove("error-text");
 }
 
 async function loadMetaPageStatus() {
