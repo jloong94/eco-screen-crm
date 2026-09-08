@@ -38,6 +38,11 @@ export function scanLocalSource(request) {
     const receive = event => {
       if (event.origin !== base || event.source !== popup || event.data?.channel !== "eco-social-collector" || event.data?.nonce !== nonce) return;
       clearTimeout(initialTimer);
+      if (event.data.type === "ready") {
+        popup.postMessage({channel: "eco-social-collector", type: "authorize", nonce}, base);
+        request.onProgress?.("本机采集窗口已连接，正在打开商家页面…");
+        return;
+      }
       if (event.data.type === "progress") request.onProgress?.(event.data.message);
       if (event.data.type === "error") finish(new Error(event.data.message || "读取失败，请重试。"));
       if (event.data.type === "complete") finish(null, event.data.result);
