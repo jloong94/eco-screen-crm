@@ -1,6 +1,7 @@
 import { state } from "./state.js";
 
 export const pageDefinitions = [
+  { id: "lead-radar", label: "Lead Radar", title: "Lead Radar" },
   { id: "dashboard", label: "Dashboard", title: "Dashboard" },
   { id: "quotation", label: "Quotation", title: "Quotation" },
   { id: "customers", label: "Customers", title: "Customers" },
@@ -17,8 +18,8 @@ export const pageDefinitions = [
 export const rolePages = {
   Boss: pageDefinitions.map((page) => page.id),
   Admin: pageDefinitions.map((page) => page.id),
-  Secretary: ["dashboard", "orders", "quotation", "customers", "production", "installation", "scheduling", "warranty"],
-  Sales: ["quotation", "customers", "orders"],
+  Secretary: ["lead-radar", "dashboard", "orders", "quotation", "customers", "production", "installation", "scheduling", "warranty"],
+  Sales: ["lead-radar", "quotation", "customers", "orders"],
   Production: ["production"],
   Installer: ["installation"]
 };

@@ -1,3 +1,4 @@
+import { identity, authenticatedHeaders } from './session.js';
 import { runtimeEnv } from "./env.js";
 
 export const cloudCollections = [
@@ -15,7 +16,7 @@ export const cloudCollections = [
 ];
 
 const tableName = "crm_v2_sync";
-const firstWriteBackupKey = "ecoScreenV2.preCloudWriteBackup.v1";
+const firstWriteBackupKey = "ecoScreenV2.preCloudWriteBackup.v2." + identity.companyId;
 let backupInProgress = null;
 
 export function cloudConfigurationIssue() {
@@ -33,8 +34,8 @@ export async function loadData(collection) {
   const configurationIssue = cloudConfigurationIssue();
   if (configurationIssue) return { ok: false, reason: configurationIssue, data: null, found: false };
   try {
-    const response = await fetch(`${normalizedSupabaseUrl()}/rest/v1/${tableName}?collection=eq.${encodeURIComponent(collection)}&select=collection,data,updated_at`, {
-      headers: supabaseHeaders()
+    const response = await fetch(`${normalizedSupabaseUrl()}/rest/v1/${tableName}?company_id=eq.${encodeURIComponent(identity.companyId)}&collection=eq.${encodeURIComponent(collection)}&select=collection,data,updated_at`, {
+      headers: await authenticatedHeaders()
     });
     if (!response.ok) return httpFailure(response, "load");
     const rows = await response.json();
@@ -260,13 +261,14 @@ function sameRows(left, right, collection = "") {
 
 async function writeCollection(collection, data) {
   try {
-    const response = await fetch(`${normalizedSupabaseUrl()}/rest/v1/${tableName}?on_conflict=collection`, {
+    const response = await fetch(`${normalizedSupabaseUrl()}/rest/v1/${tableName}?on_conflict=company_id,collection`, {
       method: "POST",
       headers: {
-        ...supabaseHeaders(),
+        ...await authenticatedHeaders(),
         Prefer: "resolution=merge-duplicates,return=minimal"
       },
       body: JSON.stringify({
+        company_id: identity.companyId,
         collection,
         data: Array.isArray(data) ? data : [],
         updated_at: new Date().toISOString()
@@ -386,12 +388,4 @@ function supabaseHost() {
   } catch {
     return "";
   }
-}
-
-function supabaseHeaders() {
-  return {
-    apikey: runtimeEnv.VITE_SUPABASE_ANON_KEY,
-    Authorization: `Bearer ${runtimeEnv.VITE_SUPABASE_ANON_KEY}`,
-    "Content-Type": "application/json"
-  };
 }

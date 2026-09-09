@@ -1,3 +1,5 @@
+import { build } from 'esbuild';
+import { readFileSync } from 'node:fs';
 import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 
@@ -13,4 +15,7 @@ await writeFile("dist/src/env.js", `export const runtimeEnv = ${JSON.stringify({
   VITE_FACEBOOK_SCAN_ENDPOINT: process.env.VITE_FACEBOOK_SCAN_ENDPOINT || "/api/meta/comments",
   VITE_REDNOTE_SCAN_ENDPOINT: process.env.VITE_REDNOTE_SCAN_ENDPOINT || ""
 }, null, 2)};\n`);
-console.log("Build complete: dist/index.html");
+
+
+await build({entryPoints:['src/bootstrap.js'],bundle:true,format:'esm',platform:'browser',target:'es2022',outfile:'dist/src/bootstrap.js',plugins:[{name:'runtime-env',setup(b){b.onLoad({filter:/[/\\]env\.js$/},()=>({contents:readFileSync('dist/src/env.js','utf8')}));}}]});
+console.log('Build complete: dist/index.html');

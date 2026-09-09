@@ -1,21 +1,17 @@
+import { identity, supabase, signOut } from './session.js';
 import { roles } from "./data.js";
 import { t } from "./i18n.js";
 import { canManageUsers, defaultPageForRole } from "./permissions.js";
 import { persistUsers, setCurrentUser, setLanguage, setPage, state, uid } from "./state.js";
 
-export function login(username, pin) {
-  const user = state.users.find((row) => row.username.toLowerCase() === String(username || "").trim().toLowerCase());
-  if (!user) return { ok: false, message: t("Invalid username or PIN.") };
-  if (user.active === false) return { ok: false, message: t("This user is inactive.") };
-  if (String(user.pin || "") !== String(pin || "")) return { ok: false, message: t("Invalid username or PIN.") };
-  setCurrentUser(user);
-  setPage(defaultPageForRole(user.role));
-  return { ok: true, message: t("Signed in successfully.") };
+export async function login(email, password) {
+  if (!supabase) return { ok: false, message: 'Supabase configuration is missing.' };
+  const { error } = await supabase.auth.signInWithPassword({ email: String(email).trim(), password });
+  if (error) return { ok: false, message: '邮箱或密码不正确，或账号尚未确认。' };
+  location.reload();
+  return { ok: true };
 }
-
-export function logout() {
-  setCurrentUser(null);
-}
+export function logout() { setCurrentUser(null); return signOut(); }
 
 export function renderLoginCard() {
   return `
@@ -37,10 +33,10 @@ export function renderLoginCard() {
           </label>
         </div>
         <form id="loginForm" class="stack">
-          <label>${t("Username")}<input id="loginUsername" autocomplete="username" placeholder="boss1" /></label>
-          <label>${t("PIN / Password")}<input id="loginPin" type="password" autocomplete="current-password" placeholder="1234" /></label>
+          <label>${"Email"}<input id="loginUsername" type="email" required autocomplete="username" placeholder="Email" /></label>
+          <label>${"Password"}<input id="loginPin" type="password" autocomplete="current-password" required /></label>
           <button class="btn primary" type="submit">${t("Login")}</button>
-          <p id="loginMessage" class="muted-text">${t("Boss 1 and Boss 2 have full permissions.")}</p>
+          <p id="loginMessage" class="muted-text">${escapeHtml(identity.error || "使用已绑定公司的 Supabase 账号登录。") }</p>
         </form>
       </section>
     </main>
@@ -48,24 +44,7 @@ export function renderLoginCard() {
 }
 
 export function renderUserManagement() {
-  if (!canManageUsers()) {
-    return `<p class="muted-text">${t("Permission denied: your role cannot perform this action.")}</p>`;
-  }
-  return `
-    <section class="staff-form">
-      <div class="form-grid compact">
-        <label>${t("Name")}<input id="staffName" placeholder="${t("Staff name")}" /></label>
-        <label>${t("Username")}<input id="staffUsername" placeholder="username" /></label>
-        <label>${t("PIN / Password")}<input id="staffPin" type="password" placeholder="1234" /></label>
-        <label>${t("Role")}<select id="staffRole">${roles.map((role) => `<option value="${role}">${t(role)}</option>`).join("")}</select></label>
-      </div>
-      <button class="btn primary" id="addStaffButton" type="button">${t("Add Staff")}</button>
-      <p id="staffSaveStatus" class="muted-text"></p>
-    </section>
-    <div class="product-list staff-list">
-      ${state.users.map((user) => staffCardHtml(user)).join("")}
-    </div>
-  `;
+  return '<p class="muted-text">登录账号、公司和角色由管理员在 Supabase Auth 和 crm_v2_memberships 中管理。旧 PIN 不再用于登录。</p>';
 }
 
 function staffCardHtml(user) {
@@ -99,14 +78,17 @@ export function attachLoginEvents(renderShell) {
     setLanguage(event.target.value);
     renderShell();
   });
-  document.querySelector("#loginForm")?.addEventListener("submit", (event) => {
+  document.querySelector("#loginForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const result = login(document.querySelector("#loginUsername").value, document.querySelector("#loginPin").value);
-    if (!result.ok) {
-      document.querySelector("#loginMessage").textContent = result.message;
-      return;
-    }
-    renderShell();
+    const button = event.currentTarget.querySelector('button[type="submit"]');
+    if (button.disabled) return;
+    button.disabled = true;
+    try {
+      const result = await login(document.querySelector("#loginUsername").value, document.querySelector("#loginPin").value);
+      if (!result.ok) document.querySelector("#loginMessage").textContent = result.message;
+    } catch {
+      document.querySelector("#loginMessage").textContent = '登录服务暂时无法连接，请重试。';
+    } finally { button.disabled = false; }
   });
 }
 

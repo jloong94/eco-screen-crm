@@ -1,3 +1,4 @@
+import { renderLeadRadarPage, attachLeadRadarEvents } from './leadRadar.js';
 import { attachLoginEvents, attachUserManagementEvents, logout, renderLoginCard, renderUserManagement } from "./auth.js";
 import { renderAddProductForm, renderProducts, attachProductEvents } from "./products.js";
 import { attachQuotationEvents, renderQuotationForm } from "./quotations.js";
@@ -106,6 +107,7 @@ function renderNavigation() {
 }
 
 function currentPageHtml() {
+  if (state.currentPage === "lead-radar" && canAccessPage(role(), "lead-radar")) return renderLeadRadarPage();
   if (!canAccessPage(role(), state.currentPage)) {
     return `<section class="panel page-panel"><p class="muted-text">${t("You do not have permission to access this page.")}</p></section>`;
   }
@@ -350,6 +352,7 @@ function renderShell() {
     return;
   }
   syncCloudOnFirstLogin();
+  if (isCurrentPage("lead-radar")) attachLeadRadarEvents();
   attachHeaderEvents();
   attachNavigationEvents();
   if (isCurrentPage("quotation")) {

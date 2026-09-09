@@ -1,3 +1,4 @@
+import { identity } from './session.js';
 import { defaultCompanySettings, defaultProducts, defaultUsers } from "./data.js";
 import { loadJson, saveJson, storageKeys } from "./storage.js";
 import { isCloudConfigured, safeSyncWithCloud, saveData, syncToCloud } from "./cloudSync.js";
@@ -13,13 +14,14 @@ const workflowCollections = new Set(orderConversionCollections);
 
 const users = normalizeUsers(loadJson(storageKeys.users, defaultUsers));
 const currentUserId = localStorage.getItem(storageKeys.currentUserId) || "";
-const currentUser = users.find((user) => user.userId === currentUserId && user.active !== false) || null;
+const currentUser = identity.user;
 
 export const state = {
   language: localStorage.getItem(storageKeys.language) || "zh",
   users,
   currentUser,
-  role: currentUser?.role || localStorage.getItem(storageKeys.role) || "",
+  company_id: identity.companyId,
+  role: currentUser?.role || "",
   currentPage: localStorage.getItem(storageKeys.page) || "quotation",
   products: normalizeProducts(loadJson(storageKeys.products, defaultProducts)),
   customers: loadJson(storageKeys.customers, []),

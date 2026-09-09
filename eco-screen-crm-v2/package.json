@@ -6,15 +6,23 @@
   "scripts": {
     "collector": "node scripts/local-social-service.mjs",
     "test:social-profiles": "node scripts/social-profile-test.mjs",
-    "dev": "node scripts/dev-server.mjs",
+    "dev": "npm run build && node scripts/dev-server.mjs dist",
     "build": "node scripts/build.mjs",
     "preview": "node scripts/dev-server.mjs dist",
     "lint": "node scripts/lint.mjs",
     "test:social-leads": "node scripts/social-lead-miner-test.mjs",
     "test:meta-page": "node scripts/meta-page-connection-test.mjs",
-    "test:workflow": "node scripts/workflow-test.mjs"
+    "test:workflow": "node scripts/workflow-test.mjs",
+    "test:lead-radar": "node scripts/lead-radar-test.mjs",
+    "test:rls": "node scripts/rls-test.mjs",
+    "test:auth": "node scripts/auth-test.mjs"
   },
   "devDependencies": {
-    "playwright-core": "^1.63.0"
+    "playwright-core": "^1.63.0",
+    "@electric-sql/pglite": "0.5.8",
+    "esbuild": "0.28.2"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.116.0"
   }
 }

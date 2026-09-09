@@ -21,6 +21,14 @@ class MemoryStorage {
 globalThis.localStorage = new MemoryStorage();
 globalThis.document = { querySelector: () => null };
 globalThis.window = globalThis;
+const { runtimeEnv } = await import('../src/env.js');
+runtimeEnv.VITE_SUPABASE_URL = 'https://offline.example.invalid';
+runtimeEnv.VITE_SUPABASE_ANON_KEY = 'test-key';
+const { identity, supabase } = await import('../src/session.js');
+identity.companyId = '11111111-1111-4111-8111-111111111111';
+identity.user = { authUserId: 'test-user', userId: 'boss1', role: 'Boss' };
+supabase.auth.getSession = async () => ({ data: { session: { access_token: 'test-user-jwt' } }, error: null });
+const { storageKeys } = await import('../src/storage.js');
 
 const {
   applyCloudSnapshot,
@@ -30,7 +38,7 @@ const {
   state
 } = await import("../src/state.js");
 state.language = "en";
-const { runtimeEnv } = await import("../src/env.js");
+
 const { mergeRows, safeSyncWithCloud } = await import("../src/cloudSync.js");
 const { lineTotal } = await import("../src/calculations.js");
 const {
@@ -392,7 +400,7 @@ applyCloudSnapshot({
 assert(state.orders.some((order) => order.id === localOrder.id && order.customer.name === "Customer C"), "F: stale cloud snapshot must not overwrite newer local order");
 assert(state.orders.some((order) => order.id === "cloud-existing-order"), "F: unrelated cloud order should still merge");
 
-const persistedOrders = JSON.parse(localStorage.getItem("ecoScreenV2.orders") || "[]");
+const persistedOrders = JSON.parse(localStorage.getItem(storageKeys.orders) || "[]");
 assert(persistedOrders.some((order) => order.quoteId === quoteA.id), "G: first order should survive browser refresh storage reload");
 assert(persistedOrders.some((order) => order.quoteId === quoteB.id), "G: second order should survive browser refresh storage reload");
 assert(persistedOrders.some((order) => order.quoteId === quoteC.id), "G: cloud-failed order should survive browser refresh storage reload");
@@ -451,7 +459,7 @@ assert(JSON.stringify(state.orders[0].items) === originalItems, "H: item data mu
 assert(state.orders[0].total === originalTotal && state.orders[0].deposit === originalDeposit && state.orders[0].balance === originalBalance, "H: financial values must not change");
 assert(findOrderByNumber("so2607001")?.id === stableOrderId, "H: search should find the new number case-insensitively");
 assert(findOrderByNumber(oldOrderNumber) === null, "H: old order number should no longer be active");
-const persistedRenamedOrder = JSON.parse(localStorage.getItem("ecoScreenV2.orders") || "[]").find((order) => order.id === stableOrderId);
+const persistedRenamedOrder = JSON.parse(localStorage.getItem(storageKeys.orders) || "[]").find((order) => order.id === stableOrderId);
 assert(persistedRenamedOrder?.orderNo === "SO2607001", "H: changed number should survive a storage reload");
 
 state.orders = [...state.orders, {
@@ -484,7 +492,7 @@ assert(state.orders.find((order) => order.id === stableOrderId).status === "Sent
 assert(state.orders.length === workflowCountsBeforeStatus.orders, "K: status update must not create an order");
 assert(state.productionJobs.length === workflowCountsBeforeStatus.productionJobs, "K: status update must not create a production job");
 assert(state.installationJobs.length === workflowCountsBeforeStatus.installationJobs, "K: status update must not create an installation job");
-const persistedStatusOrder = JSON.parse(localStorage.getItem("ecoScreenV2.orders") || "[]").find((order) => order.id === stableOrderId);
+const persistedStatusOrder = JSON.parse(localStorage.getItem(storageKeys.orders) || "[]").find((order) => order.id === stableOrderId);
 assert(persistedStatusOrder?.status === "Sent to Production", "K: status should survive a storage reload");
 
 runtimeEnv.VITE_SUPABASE_URL = "https://offline.example.invalid";
@@ -493,7 +501,7 @@ globalThis.fetch = async () => { throw new Error("Simulated offline cloud"); };
 const offlineStatusUpdate = await updateOrderStatus(stableOrderId, "Production Completed");
 assert(offlineStatusUpdate.ok && offlineStatusUpdate.cloudOk === false, "L: cloud failure should be reported without rolling back local status");
 assert(state.orders.find((order) => order.id === stableOrderId).status === "Production Completed", "L: local status must remain after cloud failure");
-const persistedOfflineStatus = JSON.parse(localStorage.getItem("ecoScreenV2.orders") || "[]").find((order) => order.id === stableOrderId);
+const persistedOfflineStatus = JSON.parse(localStorage.getItem(storageKeys.orders) || "[]").find((order) => order.id === stableOrderId);
 assert(persistedOfflineStatus?.status === "Production Completed", "L: cloud-failed status must survive refresh storage reload");
 assert(state.orders.length === workflowCountsBeforeStatus.orders, "L: cloud failure must not duplicate orders");
 assert(state.productionJobs.length === workflowCountsBeforeStatus.productionJobs, "L: cloud failure must not duplicate production jobs");
@@ -587,7 +595,7 @@ assert(state.productionJobs.find((job) => job.id === "duplicate-production-job")
 assert(state.installationJobs.find((job) => job.id === "duplicate-installation-job").orderId === duplicateMainOrder.id, "M: installation reference should relink to Main Order");
 assert(state.warrantyCards[0].orderId === duplicateMainOrder.id, "M: warranty reference should relink to Main Order");
 assert(state.installationJobs.find((job) => job.id === "duplicate-installation-job").paymentRecords[0].orderId === duplicateMainOrder.id, "M: payment reference should relink to Main Order");
-assert(JSON.parse(localStorage.getItem("ecoScreenV2.orders") || "[]").some((order) => order.id === duplicateOrder.id && order.status === "duplicate_archived"), "M: archived duplicate should survive refresh storage reload");
+assert(JSON.parse(localStorage.getItem(storageKeys.orders) || "[]").some((order) => order.id === duplicateOrder.id && order.status === "duplicate_archived"), "M: archived duplicate should survive refresh storage reload");
 
 const archivedMemberIndex = state.orders.findIndex((order) => order.id === duplicateOrder.id);
 const restoreResult = await restoreArchivedDuplicate(`${duplicateOrder.id}::${archivedMemberIndex}`, { confirm: false });
@@ -601,7 +609,7 @@ const offlineDuplicateGroup = offlineDuplicateScan.confirmedGroups.find((group) 
 const offlineMainKey = offlineDuplicateGroup.members.find((member) => member.order.id === duplicateMainOrder.id).key;
 const offlineArchive = await archiveDuplicateGroup(offlineDuplicateGroup.id, offlineMainKey, { confirm: false, downloadBackup: false });
 assert(offlineArchive.ok && offlineArchive.cloudOk === false, "N: cloud failure should not roll back local duplicate cleanup");
-assert(JSON.parse(localStorage.getItem("ecoScreenV2.orders") || "[]").some((order) => order.id === duplicateOrder.id && order.status === "duplicate_archived"), "N: cloud-failed cleanup should remain in local storage");
+assert(JSON.parse(localStorage.getItem(storageKeys.orders) || "[]").some((order) => order.id === duplicateOrder.id && order.status === "duplicate_archived"), "N: cloud-failed cleanup should remain in local storage");
 
 runtimeEnv.VITE_SUPABASE_URL = "";
 runtimeEnv.VITE_SUPABASE_ANON_KEY = "";
@@ -650,7 +658,7 @@ assert(!failedReadSync.ok, "P: an unreadable cloud must fail safely");
 assert(!failedReadMethods.includes("POST"), "P: failed cloud reads must never be treated as empty cloud data or trigger writes");
 assert(failedReadSync.snapshot.orders[0].customer.name === "Newest Local", "P: unreadable cloud must not overwrite local rows");
 
-localStorage.removeItem("ecoScreenV2.preCloudWriteBackup.v1");
+localStorage.removeItem("ecoScreenV2.preCloudWriteBackup.v2." + identity.companyId);
 const simulatedCloud = Object.fromEntries(["users", "customers", "products", "quotations", "orders", "adsEntries", "productionJobs", "installationJobs", "warrantyCards", "companySettings"].map((collection) => [collection, []]));
 simulatedCloud.orders = [cloudOlder, cloudOnly];
 let backupWrites = 0;
@@ -740,7 +748,7 @@ assert(state.installationJobs[0].productionJobId === productionJob.id, "R: Insta
 assert(state.orders.length === productionDuplicateCounts.orders, "R: Production archive must not create an Order");
 assert(state.installationJobs.length === productionDuplicateCounts.installationJobs, "R: Production archive must not create an Installation Job");
 assert(state.productionJobs.length === productionDuplicateCounts.productionJobs, "R: Production archive must not hard-delete a Production Job");
-assert(JSON.parse(localStorage.getItem("ecoScreenV2.productionJobs") || "[]").some((job) => job.id === duplicateProductionJob.id && job.status === "duplicate_archived"), "R: archived Production Job should survive refresh storage reload");
+assert(JSON.parse(localStorage.getItem(storageKeys.productionJobs) || "[]").some((job) => job.id === duplicateProductionJob.id && job.status === "duplicate_archived"), "R: archived Production Job should survive refresh storage reload");
 
 const productionRestoreResult = await restoreArchivedProductionJob(duplicateProductionJob.id, { confirm: false });
 assert(productionRestoreResult.ok && !state.productionJobs.find((job) => job.id === duplicateProductionJob.id).isArchived, "S: archived Production Job should restore");
@@ -751,7 +759,7 @@ const restoredProductionGroup = scanDuplicateProductionJobs().confirmedGroups.fi
 const restoredMainKey = restoredProductionGroup.members.find((member) => member.job.id === productionJob.id).key;
 const offlineProductionArchive = await archiveProductionDuplicateGroup(restoredProductionGroup.id, restoredMainKey, { confirm: false, downloadBackup: false });
 assert(offlineProductionArchive.ok && offlineProductionArchive.cloudOk === false, "S: cloud failure should preserve the local Production archive");
-assert(JSON.parse(localStorage.getItem("ecoScreenV2.productionJobs") || "[]").some((job) => job.id === duplicateProductionJob.id && job.isArchived), "S: cloud-failed Production archive should remain in local storage");
+assert(JSON.parse(localStorage.getItem(storageKeys.productionJobs) || "[]").some((job) => job.id === duplicateProductionJob.id && job.isArchived), "S: cloud-failed Production archive should remain in local storage");
 
 runtimeEnv.VITE_SUPABASE_URL = "";
 runtimeEnv.VITE_SUPABASE_ANON_KEY = "";
@@ -996,7 +1004,7 @@ assert(state.orders.length === ownershipBefore.orders.length
   && state.quotations.length === ownershipBefore.quotations.length
   && state.productionJobs.length === ownershipBefore.productionJobs.length
   && state.installationJobs.length === ownershipBefore.installationJobs.length, "W2: repair must not create, delete, merge or archive records");
-const persistedOwnershipOrders = JSON.parse(localStorage.getItem("ecoScreenV2.orders") || "[]");
+const persistedOwnershipOrders = JSON.parse(localStorage.getItem(storageKeys.orders) || "[]");
 assert(persistedOwnershipOrders.find((row) => row.id === tzeOrder.id)?.quoteId === ownershipQuote.id
   && persistedOwnershipOrders.find((row) => row.id === msOrder.id)?.orderNo === "SO2607012", "W2: refresh storage must preserve repaired ownership and the conflict number change");
 applyCloudSnapshot({
@@ -1074,10 +1082,10 @@ assert(state.orders.length === confirmedBefore.orders.length
   && state.productionJobs.length === confirmedBefore.productionJobs.length
   && state.installationJobs.length === confirmedBefore.installationJobs.length, "W3: confirmed repair must not hard-delete, merge or create records");
 const persistedConfirmed = {
-  quotations: JSON.parse(localStorage.getItem("ecoScreenV2.quotations") || "[]"),
-  orders: JSON.parse(localStorage.getItem("ecoScreenV2.orders") || "[]"),
-  productionJobs: JSON.parse(localStorage.getItem("ecoScreenV2.productionJobs") || "[]"),
-  installationJobs: JSON.parse(localStorage.getItem("ecoScreenV2.installationJobs") || "[]")
+  quotations: JSON.parse(localStorage.getItem(storageKeys.quotations) || "[]"),
+  orders: JSON.parse(localStorage.getItem(storageKeys.orders) || "[]"),
+  productionJobs: JSON.parse(localStorage.getItem(storageKeys.productionJobs) || "[]"),
+  installationJobs: JSON.parse(localStorage.getItem(storageKeys.installationJobs) || "[]")
 };
 assert(persistedConfirmed.quotations.find((row) => row.id === wrongOwnerQuote.id)?.status === "follow_up"
   && persistedConfirmed.orders.find((row) => row.id === msOrder.id)?.status === "cancelled_archived"
@@ -1202,7 +1210,7 @@ assert(JSON.stringify(archivedDatinProduction.items) === JSON.stringify(datinBef
   && JSON.stringify(archivedDatinProduction.statusHistory) === JSON.stringify(datinBefore.productionJobs[0].statusHistory)
   && archivedDatinProduction.assignedStaff[0] === "staff-d"
   && archivedDatinInstallation.remarks === "Preserve installation payload", "W4: Production and Installation payload, history, staff and remarks must be preserved");
-assert(JSON.parse(localStorage.getItem("ecoScreenV2.orders") || "[]").find((row) => row.id === datinConflictOrder.id)?.status === "cancelled_archived", "W4: refresh storage must preserve the Datin recovery");
+assert(JSON.parse(localStorage.getItem(storageKeys.orders) || "[]").find((row) => row.id === datinConflictOrder.id)?.status === "cancelled_archived", "W4: refresh storage must preserve the Datin recovery");
 
 resetWorkflowState();
 const missingTzeQuote = validQuote("SO-2607-011", "Tze Yee");
@@ -1353,7 +1361,7 @@ assert(archivedMissingMsOrder.status === "cancelled_archived" && archivedMissing
 assert(JSON.stringify(state.orders.find((row) => row.id === janeOrder.id)) === JSON.stringify(janeOrder), "W5: unselected Jane conflict must remain byte-for-byte unchanged");
 assert(JSON.stringify(protectedView(followedUpMsQuote)) === JSON.stringify(protectedView(missingMsQuote))
   && JSON.stringify(protectedView(archivedMissingMsOrder)) === JSON.stringify(protectedView(missingMsOrder)), "W5: selected incorrect records must preserve customer, items and finances");
-const persistedMissingTzeOrders = JSON.parse(localStorage.getItem("ecoScreenV2.orders") || "[]");
+const persistedMissingTzeOrders = JSON.parse(localStorage.getItem(storageKeys.orders) || "[]");
 assert(persistedMissingTzeOrders.some((row) => row.id === recoveredMissingTzeOrder.id && row.orderNo === "SO2607011"), "W5: local refresh storage must preserve the newly recovered Order");
 applyCloudSnapshot({
   quotations: missingTzeBefore.quotations.map((row) => ({ ...row, updatedAt: "2020-01-01T00:00:00.000Z" })),
@@ -1494,8 +1502,8 @@ assert(state.orders.find((order) => order.id === syncOrder.id).productionStatus 
 await markProductionStatus(state.productionJobs[0].id, "completed");
 assert(state.orders.find((order) => order.id === syncOrder.id).productionStatus === "completed", "X: Production Completed must synchronize to the exact linked Order");
 const persistedWorkflow = {
-  orders: JSON.parse(localStorage.getItem("ecoScreenV2.orders") || "[]"),
-  productionJobs: JSON.parse(localStorage.getItem("ecoScreenV2.productionJobs") || "[]")
+  orders: JSON.parse(localStorage.getItem(storageKeys.orders) || "[]"),
+  productionJobs: JSON.parse(localStorage.getItem(storageKeys.productionJobs) || "[]")
 };
 assert(persistedWorkflow.orders.find((order) => order.id === syncOrder.id).productionStatus === "completed", "X: synchronized Order Production status must survive refresh storage");
 assert(persistedWorkflow.productionJobs.find((job) => job.orderId === syncOrder.id).status === "completed", "X: synchronized Production Job status must survive refresh storage");
@@ -1543,7 +1551,7 @@ assert(state.productionJobs.find((job) => job.orderId === followUpOrderId)?.stat
   && state.installationJobs.find((job) => job.orderId === followUpOrderId)?.statusBeforeArchive, "Y1: only exact orderId-linked Production and Installation jobs must be safely archived");
 assert(state.productionJobs.find((job) => job.id === "production-unrelated-number-only").status === "in_production"
   && state.installationJobs.find((job) => job.id === "installation-unrelated-number-only").status === "scheduled", "Y1: unrelated same-number jobs must remain unchanged");
-assert(JSON.parse(localStorage.getItem("ecoScreenV2.orders") || "[]").find((order) => order.id === followUpOrderId)?.status === "cancelled_archived", "Y1: Return to Follow Up must survive refresh storage");
+assert(JSON.parse(localStorage.getItem(storageKeys.orders) || "[]").find((order) => order.id === followUpOrderId)?.status === "cancelled_archived", "Y1: Return to Follow Up must survive refresh storage");
 applyCloudSnapshot({
   quotations: returnBefore.quotations.map((row) => ({ ...row, updatedAt: "2020-01-01T00:00:00.000Z" })),
   orders: returnBefore.orders.map((row) => ({ ...row, updatedAt: "2020-01-01T00:00:00.000Z" })),
@@ -1653,7 +1661,7 @@ assert(JSON.stringify({
   amountPaid: paymentOrder.amountPaid,
   deposit: paymentOrder.deposit
 }) === JSON.stringify(paymentIdentityBefore), "Y2: payment recording and reversal must not alter SO, customer, items, total, legacy paid fields or relationships");
-assert(JSON.parse(localStorage.getItem("ecoScreenV2.orders") || "[]").find((order) => order.id === legacyPaymentOrder.id)?.payments.find((payment) => payment.id === "payment-second-progress")?.status === "reversed", "Y2: Payment History and reversal must survive refresh storage");
+assert(JSON.parse(localStorage.getItem(storageKeys.orders) || "[]").find((order) => order.id === legacyPaymentOrder.id)?.payments.find((payment) => payment.id === "payment-second-progress")?.status === "reversed", "Y2: Payment History and reversal must survive refresh storage");
 applyCloudSnapshot({ orders: [{ ...legacyPaymentOrder, updatedAt: "2020-01-01T00:00:00.000Z" }] });
 assert(state.orders.find((order) => order.id === legacyPaymentOrder.id)?.payments.find((payment) => payment.id === "payment-second-progress")?.status === "reversed"
   && getOrderPaymentSummary(state.orders.find((order) => order.id === legacyPaymentOrder.id)).balance === 700, "Y2: older cloud data must not overwrite the payment ledger or reversal");
@@ -2226,7 +2234,7 @@ assert(JSON.stringify(state.productionJobs) === productionSnapshotBeforeDispatch
   && productionWorkStageCounts().not_produced === 8
   && productionWorkStageCounts().in_production === 10,
 "AC3: one-time repair must not create, delete, archive or change any Production Job stage");
-const persistedDispatchOrders = JSON.parse(localStorage.getItem("ecoScreenV2.orders") || "[]");
+const persistedDispatchOrders = JSON.parse(localStorage.getItem(storageKeys.orders) || "[]");
 assert(persistedDispatchOrders.filter((order) => getOrderDispatchState(order) === "sent-to-production").length === 18,
   "AC3: repaired dispatch state must survive storage refresh");
 
@@ -2595,7 +2603,7 @@ assert(!("orderId" in duplicatedQuote) && !("linkedOrderId" in duplicatedQuote) 
   && !("installationJobId" in duplicatedQuote) && !("warrantyCardId" in duplicatedQuote) && !("collectionRecords" in duplicatedQuote),
 "AC4: Order, conversion, payment, deposit, Production, Installation, Warranty and collection fields must never copy");
 assert(duplicatedQuote.duplicatedFromQuotationId === duplicateSource.id && duplicatedQuote.duplicatedFromQuotationNo === "ESQ-2026-0041", "AC4: duplicate audit fields must identify the exact source stable ID and ESQ number");
-const persistedDuplicateQuotes = JSON.parse(localStorage.getItem("ecoScreenV2.quotations") || "[]");
+const persistedDuplicateQuotes = JSON.parse(localStorage.getItem(storageKeys.quotations) || "[]");
 assert(persistedDuplicateQuotes.some((quote) => quote.id === duplicateSource.id) && persistedDuplicateQuotes.some((quote) => quote.id === duplicatedQuote.id), "AC5: refresh storage must preserve both the original and duplicate Quotations");
 applyCloudSnapshot({ quotations: [{ ...duplicateSource, updatedAt: "2020-01-01T00:00:00.000Z" }] });
 assert(state.quotations.some((quote) => quote.id === duplicateSource.id) && state.quotations.some((quote) => quote.id === duplicatedQuote.id), "AC5: an older cloud roundtrip must preserve both Quotations");
@@ -3322,7 +3330,7 @@ assert(JSON.stringify({ customer: releasedQuote.customer, items: releasedQuote.i
 "AE6: customer, item and financial data must remain unchanged and neither customer-name nor number-only records may be relinked");
 assert(nextSalesOrderNumber(new Date("2026-07-22T12:00:00.000Z")) === "SO2607022",
   "AE7: previousOrderNo must keep the issued SO high-water mark so SO2607021 is not automatically issued again");
-const persistedReassignedOrders = JSON.parse(localStorage.getItem("ecoScreenV2.orders") || "[]");
+const persistedReassignedOrders = JSON.parse(localStorage.getItem(storageKeys.orders) || "[]");
 assert(persistedReassignedOrders.find((record) => record.id === reassignCorrectOrder.id)?.orderNo === "SO2607020",
   "AE8: refresh storage must preserve the reassigned SO number");
 applyCloudSnapshot({
@@ -3710,3 +3718,4 @@ console.log([
   ,"Reusable Duplicate Quotation, independent project/address, safe field whitelist and rollback: passed"
   ,"Boss/Admin exact-ID SO number reassignment, stale release and sequence safety: passed"
 ].join("\n"));
+await supabase.auth.dispose();

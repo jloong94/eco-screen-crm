@@ -1,3 +1,4 @@
+import { identity } from './session.js';
 export function loadJson(key, fallback) {
   try {
     const raw = localStorage.getItem(key);
@@ -11,7 +12,7 @@ export function saveJson(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
 }
 
-export const storageKeys = {
+const baseKeys = {
   role: "ecoScreenV2.role",
   page: "ecoScreenV2.page",
   language: "ecoScreenV2.language",
@@ -29,3 +30,7 @@ export const storageKeys = {
   socialLeadDuplicateCount: "ecoScreenV2.socialLeadDuplicateCount",
   companySettings: "ecoScreenV2.companySettings"
 };
+
+// Never read unscoped legacy records into a signed-in company.
+export const storageKeys = Object.fromEntries(Object.entries(baseKeys).map(([key, value]) =>
+  [key, key === 'language' ? value : value + '.' + (identity.companyId || 'signed-out')]));
