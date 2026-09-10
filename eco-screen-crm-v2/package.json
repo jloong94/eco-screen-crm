@@ -15,7 +15,8 @@
     "test:workflow": "node scripts/workflow-test.mjs",
     "test:lead-radar": "node scripts/lead-radar-test.mjs",
     "test:rls": "node scripts/rls-test.mjs",
-    "test:auth": "node scripts/auth-test.mjs"
+    "test:auth": "node scripts/auth-test.mjs",
+    "test:staff-auth": "node scripts/staff-auth-test.mjs"
   },
   "devDependencies": {
     "playwright-core": "^1.63.0",

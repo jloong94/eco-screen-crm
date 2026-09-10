@@ -16,6 +16,9 @@ export const cloudCollections = [
 ];
 
 const tableName = "crm_v2_sync";
+const collectionUrl = collection => identity.mode === 'pin'
+  ? `/api/staff-data?collection=${encodeURIComponent(collection)}`
+  : `${normalizedSupabaseUrl()}/rest/v1/${tableName}?company_id=eq.${encodeURIComponent(identity.companyId)}&collection=eq.${encodeURIComponent(collection)}&select=collection,data,updated_at`;
 const firstWriteBackupKey = "ecoScreenV2.preCloudWriteBackup.v2." + identity.companyId;
 let backupInProgress = null;
 
@@ -34,7 +37,7 @@ export async function loadData(collection) {
   const configurationIssue = cloudConfigurationIssue();
   if (configurationIssue) return { ok: false, reason: configurationIssue, data: null, found: false };
   try {
-    const response = await fetch(`${normalizedSupabaseUrl()}/rest/v1/${tableName}?company_id=eq.${encodeURIComponent(identity.companyId)}&collection=eq.${encodeURIComponent(collection)}&select=collection,data,updated_at`, {
+    const response = await fetch(collectionUrl(collection), {
       headers: await authenticatedHeaders()
     });
     if (!response.ok) return httpFailure(response, "load");
@@ -156,7 +159,8 @@ export async function safeSyncWithCloud(localSnapshot, options = {}) {
   for (const collection of cloudCollections) {
     const localRows = Array.isArray(localSnapshot[collection]) ? localSnapshot[collection] : [];
     const cloudRows = Array.isArray(cloud.data[collection]) ? cloud.data[collection] : [];
-    const merged = mergeRows(localRows, cloudRows, collection);
+    const staffDirectoryReadOnly = identity.mode === 'pin' && !['Boss', 'Admin'].includes(identity.user?.role) && collection === 'users';
+    const merged = staffDirectoryReadOnly ? cloudRows : mergeRows(localRows, cloudRows, collection);
     summary.localCounts[collection] = localRows.length;
     summary.cloudCounts[collection] = cloudRows.length;
     summary.cloudUpdatedAt[collection] = cloud.meta[collection]?.updatedAt || "";
@@ -261,7 +265,7 @@ function sameRows(left, right, collection = "") {
 
 async function writeCollection(collection, data) {
   try {
-    const response = await fetch(`${normalizedSupabaseUrl()}/rest/v1/${tableName}?on_conflict=company_id,collection`, {
+    const response = await fetch(identity.mode === 'pin' ? collectionUrl(collection) : `${normalizedSupabaseUrl()}/rest/v1/${tableName}?on_conflict=company_id,collection`, {
       method: "POST",
       headers: {
         ...await authenticatedHeaders(),

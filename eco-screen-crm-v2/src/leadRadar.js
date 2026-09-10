@@ -1,4 +1,4 @@
-import { supabase, identity } from './session.js';
+import { supabase, identity, staffRequest } from './session.js';
 import { prospectTypes, classifications, contactStatuses, textFields, prospectPayload, safeSourceUrl,
   whatsappUrl, filterProspects, escapeHtml as esc } from './leadRadarModel.js';
 
@@ -40,8 +40,9 @@ export async function attachLeadRadarEvents() {
     // Fetch every page; the Supabase default row limit must not truncate manual prospects.
     let offset = 0, collected = [];
     while (true) {
-      const { data, error } = await supabase.from('crm_v2_prospects').select('*').eq('company_id', companyId)
-        .order('id').range(offset, offset + 499);
+      const { data, error } = identity.mode === 'pin'
+        ? { data: await staffRequest(`/api/staff-prospects?offset=${offset}`) }
+        : await supabase.from('crm_v2_prospects').select('*').eq('company_id', companyId).order('id').range(offset, offset + 499);
       if (error) throw error;
       collected.push(...data);
       if (data.length < 500) break;
@@ -70,9 +71,16 @@ export async function attachLeadRadarEvents() {
         const input = Object.fromEntries(new FormData(form));
         input.do_not_contact = form.elements.do_not_contact.checked;
         const payload = prospectPayload(input);
-        const query = row.id ? supabase.from('crm_v2_prospects').update(payload).eq('company_id', companyId).eq('id', row.id)
-          : supabase.from('crm_v2_prospects').insert({ ...payload, company_id: companyId });
-        const { data, error } = await query.select('id').single();
+        let data, error;
+        if (identity.mode === 'pin') {
+          data = await staffRequest(`/api/staff-prospects${row.id ? '?id=' + encodeURIComponent(row.id) : ''}`, {
+            method: row.id ? 'PATCH' : 'POST', body: JSON.stringify(payload)
+          });
+        } else {
+          const query = row.id ? supabase.from('crm_v2_prospects').update(payload).eq('company_id', companyId).eq('id', row.id)
+            : supabase.from('crm_v2_prospects').insert({ ...payload, company_id: companyId });
+          ({ data, error } = await query.select('id').single());
+        }
         if (error || !data) throw error || new Error('保存失败。');
         form.remove(); await load(); message('已保存。');
       } catch (error) {

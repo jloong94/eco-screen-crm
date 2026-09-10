@@ -1,13 +1,24 @@
-import { identity, supabase, signOut } from './session.js';
+import { identity, supabase, signOut, loginWithPin, staffRequest, initializeSession } from './session.js';
 import { roles } from "./data.js";
 import { t } from "./i18n.js";
 import { canManageUsers, defaultPageForRole } from "./permissions.js";
 import { persistUsers, setCurrentUser, setLanguage, setPage, state, uid } from "./state.js";
 
-export async function login(email, password) {
+export async function login(username, pin) {
+  try { await loginWithPin(username, pin); return { ok: true }; }
+  catch (error) { return { ok: false, message: error.message }; }
+}
+export async function loginOwner(email, password) {
   if (!supabase) return { ok: false, message: 'Supabase configuration is missing.' };
   const { error } = await supabase.auth.signInWithPassword({ email: String(email).trim(), password });
   if (error) return { ok: false, message: '邮箱或密码不正确，或账号尚未确认。' };
+  await staffRequest('/api/staff-session', { method: 'DELETE' });
+  await initializeSession();
+  if (!identity.user || identity.mode !== 'email') {
+    const message = identity.error || '邮箱登录仅供 Owner/Admin。';
+    await supabase.auth.signOut({ scope: 'local' });
+    return { ok: false, message };
+  }
   location.reload();
   return { ok: true };
 }
@@ -33,18 +44,43 @@ export function renderLoginCard() {
           </label>
         </div>
         <form id="loginForm" class="stack">
-          <label>${"Email"}<input id="loginUsername" type="email" required autocomplete="username" placeholder="Email" /></label>
-          <label>${"Password"}<input id="loginPin" type="password" autocomplete="current-password" required /></label>
+          <label>${t("Username")}<input id="loginUsername" required autocomplete="username" /></label>
+          <label>${t("PIN / Password")}<input id="loginPin" type="password" autocomplete="current-password" required /></label>
           <button class="btn primary" type="submit">${t("Login")}</button>
-          <p id="loginMessage" class="muted-text">${escapeHtml(identity.error || "使用已绑定公司的 Supabase 账号登录。") }</p>
+          <p id="loginMessage" class="muted-text">${escapeHtml(identity.error || "员工继续使用原账号和 PIN 登录。") }</p>
         </form>
+        <details><summary>Owner/Admin 邮箱登录</summary>
+          <form id="ownerLoginForm" class="stack">
+            <label>Email<input id="ownerEmail" type="email" required autocomplete="username" /></label>
+            <label>Password<input id="ownerPassword" type="password" required autocomplete="current-password" /></label>
+            <button class="btn primary" type="submit">Owner/Admin 登录</button>
+            <p id="ownerLoginMessage" role="status"></p>
+          </form>
+        </details>
       </section>
     </main>
   `;
 }
 
 export function renderUserManagement() {
-  return '<p class="muted-text">登录账号、公司和角色由管理员在 Supabase Auth 和 crm_v2_memberships 中管理。旧 PIN 不再用于登录。</p>';
+  if (!canManageUsers()) {
+    return `<p class="muted-text">${t("Permission denied: your role cannot perform this action.")}</p>`;
+  }
+  return `
+    <section class="staff-form">
+      <div class="form-grid compact">
+        <label>${t("Name")}<input id="staffName" placeholder="${t("Staff name")}" /></label>
+        <label>${t("Username")}<input id="staffUsername" placeholder="username" /></label>
+        <label>${t("PIN / Password")}<input id="staffPin" type="password" placeholder="1234" /></label>
+        <label>${t("Role")}<select id="staffRole">${roles.map((role) => `<option value="${role}">${t(role)}</option>`).join("")}</select></label>
+      </div>
+      <button class="btn primary" id="addStaffButton" type="button">${t("Add Staff")}</button>
+      <p id="staffSaveStatus" class="muted-text"></p>
+    </section>
+    <div class="product-list staff-list">
+      ${state.users.map((user) => staffCardHtml(user)).join("")}
+    </div>
+  `;
 }
 
 function staffCardHtml(user) {
@@ -74,6 +110,17 @@ function staffCardHtml(user) {
 }
 
 export function attachLoginEvents(renderShell) {
+  document.querySelector('#ownerLoginForm')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    const button = event.currentTarget.querySelector('button');
+    if (button.disabled) return;
+    button.disabled = true;
+    try {
+      const result = await loginOwner(document.querySelector('#ownerEmail').value, document.querySelector('#ownerPassword').value);
+      if (!result.ok) document.querySelector('#ownerLoginMessage').textContent = result.message;
+    } catch { document.querySelector('#ownerLoginMessage').textContent = '登录服务暂时无法连接，请重试。'; }
+    finally { button.disabled = false; }
+  });
   document.querySelector("#loginLanguage")?.addEventListener("change", (event) => {
     setLanguage(event.target.value);
     renderShell();

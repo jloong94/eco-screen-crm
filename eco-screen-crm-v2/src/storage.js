@@ -33,4 +33,4 @@ const baseKeys = {
 
 // Never read unscoped legacy records into a signed-in company.
 export const storageKeys = Object.fromEntries(Object.entries(baseKeys).map(([key, value]) =>
-  [key, key === 'language' ? value : value + '.' + (identity.companyId || 'signed-out')]));
+  [key, key === 'language' ? value : value + '.' + (identity.companyId || 'signed-out') + '.' + (identity.user?.userId || 'anonymous')]));

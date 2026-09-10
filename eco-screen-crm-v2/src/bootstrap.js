@@ -5,7 +5,7 @@ try { await initializeSession(); }
 catch { identity.error = 'Unable to verify your login or company. Please sign in again.'; }
 await import('./main.js');
 supabase?.auth.onAuthStateChange((event, session) => {
-  if (identity.user && (event === 'SIGNED_OUT' || (session && session.user.id !== identity.user.authUserId))) {
+  if (identity.mode === 'email' && identity.user && (event === 'SIGNED_OUT' || (session && session.user.id !== identity.user.authUserId))) {
     location.reload();
   }
 });
