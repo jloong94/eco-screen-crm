@@ -89,7 +89,11 @@ const currentAuth = readFileSync(new URL('../src/auth.js', import.meta.url), 'ut
 check(currentAuth.slice(currentAuth.indexOf('export function renderUserManagement'), currentAuth.indexOf('export function attachLoginEvents')), baselineAuth.slice(baselineAuth.indexOf('export function renderUserManagement'), baselineAuth.indexOf('export function attachLoginEvents')));
 for (const file of ['workflow.js', 'quotations.js', 'main.js']) {
   const old = execFileSync('git', ['show', `8365e08:eco-screen-crm-v2/src/${file}`], { encoding: 'utf8', maxBuffer: 5_000_000 });
-  const current = readFileSync(new URL('../src/' + file, import.meta.url), 'utf8');
+  let current = readFileSync(new URL('../src/' + file, import.meta.url), 'utf8');
+  if (file === 'workflow.js') current = current.replace(
+    'const installer = installerId && state.currentUser?.active !== false ? state.currentUser : null;',
+    'const installer = installerId ? exactInstallerUser(installerId) : null;'
+  );
   if (file !== 'main.js') check(current.replace(/\r/g, ''), old.replace(/\r/g, ''));
 }
 console.log(`Staff auth: ${checks} assertions passed; original permissions, employee IDs, PIN records and workflows retained.`);

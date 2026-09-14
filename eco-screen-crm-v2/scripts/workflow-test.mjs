@@ -1864,7 +1864,7 @@ const selfArrangeJob = { id: "installation-self-arrange", orderId: selfArrangeOr
 const otherArrangeJob = { id: "installation-self-other", orderId: selfArrangeOrder.id, orderNo: selfArrangeOrder.orderNo, status: "pending_arrangement", assignedInstallerId: otherArrangeInstaller.userId, assignedInstallerName: otherArrangeInstaller.name, isArchived: false };
 state.currentUser = selfArrangeInstaller;
 state.role = selfArrangeInstaller.role;
-state.users = [selfArrangeInstaller, otherArrangeInstaller];
+state.users = [otherArrangeInstaller];
 state.orders = [selfArrangeOrder];
 state.installationJobs = [selfArrangeJob, otherArrangeJob];
 const selfArranged = await saveInstallerSelfArrangement(selfArrangeJob.id, { installationDate: "2026-09-08", installationTime: "09:30", installationRemarks: "Customer confirmed" }, { downloadBackup: false });
@@ -1873,6 +1873,8 @@ assert(selfArranged.ok && savedSelfJob.assignedInstallerId === selfArrangeInstal
   && savedSelfJob.dispatchStatus === "ready" && savedSelfJob.installationDate === "2026-09-08" && savedSelfJob.installationTime === "09:30"
   && state.orders[0].installationDate === "2026-09-08" && state.orders[0].installationStatus === "ready_to_send",
 "Z5C: an Installer must claim an unassigned exact job for self and arrange its date without dispatching it");
+assert(!state.users.some((user) => user.userId === selfArrangeInstaller.userId),
+"Z5C: the verified logged-in Installer can self-arrange before the staff directory finishes hydrating");
 const otherBefore = structuredClone(state.installationJobs.find((job) => job.id === otherArrangeJob.id));
 const stealBlocked = await saveInstallerSelfArrangement(otherArrangeJob.id, { installationDate: "2026-09-09" }, { downloadBackup: false });
 assert(!stealBlocked.ok && JSON.stringify(state.installationJobs.find((job) => job.id === otherArrangeJob.id)) === JSON.stringify(otherBefore),

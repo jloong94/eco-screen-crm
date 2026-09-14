@@ -8665,7 +8665,7 @@ function saveInstallerSelfArrangementFromPanel(jobId, button) {
 export async function saveInstallerSelfArrangement(jobId, values = {}, options = {}) {
   if (normalizeText(state.currentUser?.role || role()) !== "installer") return failInstallationAction("Permission denied: only an Installer can arrange a job for themselves.");
   const installerId = String(state.currentUser?.userId || "").trim();
-  const installer = installerId ? exactInstallerUser(installerId) : null;
+  const installer = installerId && state.currentUser?.active !== false ? state.currentUser : null;
   if (!installerId || !installer) return failInstallationAction("The exact active Installer stable ID was not found.");
   const exactJobId = String(jobId || "").trim();
   const job = state.installationJobs.find((row) => String(row.id || "") === exactJobId);
