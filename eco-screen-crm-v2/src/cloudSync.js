@@ -16,6 +16,12 @@ export const cloudCollections = [
 ];
 
 const tableName = "crm_v2_sync";
+const pinRoleWritableCollections = {
+  secretary: new Set(["customers", "quotations", "orders", "productionJobs", "installationJobs", "warrantyCards"]),
+  sales: new Set(["customers", "quotations", "orders", "productionJobs"]),
+  production: new Set(["productionJobs", "orders"]),
+  installer: new Set(["installationJobs", "orders", "productionJobs", "warrantyCards"])
+};
 const collectionUrl = collection => identity.mode === 'pin'
   ? `/api/staff-data?collection=${encodeURIComponent(collection)}`
   : `${normalizedSupabaseUrl()}/rest/v1/${tableName}?company_id=eq.${encodeURIComponent(identity.companyId)}&collection=eq.${encodeURIComponent(collection)}&select=collection,data,updated_at`;
@@ -31,6 +37,13 @@ export function cloudConfigurationIssue() {
 
 export function isCloudConfigured() {
   return !cloudConfigurationIssue();
+}
+
+export function canIdentityWriteCloudCollection(collection, currentIdentity = identity) {
+  if (currentIdentity?.mode !== "pin") return true;
+  const normalizedRole = String(currentIdentity?.user?.role || "").trim().toLowerCase();
+  if (["boss", "admin"].includes(normalizedRole)) return true;
+  return pinRoleWritableCollections[normalizedRole]?.has(collection) === true;
 }
 
 export async function loadData(collection) {
@@ -159,8 +172,8 @@ export async function safeSyncWithCloud(localSnapshot, options = {}) {
   for (const collection of cloudCollections) {
     const localRows = Array.isArray(localSnapshot[collection]) ? localSnapshot[collection] : [];
     const cloudRows = Array.isArray(cloud.data[collection]) ? cloud.data[collection] : [];
-    const staffDirectoryReadOnly = identity.mode === 'pin' && !['Boss', 'Admin'].includes(identity.user?.role) && collection === 'users';
-    const merged = staffDirectoryReadOnly ? cloudRows : mergeRows(localRows, cloudRows, collection);
+    const canWriteCollection = canIdentityWriteCloudCollection(collection);
+    const merged = canWriteCollection ? mergeRows(localRows, cloudRows, collection) : cloudRows;
     summary.localCounts[collection] = localRows.length;
     summary.cloudCounts[collection] = cloudRows.length;
     summary.cloudUpdatedAt[collection] = cloud.meta[collection]?.updatedAt || "";
@@ -174,7 +187,7 @@ export async function safeSyncWithCloud(localSnapshot, options = {}) {
     }).length;
     if (cloudOnlyCount) summary.downloaded[collection] = cloudOnlyCount;
     if (localRows.length && cloudRows.length) summary.merged[collection] = merged.length;
-    if (!sameRows(merged, cloudRows, collection)) pendingWrites.push({ collection, rows: merged, localOnlyCount, writeCount });
+    if (canWriteCollection && !sameRows(merged, cloudRows, collection)) pendingWrites.push({ collection, rows: merged, localOnlyCount, writeCount });
   }
 
   if (options.allowWrites === false) {
