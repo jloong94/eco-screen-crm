@@ -1,10 +1,12 @@
 import { supabase, identity, staffRequest } from './session.js';
+import { renderPublicSearch, attachPublicSearch } from './leadRadarSearch.js';
 import { prospectTypes, classifications, contactStatuses, textFields, prospectPayload, safeSourceUrl,
   whatsappUrl, filterProspects, escapeHtml as esc } from './leadRadarModel.js';
 
 export function renderLeadRadarPage() {
   return `<section class="panel page-panel" id="leadRadar"><div class="panel-head"><h2>Lead Radar</h2>
     <button class="btn primary" id="radarAdd">新增 Prospect</button></div>
+    ${renderPublicSearch()}
     <p id="radarMessage" role="status">加载中…</p><div id="radarFilters" class="form-grid compact"></div>
     <div id="radarList" class="product-list"></div><div id="radarEditor"></div></section>`;
 }
@@ -14,6 +16,7 @@ const options = (values, selected, all = false) => `${all ? '<option value="">�
 export async function attachLeadRadarEvents() {
   const root = document.querySelector('#leadRadar');
   if (!root) return;
+  attachPublicSearch(root);
   let rows = [], saving = false;
   const companyId = identity.companyId;
   const filters = { area: '', type: '', status: '', sort: 'desc' };
