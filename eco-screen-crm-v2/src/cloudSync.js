@@ -169,11 +169,14 @@ export async function safeSyncWithCloud(localSnapshot, options = {}) {
 
   const nextSnapshot = { ...localSnapshot };
   const pendingWrites = [];
+  const writeCollections = Array.isArray(options.writeCollections) ? new Set(options.writeCollections) : null;
   for (const collection of cloudCollections) {
     const localRows = Array.isArray(localSnapshot[collection]) ? localSnapshot[collection] : [];
     const cloudRows = Array.isArray(cloud.data[collection]) ? cloud.data[collection] : [];
-    const canWriteCollection = canIdentityWriteCloudCollection(collection);
-    const merged = canWriteCollection ? mergeRows(localRows, cloudRows, collection) : cloudRows;
+    const canWriteCollection = canIdentityWriteCloudCollection(collection) && (!writeCollections || writeCollections.has(collection));
+    const merged = writeCollections && !writeCollections.has(collection)
+      ? localRows
+      : canWriteCollection ? mergeRows(localRows, cloudRows, collection) : cloudRows;
     summary.localCounts[collection] = localRows.length;
     summary.cloudCounts[collection] = cloudRows.length;
     summary.cloudUpdatedAt[collection] = cloud.meta[collection]?.updatedAt || "";
@@ -192,7 +195,7 @@ export async function safeSyncWithCloud(localSnapshot, options = {}) {
 
   if (options.allowWrites === false) {
     summary.pendingWrites = Object.fromEntries(pendingWrites.map((pending) => [pending.collection, pending.writeCount]));
-    summary.collectionsSynced = [...cloudCollections];
+    summary.collectionsSynced = cloudCollections.filter((collection) => !writeCollections || writeCollections.has(collection));
     return {
       ok: true,
       reason: "Cloud data checked in read-only mode. Review the local and cloud counts, then use Sync Now to authorize writes.",
@@ -222,7 +225,7 @@ export async function safeSyncWithCloud(localSnapshot, options = {}) {
     else summary.errors.push(`${pending.collection}: ${write.reason}`);
   }
 
-  summary.collectionsSynced = cloudCollections.filter((collection) => !summary.errors.some((error) => error.startsWith(`${collection}:`)));
+  summary.collectionsSynced = cloudCollections.filter((collection) => (!writeCollections || writeCollections.has(collection)) && !summary.errors.some((error) => error.startsWith(`${collection}:`)));
   return {
     ok: summary.errors.length === 0,
     reason: summary.errors.join("; "),

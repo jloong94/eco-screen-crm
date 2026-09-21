@@ -382,12 +382,12 @@ function syncCloudOnFirstLogin() {
   cloudHydrated = true;
   updateCloudStatus({ status: "Syncing...", connected: false });
   safeSyncWithCloud(stateSnapshot(), { allowWrites: false }).then((result) => {
-    applyCloudSnapshot(result.snapshot || {});
+    const cache = result.ok ? applyCloudSnapshot(result.snapshot || {}) : { ok: true, reason: "" };
     updateCloudStatus({
-      status: result.ok ? "Cloud Checked (read-only)" : "Cloud Sync Failed",
+      status: result.ok ? cache.ok ? "Cloud Checked (read-only)" : "Cloud Checked (local cache full)" : "Cloud Sync Failed",
       connected: result.ok,
       lastSyncAt: state.cloud.lastSyncAt,
-      lastError: result.ok ? "" : result.reason || "Cloud sync failed.",
+      lastError: result.ok ? cache.reason : result.reason || "Cloud sync failed.",
       counts: result.summary?.cloudCounts || {}
     });
     renderShell();
@@ -457,15 +457,15 @@ function manualSyncNow() {
   updateCloudStatus({ status: "Syncing...", connected: false });
   renderShell();
   safeSyncWithCloud(stateSnapshot()).then((result) => {
-    applyCloudSnapshot(result.snapshot || {});
+    const cache = result.ok ? applyCloudSnapshot(result.snapshot || {}) : { ok: true, reason: "" };
     updateCloudStatus({
-      status: result.ok ? "Cloud Synced" : "Cloud Sync Failed",
+      status: result.ok ? cache.ok ? "Cloud Synced" : "Cloud Synced (local cache full)" : "Cloud Sync Failed",
       connected: result.ok,
       lastSyncAt: result.ok ? new Date().toISOString() : state.cloud.lastSyncAt,
-      lastError: result.ok ? "" : result.reason || "Cloud sync failed.",
+      lastError: result.ok ? cache.reason : result.reason || "Cloud sync failed.",
       counts: result.summary?.cloudCounts || {}
     });
-    window.alert(syncSummaryText(result));
+    window.alert(`${syncSummaryText(result)}${cache.ok ? "" : `\nLocal cache warning: ${cache.reason}`}`);
     renderShell();
   }).catch((error) => {
     updateCloudStatus({

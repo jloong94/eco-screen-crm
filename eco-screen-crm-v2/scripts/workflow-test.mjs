@@ -35,6 +35,8 @@ const {
   makeQuote,
   makeQuoteItem,
   nextQuoteNumber,
+  persistOrderConversionLocally,
+  syncOrderConversionCollections,
   state
 } = await import("../src/state.js");
 state.language = "en";
@@ -685,6 +687,31 @@ assert(successfulSafeSync.ok, "P: readable cloud should merge and sync successfu
 assert(backupWrites === 1, "P: the first repaired cloud write must create one full JSON backup");
 assert(cloudPostWrites === 1, "P: only the changed collection should be written after a full read check");
 assert(simulatedCloud.orders.length === 2 && simulatedCloud.orders.find((row) => row.id === "merge-order").customer.name === "Newest Local", "P: uploaded cloud snapshot must retain cloud-only rows and the newest stable-ID record");
+const targetedSync = await safeSyncWithCloud({
+  orders: [localNewest],
+  productionJobs: [{ id: "production-targeted-sync", orderId: localNewest.id, status: "completed" }],
+  installationJobs: [{ id: "installation-unsynced-photo", afterPhotos: ["large-offline-photo"] }],
+  quotations: [{ id: "quotation-unsynced" }]
+}, { writeCollections: ["orders", "productionJobs"], backupWriter: async () => true });
+assert(targetedSync.ok && cloudPostWrites === 2
+  && simulatedCloud.productionJobs.length === 1
+  && simulatedCloud.installationJobs.length === 0
+  && simulatedCloud.quotations.length === 0
+  && targetedSync.snapshot.installationJobs[0].id === "installation-unsynced-photo",
+"P: Production sync must upload only exact Order/Production collections and retain unrelated unsynced local records");
+const productionBeforeCloudCacheTest = state.productionJobs;
+state.productionJobs = [];
+const storageSetBeforeCloudCacheTest = localStorage.setItem.bind(localStorage);
+localStorage.setItem = (key, value) => {
+  if (key === storageKeys.productionJobs) throw new Error("The quota has been exceeded.");
+  storageSetBeforeCloudCacheTest(key, value);
+};
+const cloudSucceededCacheFailed = await syncOrderConversionCollections(["orders", "productionJobs"]);
+localStorage.setItem = storageSetBeforeCloudCacheTest;
+state.productionJobs = productionBeforeCloudCacheTest;
+assert(cloudSucceededCacheFailed.ok && cloudSucceededCacheFailed.localCacheOk === false
+  && state.cloud.connected && state.cloud.lastError.includes("local cache"),
+"P: a local cache quota error after successful cloud sync must not be mislabeled as cloud failure");
 
 runtimeEnv.VITE_SUPABASE_URL = "";
 runtimeEnv.VITE_SUPABASE_ANON_KEY = "";
@@ -705,8 +732,54 @@ assert(productionJobMatchesSearch(productionJob, "Production Search Customer"), 
 assert(productionJobMatchesSearch(productionJob, "0123456789"), "Q: Production search should find phone");
 assert(productionJobMatchesSearch(productionJob, "PRODUCTION-QUOTE"), "Q: Production search should find quotation number");
 assert(productionOrderNumber({ id: "orphan-production", productionNumber: "ESP-2026-9999" }) === "Order Number Missing", "Q: orphan Production job must not display or guess from ESP");
+const originalStorageSet = localStorage.setItem.bind(localStorage);
+const statusStorageWrites = [];
+localStorage.setItem = (key, value) => {
+  statusStorageWrites.push(key);
+  if ([storageKeys.installationJobs, storageKeys.quotations, storageKeys.warrantyCards].includes(key)) throw new Error("Unrelated collection must not be rewritten");
+  originalStorageSet(key, value);
+};
 await markProductionStatus(productionJob.id, "in_production");
+localStorage.setItem = originalStorageSet;
 assert(state.productionJobs.find((job) => job.id === productionJob.id).status === "in_production", "Q: Production status updates must still work");
+assert(statusStorageWrites.every((key) => [storageKeys.orders, storageKeys.productionJobs].includes(key)),
+  "Q: Production status must not rewrite Installation media, Quotations or Warranty cache");
+const beforeQuotaState = JSON.stringify({ orders: state.orders, productionJobs: state.productionJobs });
+const beforeQuotaStorage = [storageKeys.orders, storageKeys.productionJobs].map((key) => localStorage.getItem(key));
+localStorage.setItem = (key, value) => {
+  if (key === storageKeys.productionJobs) throw new Error("The quota has been exceeded.");
+  originalStorageSet(key, value);
+};
+const quotaStatus = await markProductionStatus(productionJob.id, "completed");
+localStorage.setItem = originalStorageSet;
+assert(quotaStatus.ok === false && quotaStatus.localSaved === false && quotaStatus.cloudOk === false,
+  "Q: quota failure must not claim either local or cloud success");
+assert(JSON.stringify({ orders: state.orders, productionJobs: state.productionJobs }) === beforeQuotaState
+  && [storageKeys.orders, storageKeys.productionJobs].every((key, index) => localStorage.getItem(key) === beforeQuotaStorage[index]),
+  "Q: quota failure must roll back exact Order/Production state without changing counts or statuses");
+assert(persistOrderConversionLocally().savedCollections.length === 0,
+  "Q: unchanged workflow collections must not consume localStorage quota again");
+const productionCacheBeforeHydration = localStorage.getItem(storageKeys.productionJobs);
+let identicalCacheWrites = 0;
+localStorage.setItem = (key, value) => {
+  if (key === storageKeys.productionJobs) identicalCacheWrites += 1;
+  originalStorageSet(key, value);
+};
+const identicalHydration = applyCloudSnapshot({ productionJobs: state.productionJobs });
+localStorage.setItem = originalStorageSet;
+assert(identicalHydration.ok && identicalCacheWrites === 0,
+  "Q: cloud hydration must not rewrite an identical Production collection");
+const productionStateBeforeCacheFailure = state.productionJobs;
+localStorage.setItem = (key, value) => {
+  if (key === storageKeys.productionJobs) throw new Error("The quota has been exceeded.");
+  originalStorageSet(key, value);
+};
+const cacheFailure = applyCloudSnapshot({ productionJobs: [{ ...productionJob, status: "completed", updatedAt: "2099-01-01T00:00:00.000Z" }] });
+localStorage.setItem = originalStorageSet;
+assert(!cacheFailure.ok && cacheFailure.reason.includes("local cache")
+  && localStorage.getItem(storageKeys.productionJobs) === productionCacheBeforeHydration,
+  "Q: a cloud-read cache quota failure must be reported separately without replacing the durable local Production value");
+state.productionJobs = productionStateBeforeCacheFailure;
 const productionInstallationJob = state.installationJobs[0];
 markInstallationStatus(productionInstallationJob.id, "scheduled");
 assert(state.installationJobs.find((job) => job.id === productionInstallationJob.id).status === "scheduled", "Q: Installation status updates must still work");

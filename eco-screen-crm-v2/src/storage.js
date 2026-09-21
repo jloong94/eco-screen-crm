@@ -9,7 +9,8 @@ export function loadJson(key, fallback) {
 }
 
 export function saveJson(key, value) {
-  localStorage.setItem(key, JSON.stringify(value));
+  const serialized = JSON.stringify(value);
+  if (localStorage.getItem(key) !== serialized) localStorage.setItem(key, serialized);
 }
 
 const baseKeys = {
