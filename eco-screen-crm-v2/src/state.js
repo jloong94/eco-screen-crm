@@ -44,7 +44,13 @@ export const state = {
   currentQuote: null
 };
 
-saveJson(storageKeys.users, state.users);
+try {
+  saveJson(storageKeys.users, state.users);
+} catch (error) {
+  // A full localStorage cache must not prevent login and a full JSON export.
+  state.cloud.status = "Local Cache Full";
+  state.cloud.lastError = `Staff cache could not be saved locally: ${error.message || "storage quota exceeded"}`;
+}
 
 function normalizeUsers(users) {
   const rows = Array.isArray(users) ? users : [];
@@ -124,31 +130,37 @@ export function persistOrders() {
   return syncCollectionNow("orders");
 }
 
-export function persistOrderConversionLocally() {
-  const previousValues = new Map(orderConversionCollections.map((collection) => [
+export function persistOrderConversionLocally(collections = orderConversionCollections) {
+  const selected = orderConversionCollections.filter((collection) => collections.includes(collection));
+  const previousValues = new Map(selected.map((collection) => [
     collection,
     localStorage.getItem(storageKeys[collection])
   ]));
-
+  const written = [];
   try {
-    orderConversionCollections.forEach((collection) => {
-      saveJson(storageKeys[collection], state[collection]);
+    selected.forEach((collection) => {
+      const serialized = JSON.stringify(state[collection]);
+      if (serialized === previousValues.get(collection)) return;
+      localStorage.setItem(storageKeys[collection], serialized);
+      written.push(collection);
     });
-    return { ok: true };
+    return { ok: true, savedCollections: written };
   } catch (error) {
-    previousValues.forEach((value, collection) => {
+    const rollbackFailures = [];
+    written.reverse().forEach((collection) => {
+      const value = previousValues.get(collection);
       try {
         if (value === null) localStorage.removeItem(storageKeys[collection]);
         else localStorage.setItem(storageKeys[collection], value);
-      } catch {
-        // Keep the original persistence error as the user-facing failure.
+      } catch (rollbackError) {
+        rollbackFailures.push(`${collection}: ${rollbackError.message || "rollback failed"}`);
       }
     });
-    return { ok: false, reason: error.message || "Local order save failed." };
+    return { ok: false, reason: error.message || "Local order save failed.", rollbackFailures };
   }
 }
 
-export async function syncOrderConversionCollections() {
+export async function syncOrderConversionCollections(collections = orderConversionCollections) {
   if (!isCloudConfigured()) {
     updateCloudStatus({
       status: "Local Mode",
@@ -158,14 +170,15 @@ export async function syncOrderConversionCollections() {
     return { ok: false, localOnly: true, reason: "Local Mode Only", results: [] };
   }
   updateCloudStatus({ status: "Syncing...", connected: false });
-  const result = await safeSyncWithCloud(stateSnapshot());
-  if (result.ok) applyCloudSnapshot(result.snapshot || {});
+  const result = await safeSyncWithCloud(stateSnapshot(), { writeCollections: collections });
+  const selectedSnapshot = Object.fromEntries(collections.map((collection) => [collection, result.snapshot?.[collection]]));
+  const localCache = result.ok ? applyCloudSnapshot(selectedSnapshot) : { ok: true };
   updateCloudStatus(result.ok
     ? {
-      status: "Cloud Synced",
+      status: localCache.ok ? "Cloud Synced" : "Cloud Synced (local cache full)",
       connected: true,
       lastSyncAt: new Date().toISOString(),
-      lastError: "",
+      lastError: localCache.ok ? "" : localCache.reason,
       counts: result.summary?.cloudCounts || {}
     }
     : {
@@ -176,9 +189,11 @@ export async function syncOrderConversionCollections() {
     });
   return {
     ok: result.ok,
+    localCacheOk: localCache.ok,
+    localCacheError: localCache.reason || "",
     localOnly: false,
     reason: result.reason || "",
-    results: orderConversionCollections.map((collection) => ({ collection, ok: result.ok, reason: result.reason || "" })),
+    results: collections.map((collection) => ({ collection, ok: result.ok, reason: result.reason || "" })),
     summary: result.summary
   };
 }
@@ -388,17 +403,14 @@ export function stateSnapshot() {
 }
 
 export function applyCloudSnapshot(snapshot = {}) {
-  applyCollection("users", snapshot.users, normalizeUsers);
-  applyCollection("products", snapshot.products, normalizeProducts);
-  applyCollection("customers", snapshot.customers);
-  applyCollection("quotations", snapshot.quotations);
-  applyCollection("orders", snapshot.orders);
-  applyCollection("adsEntries", snapshot.adsEntries);
-  applyCollection("productionJobs", snapshot.productionJobs);
-  applyCollection("installationJobs", snapshot.installationJobs);
-  applyCollection("warrantyCards", snapshot.warrantyCards);
-  applyCollection("socialLeads", snapshot.socialLeads);
-  applyCompanySettings(snapshot.companySettings);
+  const failures = [
+    applyCollection("users", snapshot.users, normalizeUsers),
+    applyCollection("products", snapshot.products, normalizeProducts),
+    ...["customers", "quotations", "orders", "adsEntries", "productionJobs", "installationJobs", "warrantyCards", "socialLeads"]
+      .map((collection) => applyCollection(collection, snapshot[collection])),
+    applyCompanySettings(snapshot.companySettings)
+  ].filter(Boolean);
+  return failures.length ? { ok: false, reason: `Cloud data loaded, but local cache could not save: ${failures.join("; ")}` } : { ok: true, reason: "" };
 }
 
 export function replaceStateFromBackup(snapshot = {}) {
@@ -490,8 +502,14 @@ function applyCollection(collection, incoming, normalizer) {
   const rows = workflowCollections.has(collection)
     ? mergeCurrentWorkflowRows(localRows, incoming, collection)
     : incoming;
-  state[collection] = normalizer ? normalizer(rows) : rows;
-  saveJson(storageKeys[collection], state[collection]);
+  const nextRows = normalizer ? normalizer(rows) : rows;
+  const serialized = JSON.stringify(nextRows);
+  state[collection] = nextRows;
+  try {
+    if (localStorage.getItem(storageKeys[collection]) !== serialized) localStorage.setItem(storageKeys[collection], serialized);
+  } catch (error) {
+    return `${collection}: ${error.message || "storage quota exceeded"}`;
+  }
 }
 
 function mergeCurrentWorkflowRows(localRows, incomingRows, collection) {
@@ -544,5 +562,10 @@ function applyCompanySettings(incoming) {
   const settings = Array.isArray(incoming) ? incoming[0] : incoming;
   if (!settings || typeof settings !== "object") return;
   state.companySettings = normalizeCompanySettings(settings);
-  saveJson(storageKeys.companySettings, state.companySettings);
+  const serialized = JSON.stringify(state.companySettings);
+  try {
+    if (localStorage.getItem(storageKeys.companySettings) !== serialized) localStorage.setItem(storageKeys.companySettings, serialized);
+  } catch (error) {
+    return `companySettings: ${error.message || "storage quota exceeded"}`;
+  }
 }

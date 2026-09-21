@@ -3163,7 +3163,7 @@ function downloadProductionDuplicateBackup(group, mainMember) {
     document.body.appendChild(link);
     link.click();
     link.remove();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
     return true;
   } catch (error) {
     console.error("Production duplicate archive backup failed", error);
@@ -8431,20 +8431,29 @@ export async function markProductionStatus(jobId, status) {
     productionJobId: job.id,
     updatedAt: now
   } : order);
-  const localSave = persistOrderConversionLocally();
+  const localSave = persistOrderConversionLocally(["orders", "productionJobs"]);
   if (!localSave.ok) {
     restoreConversionState(previousState);
     renderWorkflowModules();
-    return showWorkflowMessage(`Failed to save Production status locally: ${localSave.reason}`, "error");
+    const backupCreated = downloadOrderActionBackup({ action: "production-status-local-save-failed", orderId: job.orderId, changes: [] });
+    const rollbackWarning = localSave.rollbackFailures?.length ? ` Rollback needs manual review: ${localSave.rollbackFailures.join("; ")}.` : "";
+    const message = `Production status was NOT saved locally or synced. ${localSave.reason}.${rollbackWarning} ${backupCreated ? "A full JSON backup of the current in-memory records was downloaded." : "Please export a full JSON backup before retrying."}`;
+    showWorkflowMessage(message, "error");
+    return { ok: false, localSaved: false, cloudOk: false, backupCreated, message };
   }
   renderWorkflowModules();
   showWorkflowMessage("Production and Order status saved locally. Syncing cloud...", "info");
   try {
-    const cloudSync = await syncOrderConversionCollections();
+    const cloudSync = await syncOrderConversionCollections(["orders", "productionJobs"]);
     if (!cloudSync.ok && !cloudSync.localOnly) {
       const message = `Production and Order status saved locally but cloud sync failed: ${cloudSync.reason}`;
       showWorkflowMessage(message, "warning");
       return { ok: true, status: normalizedStatus, cloudOk: false, message };
+    }
+    if (cloudSync.ok && cloudSync.localCacheOk === false) {
+      const message = `Production and Order status reached cloud, but another local cache write failed: ${cloudSync.localCacheError}. Keep this browser data and export a full JSON backup.`;
+      showWorkflowMessage(message, "warning");
+      return { ok: true, status: normalizedStatus, localSaved: true, cloudOk: true, localCacheOk: false, message };
     }
     const message = normalizedStatus === "completed" ? "Production marked completed" : normalizedStatus === "in_production" ? "Production marked in progress" : "Production marked not started";
     showWorkflowMessage(message, "success");
