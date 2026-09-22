@@ -6,6 +6,7 @@ import {
   makeQuoteItem,
   nextQuoteNumber,
   persistQuotations,
+  persistQuotationStatusLocally,
   persistQuotationsLocally,
   productById,
   state,
@@ -527,7 +528,7 @@ export async function duplicateQuotation(sourceQuotationId, values = {}, options
   }
 }
 
-export function saveQuote() {
+export async function saveQuote() {
   const quote = ensureCurrentQuote();
   const displayNo = String(document.querySelector("#quoteNumber")?.value || getQuotationDisplayNo(quote)).trim();
   quote.quoteNumber = displayNo;
@@ -552,20 +553,30 @@ export function saveQuote() {
     balance: totals.balance,
     items: quote.items.map((item) => itemWithCalculatedTotals(item))
   };
+  const previousQuotations = state.quotations;
   state.quotations = state.quotations.some((row) => row.id === snapshot.id)
     ? state.quotations.map((row) => row.id === snapshot.id ? snapshot : row)
     : [snapshot, ...state.quotations];
-  const cloudSave = persistQuotations();
   const saveStatus = document.querySelector("#saveStatus");
+  const localSave = await persistQuotationStatusLocally();
+  if (!localSave.ok) {
+    state.quotations = previousQuotations;
+    saveStatus.textContent = `${t("Save Quote")} ${getQuotationDisplayNo(snapshot)} - not saved: ${localSave.reason}`;
+    renderQuotationList();
+    return { ok: false, localSaved: false, message: saveStatus.textContent };
+  }
   saveStatus.textContent = `${t("Save Quote")} ${getQuotationDisplayNo(snapshot)} - saved locally. Syncing cloud...`;
-  cloudSave.then((result) => {
-    saveStatus.textContent = result.ok
-      ? `${t("Save Quote")} ${getQuotationDisplayNo(snapshot)} - cloud synced.`
-      : result.reason === "Local Mode Only"
-        ? `${t("Save Quote")} ${getQuotationDisplayNo(snapshot)} - saved locally.`
-        : `${t("Save Quote")} ${getQuotationDisplayNo(snapshot)} - saved locally. Cloud sync failed: ${result.reason}`;
-  });
+  let result;
+  try { result = await syncCollectionNow("quotations"); }
+  catch (error) { result = { ok: false, reason: error.message || "Cloud sync failed." }; }
+  const cacheFull = localSave.cacheFull || !!result.localCacheError;
+  saveStatus.textContent = result.ok
+    ? `${t("Save Quote")} ${getQuotationDisplayNo(snapshot)} - cloud synced.${cacheFull ? " Browser cache is full; a local recovery copy is retained." : ""}`
+    : result.reason === "Local Mode Only"
+      ? `${t("Save Quote")} ${getQuotationDisplayNo(snapshot)} - saved locally.${cacheFull ? " Browser cache is full; a recovery copy is retained." : ""}`
+      : `${t("Save Quote")} ${getQuotationDisplayNo(snapshot)} - saved locally. Cloud sync failed: ${result.reason}${cacheFull ? " A local recovery copy is retained." : ""}`;
   renderQuotationList();
+  return { ok: true, localSaved: true, cloudOk: result.ok, localCacheFull: cacheFull, message: saveStatus.textContent };
 }
 
 export function newQuote() {

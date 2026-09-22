@@ -158,7 +158,8 @@ const {
   quotationProjectName,
   quotationListRowHtml,
   quotationsForTab,
-  restoreQuotation
+  restoreQuotation,
+  saveQuote
 } = await import("../src/quotations.js");
 const {
   COLOR_VALUES,
@@ -365,11 +366,35 @@ await hydrateQuotationCache();
 assert(state.quotations[0].status === "won", "A0: IndexedDB recovery cache must restore Won after refresh");
 applyCloudSnapshot({ quotations: [{ ...quotaQuote, updatedAt: "2020-01-01T00:00:00.000Z" }] });
 assert(state.quotations[0].status === "won", "A0: older cloud data must not reverse recovered Won status");
+const originalQuerySelector = document.querySelector;
+const saveStatusElement = { textContent: "", dataset: {} };
+document.querySelector = (selector) => ({
+  "#quoteNumber": { value: quotaQuote.quotationNo },
+  "#projectName": { value: "" },
+  "#customerAddress": { value: "" },
+  "#saveStatus": saveStatusElement
+})[selector] || null;
+state.currentQuote = { ...structuredClone(state.quotations[0]), remark: "Edited while cache is full" };
+const quotaFullQuoteSave = await saveQuote();
+assert(quotaFullQuoteSave.ok && quotaFullQuoteSave.localCacheFull && !quotaFullQuoteSave.cloudOk
+  && state.quotations[0].remark === "Edited while cache is full",
+"A0: Save Quote must durably preserve the whole edited quotation when localStorage is full and cloud is offline");
+state.quotations = loadJson(storageKeys.quotations, []);
+await hydrateQuotationCache();
+assert(state.quotations[0].remark === "Edited while cache is full" && state.quotations[0].status === "won",
+  "A0: Save Quote fallback must retain edits and Won status after refresh");
 globalThis.indexedDB = undefined;
 const beforeFailedSave = JSON.stringify(state.quotations);
+state.currentQuote = { ...structuredClone(state.quotations[0]), remark: "Unsaved edit" };
+const bothStoresQuoteSave = await saveQuote();
+assert(!bothStoresQuoteSave.ok && JSON.stringify(state.quotations) === beforeFailedSave
+  && saveStatusElement.textContent.includes("not saved"),
+  "A0: Save Quote must roll back and report failure when both durable browser stores are unavailable");
 const bothStoresFailed = await updateQuotationStatus(quotaQuote.id, "follow_up");
 assert(!bothStoresFailed.ok && JSON.stringify(state.quotations) === beforeFailedSave,
   "A0: when browser cache and recovery storage both fail, quotation status must roll back");
+document.querySelector = originalQuerySelector;
+state.currentQuote = null;
 localStorage.setItem = originalQuotaSetItem;
 globalThis.indexedDB = originalIndexedDB;
 globalThis.fetch = originalFetch;
