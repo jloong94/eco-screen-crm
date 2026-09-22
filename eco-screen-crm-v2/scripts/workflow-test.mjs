@@ -28,10 +28,11 @@ const { identity, supabase } = await import('../src/session.js');
 identity.companyId = '11111111-1111-4111-8111-111111111111';
 identity.user = { authUserId: 'test-user', userId: 'boss1', role: 'Boss' };
 supabase.auth.getSession = async () => ({ data: { session: { access_token: 'test-user-jwt' } }, error: null });
-const { storageKeys } = await import('../src/storage.js');
+const { storageKeys, loadJson } = await import('../src/storage.js');
 
 const {
   applyCloudSnapshot,
+  hydrateQuotationCache,
   makeQuote,
   makeQuoteItem,
   nextQuoteNumber,
@@ -185,6 +186,30 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+function memoryIndexedDB() {
+  const snapshots = new Map();
+  const database = {
+    createObjectStore: () => {}, close: () => {},
+    transaction: () => {
+      const transaction = { error: null };
+      transaction.objectStore = () => ({
+        put: (value, key) => { snapshots.set(key, structuredClone(value)); queueMicrotask(() => transaction.oncomplete?.()); },
+        get: (key) => {
+          const request = { result: undefined };
+          queueMicrotask(() => { request.result = snapshots.get(key); request.onsuccess?.(); });
+          return request;
+        }
+      });
+      return transaction;
+    }
+  };
+  return { open: () => {
+    const request = { result: database };
+    queueMicrotask(() => { request.onupgradeneeded?.(); request.onsuccess?.(); });
+    return request;
+  } };
+}
+
 assert(isBossOrAdmin("Boss") && isBossOrAdmin(" boss ") && isBossOrAdmin("ADMIN") && isBossOrAdmin(" Admin "), "Boss/Admin recognition must ignore case and surrounding whitespace");
 assert(!isBossOrAdmin("Sales") && !isBossOrAdmin(""), "Non-Boss/Admin roles must remain restricted");
 assert(canDuplicateQuotation("Boss") && canDuplicateQuotation(" admin ") && canDuplicateQuotation("SECRETARY") && !canDuplicateQuotation("Sales"), "Duplicate Quotation must be restricted to normalized Boss/Admin/Secretary roles");
@@ -319,6 +344,36 @@ assert(nextSalesOrderNumber(new Date("2026-08-15T12:00:00.000Z")) === quoteOnlyN
 assert(!quotationOrderAction(quoteA).canConvert, "A0: Quoted quotation must hide conversion");
 const quotedConversion = await convertQuoteToOrder(quoteA.id);
 assert(!quotedConversion.ok && state.orders.length === 0, "A0: non-Won quotation must not convert");
+const originalIndexedDB = globalThis.indexedDB;
+const originalQuotaSetItem = localStorage.setItem;
+const originalFetch = globalThis.fetch;
+globalThis.indexedDB = memoryIndexedDB();
+globalThis.fetch = async () => { throw new Error("Simulated offline cloud"); };
+const quotaQuote = validQuote("ESQ-2026-0093", "Quota Customer");
+state.quotations = [quotaQuote];
+localStorage.setItem(storageKeys.quotations, JSON.stringify(state.quotations));
+localStorage.setItem = (key, value) => {
+  if (key === storageKeys.quotations) throw new Error("The quota has been exceeded.");
+  originalQuotaSetItem.call(localStorage, key, value);
+};
+const quotaWon = await updateQuotationStatus(quotaQuote.id, "won");
+assert(quotaWon.ok && quotaWon.localCacheFull && !quotaWon.cloudOk && state.quotations[0].status === "won",
+  "A0: full localStorage must not lose a durably saved Won status during cloud failure");
+state.quotations = loadJson(storageKeys.quotations, []);
+assert(state.quotations[0].status === "quoted", "A0: test must simulate the stale localStorage row after refresh");
+await hydrateQuotationCache();
+assert(state.quotations[0].status === "won", "A0: IndexedDB recovery cache must restore Won after refresh");
+applyCloudSnapshot({ quotations: [{ ...quotaQuote, updatedAt: "2020-01-01T00:00:00.000Z" }] });
+assert(state.quotations[0].status === "won", "A0: older cloud data must not reverse recovered Won status");
+globalThis.indexedDB = undefined;
+const beforeFailedSave = JSON.stringify(state.quotations);
+const bothStoresFailed = await updateQuotationStatus(quotaQuote.id, "follow_up");
+assert(!bothStoresFailed.ok && JSON.stringify(state.quotations) === beforeFailedSave,
+  "A0: when browser cache and recovery storage both fail, quotation status must roll back");
+localStorage.setItem = originalQuotaSetItem;
+globalThis.indexedDB = originalIndexedDB;
+globalThis.fetch = originalFetch;
+state.quotations = [quoteA];
 const wonStatus = await updateQuotationStatus(quoteA.id, "won");
 assert(wonStatus.ok && quotationOrderAction(state.quotations[0]).canConvert, "A0: saving Won should enable conversion");
 assert(nextSalesOrderNumber(new Date("2026-08-15T12:00:00.000Z")) === quoteOnlyNextSo,

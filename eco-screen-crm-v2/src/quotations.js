@@ -158,7 +158,7 @@ async function saveQuotationStatusFromEvent(event) {
   } else {
     quote.status = result.status;
     if (event.target.isConnected) event.target.value = result.status;
-    setSaveStatus(result.message, result.cloudOk === false && !result.localOnly ? "warning" : "success");
+    setSaveStatus(result.message, result.localCacheFull || result.cloudOk === false && !result.localOnly ? "warning" : "success");
   }
   if (event.target.isConnected) event.target.disabled = false;
   renderQuotationList();

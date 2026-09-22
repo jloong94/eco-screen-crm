@@ -4,6 +4,7 @@ import {
   nextProductionNumber,
   persistOrderConversionLocally,
   persistQuotations,
+  persistQuotationStatusLocally,
   persistInstallationJobs,
   persistOrders,
   persistProductionJobs,
@@ -11,6 +12,7 @@ import {
   productById,
   state,
   stateSnapshot,
+  syncCollectionNow,
   syncOrderConversionCollections,
   uid
 } from "./state.js";
@@ -723,15 +725,20 @@ export async function updateQuotationStatus(quoteId, nextStatus) {
   if (state.currentQuote?.id === quote.id) state.currentQuote = { ...state.currentQuote, status: normalized, updatedAt: now };
 
   try {
-    const cloudSync = await persistQuotations();
+    const localSave = await persistQuotationStatusLocally();
+    if (!localSave.ok) throw new Error(localSave.reason);
+    let cloudSync;
+    try { cloudSync = await syncCollectionNow("quotations"); }
+    catch (error) { cloudSync = { ok: false, reason: error.message || "Cloud sync failed." }; }
     const cloudFailed = !cloudSync.ok && cloudSync.reason !== "Local Mode Only";
+    const cacheWarning = localSave.cacheFull || cloudSync.localCacheError;
     const message = cloudFailed
-      ? `Quotation status saved locally but cloud sync failed: ${cloudSync.reason}`
-      : cloudSync.reason === "Local Mode Only"
-        ? "Quotation status saved locally."
-        : "Quotation status saved.";
-    showWorkflowMessage(message, cloudFailed ? "warning" : "success");
-    return { ok: true, status: normalized, order: existingOrder, cloudOk: cloudSync.ok, localOnly: cloudSync.reason === "Local Mode Only", message };
+      ? `Quotation status saved locally but cloud sync failed: ${cloudSync.reason}${cacheWarning ? " Browser cache is full; a recovery copy is stored locally." : ""}`
+      : cacheWarning
+        ? "Quotation status saved; browser cache is full. A local recovery copy is retained."
+        : cloudSync.reason === "Local Mode Only" ? "Quotation status saved locally." : "Quotation status saved.";
+    showWorkflowMessage(message, cloudFailed || cacheWarning ? "warning" : "success");
+    return { ok: true, status: normalized, order: existingOrder, cloudOk: cloudSync.ok, localOnly: cloudSync.reason === "Local Mode Only", localCacheFull: !!cacheWarning, message };
   } catch (error) {
     state.quotations = previousQuotations;
     state.currentQuote = previousCurrentQuote;
