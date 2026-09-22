@@ -4,6 +4,7 @@ import { renderAddProductForm, renderProducts, attachProductEvents } from "./pro
 import { attachQuotationEvents, renderQuotationForm } from "./quotations.js";
 import {
   applyCloudSnapshot,
+  hydrateQuotationCache,
   persistCompanySettings,
   persistInstallationJobs,
   persistOrders,
@@ -1410,4 +1411,5 @@ function escapeHtml(value) {
   })[char]);
 }
 
+await hydrateQuotationCache();
 renderShell();

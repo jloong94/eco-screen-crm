@@ -1,6 +1,6 @@
 import { identity } from './session.js';
 import { defaultCompanySettings, defaultProducts, defaultUsers } from "./data.js";
-import { loadJson, saveJson, storageKeys } from "./storage.js";
+import { loadJson, loadQuotationCache, saveJson, saveQuotationCache, storageKeys } from "./storage.js";
 import { isCloudConfigured, safeSyncWithCloud, saveData, syncToCloud } from "./cloudSync.js";
 
 const orderConversionCollections = [
@@ -107,6 +107,30 @@ export function persistCustomers() {
 export function persistQuotations() {
   saveJson(storageKeys.quotations, state.quotations);
   return syncCollectionNow("quotations");
+}
+
+export async function hydrateQuotationCache() {
+  try {
+    const cached = await loadQuotationCache();
+    // The recovery copy is the completed write when timestamps tie within one millisecond.
+    if (cached.length) state.quotations = mergeCurrentWorkflowRows(cached, state.quotations, "quotations");
+  } catch {
+    // localStorage and read-only cloud hydration remain available.
+  }
+}
+
+export async function persistQuotationStatusLocally() {
+  try {
+    saveJson(storageKeys.quotations, state.quotations);
+    return { ok: true, cacheFull: false };
+  } catch (localError) {
+    try {
+      await saveQuotationCache(state.quotations);
+      return { ok: true, cacheFull: true, reason: localError.message || "Local cache full." };
+    } catch (indexedError) {
+      return { ok: false, reason: `Browser cache: ${localError.message || "save failed"}; recovery storage: ${indexedError.message || "save failed"}` };
+    }
+  }
 }
 
 export function persistQuotationsLocally() {
@@ -440,12 +464,12 @@ export async function syncCollectionNow(collection) {
   updateCloudStatus({ status: "Syncing...", connected: false });
   const result = await saveData(collection, stateSnapshot()[collection] || [], { localSnapshot: stateSnapshot() });
   if (result.ok) {
-    applyCollection(collection, result.data);
+    const localCacheError = applyCollection(collection, result.data);
     updateCloudStatus({
-      status: "Cloud Synced",
+      status: localCacheError ? "Cloud Synced (local cache full)" : "Cloud Synced",
       connected: true,
       lastSyncAt: result.syncedAt || new Date().toISOString(),
-      lastError: "",
+      lastError: localCacheError || "",
       counts: {
         ...state.cloud.counts,
         [collection]: stateSnapshot()[collection]?.length || 0
@@ -458,7 +482,7 @@ export async function syncCollectionNow(collection) {
       lastError: result.reason || "Cloud sync failed."
     });
   }
-  return result;
+  return result.ok ? { ...result, localCacheError: state.cloud.lastError } : result;
 }
 
 let cloudSyncTimer = null;
