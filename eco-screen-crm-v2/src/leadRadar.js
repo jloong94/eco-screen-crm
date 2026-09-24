@@ -1,12 +1,12 @@
 import { supabase, identity, staffRequest } from './session.js';
-import { renderPublicSearch, attachPublicSearch } from './leadRadarSearch.js';
+import { renderPasteLead, attachPasteLead } from './leadRadarPaste.js';
 import { prospectTypes, classifications, contactStatuses, textFields, prospectPayload, safeSourceUrl,
   whatsappUrl, filterProspects, escapeHtml as esc } from './leadRadarModel.js';
 
 export function renderLeadRadarPage() {
   return `<section class="panel page-panel" id="leadRadar"><div class="panel-head"><h2>Lead Radar</h2>
     <button class="btn primary" id="radarAdd">新增 Prospect</button></div>
-    ${renderPublicSearch()}
+    ${renderPasteLead()}
     <p id="radarMessage" role="status">加载中…</p><div id="radarFilters" class="form-grid compact"></div>
     <div id="radarList" class="product-list"></div><div id="radarEditor"></div></section>`;
 }
@@ -16,7 +16,6 @@ const options = (values, selected, all = false) => `${all ? '<option value="">�
 export async function attachLeadRadarEvents() {
   const root = document.querySelector('#leadRadar');
   if (!root) return;
-  attachPublicSearch(root);
   let rows = [], saving = false;
   const companyId = identity.companyId;
   const filters = { area: '', type: '', status: '', sort: 'desc' };
@@ -53,6 +52,21 @@ export async function attachLeadRadarEvents() {
     }
     rows = collected; draw(); message(`${rows.length} prospects`);
   }
+  async function saveProspect(payload, row = {}) {
+    let data, error;
+    if (identity.mode === 'pin') {
+      data = await staffRequest(`/api/staff-prospects${row.id ? '?id=' + encodeURIComponent(row.id) : ''}`, {
+        method: row.id ? 'PATCH' : 'POST', body: JSON.stringify(payload)
+      });
+    } else {
+      const query = row.id ? supabase.from('crm_v2_prospects').update(payload).eq('company_id', companyId).eq('id', row.id)
+        : supabase.from('crm_v2_prospects').insert({ ...payload, company_id: companyId });
+      ({ data, error } = await query.select('id').single());
+    }
+    if (error || !data) throw error || new Error('保存失败。');
+    await load();
+    return data.id;
+  }
   function editor(row = {}) {
     root.querySelector('#radarEditor').innerHTML = `<form id="radarForm" class="panel stack"><h3>${row.id ? '编辑' : '新增'} Prospect</h3>
       <div class="form-grid compact">${textFields.map(key => `<label>${esc(key)}${key === 'notes'
@@ -74,18 +88,8 @@ export async function attachLeadRadarEvents() {
         const input = Object.fromEntries(new FormData(form));
         input.do_not_contact = form.elements.do_not_contact.checked;
         const payload = prospectPayload(input);
-        let data, error;
-        if (identity.mode === 'pin') {
-          data = await staffRequest(`/api/staff-prospects${row.id ? '?id=' + encodeURIComponent(row.id) : ''}`, {
-            method: row.id ? 'PATCH' : 'POST', body: JSON.stringify(payload)
-          });
-        } else {
-          const query = row.id ? supabase.from('crm_v2_prospects').update(payload).eq('company_id', companyId).eq('id', row.id)
-            : supabase.from('crm_v2_prospects').insert({ ...payload, company_id: companyId });
-          ({ data, error } = await query.select('id').single());
-        }
-        if (error || !data) throw error || new Error('保存失败。');
-        form.remove(); await load(); message('已保存。');
+        await saveProspect(payload, row);
+        form.remove(); message('已保存。');
       } catch (error) {
         if (form.isConnected) form.querySelector('#radarFormError').textContent = error.message || '保存失败，请重试。';
         else message('已保存，但列表刷新失败；请重新打开 Lead Radar。');
@@ -93,6 +97,20 @@ export async function attachLeadRadarEvents() {
     };
     form.querySelector('[name="name"]').focus();
   }
+  attachPasteLead(root, {
+    onSave: async draft => {
+      if (saving) throw new Error('正在保存，请稍后重试。');
+      if (draft.source_url && rows.some(row => row.source_url === draft.source_url)) throw new Error('此来源已在 prospect 列表中。');
+      saving = true;
+      try { return await saveProspect(prospectPayload(draft)); }
+      finally { saving = false; }
+    },
+    onFollowUp: (draft, savedId) => {
+      if (saving) return;
+      editor(rows.find(row => row.id === savedId) || draft);
+      root.querySelector('#radarEditor').scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }
+  });
   root.querySelector('#radarAdd').onclick = () => { if (!saving) editor(); };
   root.addEventListener('change', event => { if (event.target.dataset.filter) { filters[event.target.dataset.filter] = event.target.value; draw(); } });
   root.addEventListener('click', event => { const id = event.target.closest('[data-edit]')?.dataset.edit; if (id && !saving) editor(rows.find(r => r.id === id)); });
