@@ -35,7 +35,15 @@ export function attachPasteLead(root, { onSave, onFollowUp }) {
     current.querySelector('#radarPasteMessage').textContent = view.message;
     current.querySelector('#radarPasteResult').innerHTML = resultHtml(view.result);
   };
-  form.addEventListener('input', capture);
+  form.addEventListener('input', () => {
+    capture();
+    if (view.result) {
+      view.result = null;
+      view.savedId = '';
+      view.message = '内容已修改，请重新判断。';
+      paint();
+    }
+  });
   form.addEventListener('submit', event => {
     event.preventDefault(); capture();
     try { view.result = assessPastedLead(view.input); view.savedId = ''; view.message = '请确认判断结果后保存。'; }
