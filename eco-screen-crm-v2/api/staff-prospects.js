@@ -1,4 +1,4 @@
-import { canUseRadar, database, fail, handleError, isAdmin, mutationGuard, reply, requireStaff } from './_lib/staff-auth.js';
+import { canUseRadar, database, fail, handleError, mutationGuard, reply, requireStaff } from './_lib/staff-auth.js';
 import { prospectPayload } from '../src/leadRadarModel.js';
 
 export default async function handler(req, res) {
@@ -15,15 +15,6 @@ export default async function handler(req, res) {
       return reply(res, 200, data);
     }
     mutationGuard(req);
-    if (req.method === 'DELETE') {
-      const id = 'f9e1ddf2-5789-436b-ad29-313be2db0bc6';
-      const name = '[TEST ONLY E2E-LEAD-RADAR-6b11f5eb] Looking for mosquito screen installer in Bukit Mertajam. Need a quotation.';
-      if (!isAdmin(user.role) || companyId !== 'aa957181-66be-4aa7-8b1c-25314aa96196') fail(403, 'Permission denied.');
-      if (params.get('id') !== id || params.get('cleanup') !== 'E2E-LEAD-RADAR-6b11f5eb') fail(400, 'Invalid test lead.');
-      const { data, error } = await db.from('crm_v2_prospects').delete().eq('company_id', companyId).eq('id', id).eq('name', name).select('id').single();
-      if (error || !data) fail(404, 'Test lead not found.');
-      return reply(res, 200, data);
-    }
     if (!['POST', 'PATCH'].includes(req.method)) fail(405, 'Method not allowed.');
     const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
     let payload;
