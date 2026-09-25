@@ -2,6 +2,7 @@ import {
   activeProducts,
   nextInstallationNumber,
   nextProductionNumber,
+  persistOrderConversionDurably,
   persistOrderConversionLocally,
   persistQuotations,
   persistQuotationStatusLocally,
@@ -286,7 +287,7 @@ export async function convertQuoteToOrder(quoteId) {
     state.warrantyCards = nextWarrantyCards;
     if (state.currentQuote?.id === sourceQuote.id) state.currentQuote = structuredCloneSafe(updatedQuote);
 
-    const localSave = persistOrderConversionLocally();
+    const localSave = await persistOrderConversionDurably();
     if (!localSave.ok) {
       restoreConversionState(previousState);
       return failConversion(`Failed to save order locally: ${localSave.reason}`);
@@ -296,15 +297,16 @@ export async function convertQuoteToOrder(quoteId) {
     const baseMessage = existing
       ? `Existing Order found: ${getOrderDisplayNo(linkedOrder)}`
       : `Order created: ${getOrderDisplayNo(linkedOrder)}`;
-    showWorkflowMessage(`${baseMessage} Saved locally. Syncing cloud...`, "info");
+    const recoveryMessage = localSave.cacheFull ? " Browser cache is full; a durable recovery copy is retained." : "";
+    showWorkflowMessage(`${baseMessage} Saved locally.${recoveryMessage} Syncing cloud...`, localSave.cacheFull ? "warning" : "info");
 
     const cloudSync = await syncOrderConversionCollections();
     const cloudFailed = !cloudSync.ok && !cloudSync.localOnly;
     const message = cloudFailed
-      ? `${baseMessage} Order saved locally but cloud sync failed: ${cloudSync.reason}`
+      ? `${baseMessage} Order saved locally${recoveryMessage} Cloud sync failed: ${cloudSync.reason}`
       : cloudSync.localOnly
-        ? `${baseMessage} Saved locally.`
-        : baseMessage;
+        ? `${baseMessage} Saved locally.${recoveryMessage}`
+        : `${baseMessage}${recoveryMessage}`;
     showWorkflowMessage(message, cloudFailed ? "warning" : "success");
     openOrderInOrders(linkedOrder, message, cloudFailed ? "warning" : "success");
     return {
@@ -313,7 +315,8 @@ export async function convertQuoteToOrder(quoteId) {
       order: linkedOrder,
       existing: Boolean(existing),
       cloudOk: cloudSync.ok && !cloudSync.localOnly,
-      localOnly: cloudSync.localOnly
+      localOnly: cloudSync.localOnly,
+      localCacheFull: localSave.cacheFull
     };
   } catch (error) {
     console.error("Convert to Order failed", error);

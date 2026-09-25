@@ -32,6 +32,7 @@ const { storageKeys, loadJson } = await import('../src/storage.js');
 
 const {
   applyCloudSnapshot,
+  hydrateOrderConversionCache,
   hydrateQuotationCache,
   makeQuote,
   makeQuoteItem,
@@ -383,7 +384,68 @@ state.quotations = loadJson(storageKeys.quotations, []);
 await hydrateQuotationCache();
 assert(state.quotations[0].remark === "Edited while cache is full" && state.quotations[0].status === "won",
   "A0: Save Quote fallback must retain edits and Won status after refresh");
+state.currentQuote = null;
+state.orders = [];
+state.productionJobs = [];
+state.installationJobs = [];
+state.warrantyCards = [];
+for (const collection of ["orders", "productionJobs", "installationJobs", "warrantyCards"]) {
+  originalQuotaSetItem.call(localStorage, storageKeys[collection], JSON.stringify(state[collection]));
+}
+localStorage.setItem = (key, value) => {
+  if ([storageKeys.orders, storageKeys.productionJobs, storageKeys.installationJobs, storageKeys.warrantyCards, storageKeys.quotations].includes(key)) {
+    throw new Error("The quota has been exceeded.");
+  }
+  originalQuotaSetItem.call(localStorage, key, value);
+};
+const quotaConversion = await convertQuoteToOrder(quotaQuote.id);
+assert(quotaConversion.ok && quotaConversion.localCacheFull && !quotaConversion.cloudOk
+  && state.orders.length === 1 && state.productionJobs.length === 1 && state.installationJobs.length === 1
+  && state.quotations[0].orderId === state.orders[0].id,
+"A0: Convert to Order must durably preserve the exact Order workflow transaction when localStorage is full and cloud is offline");
+state.orders = loadJson(storageKeys.orders, []);
+state.productionJobs = loadJson(storageKeys.productionJobs, []);
+state.installationJobs = loadJson(storageKeys.installationJobs, []);
+state.warrantyCards = loadJson(storageKeys.warrantyCards, []);
+state.quotations = loadJson(storageKeys.quotations, []);
+assert(state.orders.length === 0 && !state.quotations[0].orderId,
+  "A0: conversion recovery test must begin from stale localStorage workflow rows");
+await hydrateOrderConversionCache();
+assert(state.orders.length === 1 && state.productionJobs.length === 1 && state.installationJobs.length === 1
+  && state.quotations[0].orderId === state.orders[0].id,
+"A0: IndexedDB recovery cache must restore the whole exact Order conversion after refresh");
+const recoveredOrderId = state.orders[0].id;
+applyCloudSnapshot({
+  orders: [],
+  productionJobs: [],
+  installationJobs: [],
+  warrantyCards: [],
+  quotations: [{ ...quotaQuote, updatedAt: "2020-01-01T00:00:00.000Z" }]
+});
+assert(state.orders.some((order) => order.id === recoveredOrderId) && state.quotations[0].orderId === recoveredOrderId,
+  "A0: empty or older cloud data must not reverse a recovered Order conversion");
 globalThis.indexedDB = undefined;
+const noRecoveryQuote = validQuote("ESQ-QUOTA-NO-RECOVERY", "No Recovery Customer");
+noRecoveryQuote.status = "won";
+noRecoveryQuote.updatedAt = "2026-09-25T10:00:00.000Z";
+state.quotations = [noRecoveryQuote, ...state.quotations];
+const beforeFailedConversion = JSON.stringify({
+  quotations: state.quotations,
+  orders: state.orders,
+  productionJobs: state.productionJobs,
+  installationJobs: state.installationJobs,
+  warrantyCards: state.warrantyCards
+});
+const failedQuotaConversion = await convertQuoteToOrder(noRecoveryQuote.id);
+assert(!failedQuotaConversion.ok && JSON.stringify({
+  quotations: state.quotations,
+  orders: state.orders,
+  productionJobs: state.productionJobs,
+  installationJobs: state.installationJobs,
+  warrantyCards: state.warrantyCards
+}) === beforeFailedConversion,
+"A0: Convert to Order must roll back every workflow collection when both durable browser stores fail");
+state.quotations = state.quotations.filter((quote) => quote.id !== noRecoveryQuote.id);
 const beforeFailedSave = JSON.stringify(state.quotations);
 state.currentQuote = { ...structuredClone(state.quotations[0]), remark: "Unsaved edit" };
 const bothStoresQuoteSave = await saveQuote();
@@ -399,6 +461,10 @@ localStorage.setItem = originalQuotaSetItem;
 globalThis.indexedDB = originalIndexedDB;
 globalThis.fetch = originalFetch;
 state.quotations = [quoteA];
+state.orders = [];
+state.productionJobs = [];
+state.installationJobs = [];
+state.warrantyCards = [];
 const wonStatus = await updateQuotationStatus(quoteA.id, "won");
 assert(wonStatus.ok && quotationOrderAction(state.quotations[0]).canConvert, "A0: saving Won should enable conversion");
 assert(nextSalesOrderNumber(new Date("2026-08-15T12:00:00.000Z")) === quoteOnlyNextSo,
