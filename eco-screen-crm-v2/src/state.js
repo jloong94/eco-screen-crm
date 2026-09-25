@@ -1,6 +1,6 @@
 import { identity } from './session.js';
 import { defaultCompanySettings, defaultProducts, defaultUsers } from "./data.js";
-import { loadJson, loadQuotationCache, saveJson, saveQuotationCache, storageKeys } from "./storage.js";
+import { loadJson, loadOrderConversionCache, loadQuotationCache, saveJson, saveOrderConversionCache, saveQuotationCache, storageKeys } from "./storage.js";
 import { isCloudConfigured, safeSyncWithCloud, saveData, syncToCloud } from "./cloudSync.js";
 
 const orderConversionCollections = [
@@ -119,6 +119,19 @@ export async function hydrateQuotationCache() {
   }
 }
 
+export async function hydrateOrderConversionCache() {
+  try {
+    const cached = await loadOrderConversionCache();
+    orderConversionCollections.forEach((collection) => {
+      if (Array.isArray(cached[collection]) && cached[collection].length) {
+        state[collection] = mergeCurrentWorkflowRows(cached[collection], state[collection], collection);
+      }
+    });
+  } catch {
+    // localStorage and read-only cloud hydration remain available.
+  }
+}
+
 export async function persistQuotationStatusLocally() {
   try {
     saveJson(storageKeys.quotations, state.quotations);
@@ -181,6 +194,28 @@ export function persistOrderConversionLocally(collections = orderConversionColle
       }
     });
     return { ok: false, reason: error.message || "Local order save failed.", rollbackFailures };
+  }
+}
+
+export async function persistOrderConversionDurably(collections = orderConversionCollections) {
+  const localSave = persistOrderConversionLocally(collections);
+  if (localSave.ok) return { ...localSave, cacheFull: false };
+  const selected = orderConversionCollections.filter((collection) => collections.includes(collection));
+  try {
+    await saveOrderConversionCache(Object.fromEntries(selected.map((collection) => [collection, state[collection]])));
+    return {
+      ok: true,
+      cacheFull: true,
+      savedCollections: selected,
+      reason: localSave.reason,
+      rollbackFailures: localSave.rollbackFailures || []
+    };
+  } catch (indexedError) {
+    return {
+      ok: false,
+      reason: `Browser cache: ${localSave.reason || "save failed"}; recovery storage: ${indexedError.message || "save failed"}`,
+      rollbackFailures: localSave.rollbackFailures || []
+    };
   }
 }
 
