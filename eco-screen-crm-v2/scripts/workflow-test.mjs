@@ -3667,12 +3667,21 @@ const archivedOnlyPlan = buildSoNumberReassignmentPlan({
 assert(archivedOnlyPlan.ok && archivedOnlyPlan.staleQuotationId === ""
   && archivedOnlyPlan.changes.every((change) => ![archivedOnlyOrder.id, archivedOnlyProduction.id, archivedOnlyInstallation.id].includes(change.stableId)),
 "AE13: archived-only plan must not include any archived audit record in its exact field changes");
+const archivedOnlyQuotaSetItem = localStorage.setItem;
+const archivedOnlyOriginalIndexedDB = globalThis.indexedDB;
+globalThis.indexedDB = memoryIndexedDB();
+localStorage.setItem = (key, value) => {
+  if ([storageKeys.orders, storageKeys.productionJobs, storageKeys.installationJobs, storageKeys.warrantyCards, storageKeys.quotations].includes(key)) {
+    throw new Error("The quota has been exceeded.");
+  }
+  archivedOnlyQuotaSetItem.call(localStorage, key, value);
+};
 const archivedOnlyResult = await reassignSoNumber({
   desiredOrderNo: "SO2607020",
   currentOrderNo: "SO2607021",
   now: "2026-07-22T11:00:00.000Z"
 }, { downloadBackup: false, confirm: false });
-assert(archivedOnlyResult.ok
+assert(archivedOnlyResult.ok && archivedOnlyResult.localCacheFull
   && state.orders.find((record) => record.id === reassignCorrectOrder.id)?.orderNo === "SO2607020"
   && state.quotations.find((record) => record.id === reassignCorrectQuote.id)?.orderNo === "SO2607020"
   && state.productionJobs.find((record) => record.id === reassignProduction.id)?.orderNo === "SO2607020"
@@ -3682,6 +3691,17 @@ assert(JSON.stringify(state.orders.find((record) => record.id === archivedOnlyOr
   && JSON.stringify(state.productionJobs.find((record) => record.id === archivedOnlyProduction.id)) === JSON.stringify(archivedAuditBefore.production)
   && JSON.stringify(state.installationJobs.find((record) => record.id === archivedOnlyInstallation.id)) === JSON.stringify(archivedAuditBefore.installation),
 "AE15: archived Order, Production and Installation audit records must remain completely unchanged");
+state.quotations = loadJson(storageKeys.quotations, []);
+state.orders = loadJson(storageKeys.orders, []);
+state.productionJobs = loadJson(storageKeys.productionJobs, []);
+state.installationJobs = loadJson(storageKeys.installationJobs, []);
+state.warrantyCards = loadJson(storageKeys.warrantyCards, []);
+await hydrateOrderConversionCache();
+assert(state.orders.find((record) => record.id === reassignCorrectOrder.id)?.orderNo === "SO2607020"
+  && state.quotations.find((record) => record.id === reassignCorrectQuote.id)?.orderNo === "SO2607020",
+"AE15A: durable recovery storage must restore the complete archived-only SO reassignment after refresh");
+localStorage.setItem = archivedOnlyQuotaSetItem;
+globalThis.indexedDB = archivedOnlyOriginalIndexedDB;
 assert(nextSalesOrderNumber(new Date("2026-07-22T12:00:00.000Z")) === "SO2607022",
 "AE16: archived-only reassignment must keep SO2607021 reserved through previousOrderNo");
 state.quotations = [structuredClone(reassignCorrectQuote)];
