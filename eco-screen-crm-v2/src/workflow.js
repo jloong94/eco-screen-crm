@@ -7925,23 +7925,24 @@ async function commitOrderActionPlan(plan, messages) {
     state.productionJobs = plan.nextState.productionJobs;
     state.installationJobs = plan.nextState.installationJobs;
     state.warrantyCards = plan.nextState.warrantyCards;
-    const localSave = persistOrderConversionLocally();
+    const localSave = await persistOrderConversionDurably();
     if (!localSave.ok) {
       restoreConversionState(previousState);
       renderWorkflowModules();
       return failOrderUpdate(`Local transaction failed: ${localSave.reason}`);
     }
     localCommitted = true;
-    showWorkflowMessage(messages.local, "info");
+    const recoveryMessage = localSave.cacheFull ? " Browser cache is full; a durable recovery copy is retained." : "";
+    showWorkflowMessage(`${messages.local}${recoveryMessage}`, localSave.cacheFull ? "warning" : "info");
     const cloudSync = await syncOrderConversionCollections();
     renderWorkflowModules();
     if (!cloudSync.ok && !cloudSync.localOnly) {
-      const message = `${messages.cloudFailure}: ${cloudSync.reason}`;
+      const message = `${messages.cloudFailure}: ${cloudSync.reason}.${recoveryMessage}`;
       showWorkflowMessage(message, "warning");
-      return { ok: true, cloudOk: false, changes: plan.changes, message, orderId: plan.orderId, paymentId: plan.paymentId };
+      return { ok: true, cloudOk: false, localCacheFull: localSave.cacheFull, changes: plan.changes, message, orderId: plan.orderId, paymentId: plan.paymentId };
     }
-    showWorkflowMessage(messages.success, "success");
-    return { ok: true, cloudOk: !cloudSync.localOnly, localOnly: cloudSync.localOnly, changes: plan.changes, orderId: plan.orderId, quotationId: plan.quotationId, paymentId: plan.paymentId };
+    showWorkflowMessage(`${messages.success}${recoveryMessage}`, localSave.cacheFull ? "warning" : "success");
+    return { ok: true, cloudOk: !cloudSync.localOnly, localOnly: cloudSync.localOnly, localCacheFull: localSave.cacheFull, changes: plan.changes, orderId: plan.orderId, quotationId: plan.quotationId, paymentId: plan.paymentId };
   } catch (error) {
     if (!localCommitted) {
       restoreConversionState(previousState);
