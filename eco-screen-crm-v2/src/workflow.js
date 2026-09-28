@@ -5714,7 +5714,7 @@ export async function reassignSoNumber(values = {}, options = {}) {
     state.orders = plan.nextState.orders;
     state.productionJobs = plan.nextState.productionJobs;
     state.installationJobs = plan.nextState.installationJobs;
-    const localSave = persistOrderConversionLocally();
+    const localSave = await persistOrderConversionDurably();
     if (!localSave.ok) {
       restoreConversionState(previousState);
       return failWorkflowIntegrityRepair(`Failed to save SO number reassignment locally: ${localSave.reason}`);
@@ -5722,18 +5722,20 @@ export async function reassignSoNumber(values = {}, options = {}) {
     localCommitted = true;
     workflowIntegrityResult = scanWorkflowIntegrity();
     renderWorkflowModules();
-    showWorkflowMessage("SO number reassignment saved locally. Syncing cloud...", "info");
+    const recoveryMessage = localSave.cacheFull ? " Browser cache is full; a durable recovery copy is retained." : "";
+    showWorkflowMessage(`SO number reassignment saved locally.${recoveryMessage} Syncing cloud...`, localSave.cacheFull ? "warning" : "info");
     const cloudSync = await syncOrderConversionCollections();
     if (!cloudSync.ok && !cloudSync.localOnly) {
-      const message = `SO number reassignment saved locally but cloud sync failed: ${cloudSync.reason}`;
+      const message = `SO number reassignment saved locally but cloud sync failed: ${cloudSync.reason}.${recoveryMessage}`;
       showWorkflowMessage(message, "warning");
-      return { ok: true, cloudOk: false, changes: plan.changes, message };
+      return { ok: true, cloudOk: false, localCacheFull: localSave.cacheFull, changes: plan.changes, message };
     }
-    showWorkflowMessage(`${plan.currentOrderNo} reassigned to ${plan.desiredOrderNo}.`, "success");
+    showWorkflowMessage(`${plan.currentOrderNo} reassigned to ${plan.desiredOrderNo}.${recoveryMessage}`, localSave.cacheFull ? "warning" : "success");
     return {
       ok: true,
       cloudOk: !cloudSync.localOnly,
       localOnly: cloudSync.localOnly,
+      localCacheFull: localSave.cacheFull,
       orderId: plan.orderId,
       staleQuotationId: plan.staleQuotationId,
       linkedQuotationIds: plan.linkedQuotationIds,
