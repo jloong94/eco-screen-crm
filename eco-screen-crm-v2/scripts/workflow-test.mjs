@@ -1747,8 +1747,17 @@ state.orders = state.orders.map((order) => order.id === followUpOrderId ? {
 state.productionJobs.push({ id: "production-unrelated-number-only", orderId: "another-order", orderNo: followUpOrderNo, status: "in_production", remarks: "Must remain active" });
 state.installationJobs.push({ id: "installation-unrelated-number-only", orderId: "another-order", orderNo: followUpOrderNo, status: "scheduled", remarks: "Must remain active" });
 const returnBefore = structuredClone({ quotations: state.quotations, orders: state.orders, productionJobs: state.productionJobs, installationJobs: state.installationJobs });
+const returnQuotaSetItem = localStorage.setItem;
+const returnOriginalIndexedDB = globalThis.indexedDB;
+globalThis.indexedDB = memoryIndexedDB();
+localStorage.setItem = (key, value) => {
+  if ([storageKeys.orders, storageKeys.productionJobs, storageKeys.installationJobs, storageKeys.warrantyCards, storageKeys.quotations].includes(key)) {
+    throw new Error("The quota has been exceeded.");
+  }
+  returnQuotaSetItem.call(localStorage, key, value);
+};
 const returnResult = await returnOrderToFollowUp(followUpOrderId, "Customer did not confirm", { confirmPaid: false, downloadBackup: false });
-assert(returnResult.ok, "Y1: Boss must be able to return an exact active Order to Follow Up");
+assert(returnResult.ok && returnResult.localCacheFull, "Y1: Boss must be able to return an exact active Order to Follow Up when localStorage is full");
 const returnedQuote = state.quotations.find((quote) => quote.id === followUpQuote.id);
 const archivedFollowUpOrder = state.orders.find((order) => order.id === followUpOrderId);
 assert(returnedQuote.status === "follow_up" && returnedQuote.workflowStatus === "follow_up"
@@ -1770,7 +1779,19 @@ assert(state.productionJobs.find((job) => job.orderId === followUpOrderId)?.stat
   && state.installationJobs.find((job) => job.orderId === followUpOrderId)?.statusBeforeArchive, "Y1: only exact orderId-linked Production and Installation jobs must be safely archived");
 assert(state.productionJobs.find((job) => job.id === "production-unrelated-number-only").status === "in_production"
   && state.installationJobs.find((job) => job.id === "installation-unrelated-number-only").status === "scheduled", "Y1: unrelated same-number jobs must remain unchanged");
-assert(JSON.parse(localStorage.getItem(storageKeys.orders) || "[]").find((order) => order.id === followUpOrderId)?.status === "cancelled_archived", "Y1: Return to Follow Up must survive refresh storage");
+assert(JSON.parse(localStorage.getItem(storageKeys.orders) || "[]").find((order) => order.id === followUpOrderId)?.status !== "cancelled_archived",
+  "Y1: quota fallback test must leave the stale localStorage Order unchanged");
+state.quotations = loadJson(storageKeys.quotations, []);
+state.orders = loadJson(storageKeys.orders, []);
+state.productionJobs = loadJson(storageKeys.productionJobs, []);
+state.installationJobs = loadJson(storageKeys.installationJobs, []);
+state.warrantyCards = loadJson(storageKeys.warrantyCards, []);
+await hydrateOrderConversionCache();
+assert(state.orders.find((order) => order.id === followUpOrderId)?.status === "cancelled_archived"
+  && state.quotations.find((quote) => quote.id === followUpQuote.id)?.status === "follow_up",
+  "Y1: durable recovery storage must restore the complete Return to Follow Up transaction after refresh");
+localStorage.setItem = returnQuotaSetItem;
+globalThis.indexedDB = returnOriginalIndexedDB;
 applyCloudSnapshot({
   quotations: returnBefore.quotations.map((row) => ({ ...row, updatedAt: "2020-01-01T00:00:00.000Z" })),
   orders: returnBefore.orders.map((row) => ({ ...row, updatedAt: "2020-01-01T00:00:00.000Z" })),
