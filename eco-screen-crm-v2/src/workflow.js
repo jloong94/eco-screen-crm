@@ -8280,28 +8280,29 @@ export async function sendOrderToProduction(orderId) {
     updatedAt: now
   } : row);
 
-  const localSave = persistOrderConversionLocally();
+  const localSave = await persistOrderConversionDurably(["orders", "productionJobs"]);
   if (!localSave.ok) {
     restoreConversionState(previousState);
     renderWorkflowModules();
     return showWorkflowMessage(`Failed to send Order to Production locally: ${localSave.reason}`, "error");
   }
+  const recoveryMessage = localSave.cacheFull ? " Browser cache is full; a durable recovery copy is retained." : "";
   renderWorkflowModules();
-  showWorkflowMessage(wasAlreadySent ? "Production job already exists. Exact link saved locally." : "Order sent to Production locally. Syncing cloud...", wasAlreadySent ? "warning" : "info");
+  showWorkflowMessage(`${wasAlreadySent ? "Production job already exists. Exact link saved locally." : "Order sent to Production locally. Syncing cloud..."}${recoveryMessage}`, wasAlreadySent || localSave.cacheFull ? "warning" : "info");
   try {
-    const cloudSync = await syncOrderConversionCollections();
+    const cloudSync = await syncOrderConversionCollections(["orders", "productionJobs"]);
     if (!cloudSync.ok && !cloudSync.localOnly) {
-      const message = `Order and Production link saved locally but cloud sync failed: ${cloudSync.reason}`;
+      const message = `Order and Production link saved locally but cloud sync failed: ${cloudSync.reason}.${recoveryMessage}`;
       showWorkflowMessage(message, "warning");
-      return { ok: true, productionJob, cloudOk: false, message };
+      return { ok: true, productionJob, cloudOk: false, localCacheFull: localSave.cacheFull, message };
     }
-    const message = wasAlreadySent ? "Production job already exists" : "Order sent to Production";
-    showWorkflowMessage(message, wasAlreadySent ? "warning" : "success");
-    return { ok: true, productionJob, cloudOk: !cloudSync.localOnly, localOnly: cloudSync.localOnly, message };
+    const message = `${wasAlreadySent ? "Production job already exists" : "Order sent to Production"}.${recoveryMessage}`;
+    showWorkflowMessage(message, wasAlreadySent || localSave.cacheFull ? "warning" : "success");
+    return { ok: true, productionJob, cloudOk: !cloudSync.localOnly, localOnly: cloudSync.localOnly, localCacheFull: localSave.cacheFull, message };
   } catch (error) {
-    const message = `Order and Production link saved locally but cloud sync failed: ${error.message || "Unknown cloud error"}`;
+    const message = `Order and Production link saved locally but cloud sync failed: ${error.message || "Unknown cloud error"}.${recoveryMessage}`;
     showWorkflowMessage(message, "warning");
-    return { ok: true, productionJob, cloudOk: false, message };
+    return { ok: true, productionJob, cloudOk: false, localCacheFull: localSave.cacheFull, message };
   }
 }
 
@@ -8444,7 +8445,7 @@ export async function markProductionStatus(jobId, status) {
     productionJobId: job.id,
     updatedAt: now
   } : order);
-  const localSave = persistOrderConversionLocally(["orders", "productionJobs"]);
+  const localSave = await persistOrderConversionDurably(["orders", "productionJobs"]);
   if (!localSave.ok) {
     restoreConversionState(previousState);
     renderWorkflowModules();
@@ -8454,27 +8455,28 @@ export async function markProductionStatus(jobId, status) {
     showWorkflowMessage(message, "error");
     return { ok: false, localSaved: false, cloudOk: false, backupCreated, message };
   }
+  const recoveryMessage = localSave.cacheFull ? " Browser cache is full; a durable recovery copy is retained." : "";
   renderWorkflowModules();
-  showWorkflowMessage("Production and Order status saved locally. Syncing cloud...", "info");
+  showWorkflowMessage(`Production and Order status saved locally. Syncing cloud...${recoveryMessage}`, localSave.cacheFull ? "warning" : "info");
   try {
     const cloudSync = await syncOrderConversionCollections(["orders", "productionJobs"]);
     if (!cloudSync.ok && !cloudSync.localOnly) {
-      const message = `Production and Order status saved locally but cloud sync failed: ${cloudSync.reason}`;
+      const message = `Production and Order status saved locally but cloud sync failed: ${cloudSync.reason}.${recoveryMessage}`;
       showWorkflowMessage(message, "warning");
-      return { ok: true, status: normalizedStatus, cloudOk: false, message };
+      return { ok: true, status: normalizedStatus, localSaved: true, cloudOk: false, localCacheFull: localSave.cacheFull, message };
     }
     if (cloudSync.ok && cloudSync.localCacheOk === false) {
       const message = `Production and Order status reached cloud, but another local cache write failed: ${cloudSync.localCacheError}. Keep this browser data and export a full JSON backup.`;
       showWorkflowMessage(message, "warning");
       return { ok: true, status: normalizedStatus, localSaved: true, cloudOk: true, localCacheOk: false, message };
     }
-    const message = normalizedStatus === "completed" ? "Production marked completed" : normalizedStatus === "in_production" ? "Production marked in progress" : "Production marked not started";
-    showWorkflowMessage(message, "success");
-    return { ok: true, status: normalizedStatus, cloudOk: !cloudSync.localOnly, localOnly: cloudSync.localOnly, message };
+    const message = `${normalizedStatus === "completed" ? "Production marked completed" : normalizedStatus === "in_production" ? "Production marked in progress" : "Production marked not started"}.${recoveryMessage}`;
+    showWorkflowMessage(message, localSave.cacheFull ? "warning" : "success");
+    return { ok: true, status: normalizedStatus, localSaved: true, cloudOk: !cloudSync.localOnly, localOnly: cloudSync.localOnly, localCacheFull: localSave.cacheFull, message };
   } catch (error) {
-    const message = `Production and Order status saved locally but cloud sync failed: ${error.message || "Unknown cloud error"}`;
+    const message = `Production and Order status saved locally but cloud sync failed: ${error.message || "Unknown cloud error"}.${recoveryMessage}`;
     showWorkflowMessage(message, "warning");
-    return { ok: true, status: normalizedStatus, cloudOk: false, message };
+    return { ok: true, status: normalizedStatus, localSaved: true, cloudOk: false, localCacheFull: localSave.cacheFull, message };
   }
 }
 

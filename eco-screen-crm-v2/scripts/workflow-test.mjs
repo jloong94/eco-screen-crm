@@ -890,21 +890,31 @@ localStorage.setItem = originalStorageSet;
 assert(state.productionJobs.find((job) => job.id === productionJob.id).status === "in_production", "Q: Production status updates must still work");
 assert(statusStorageWrites.every((key) => [storageKeys.orders, storageKeys.productionJobs].includes(key)),
   "Q: Production status must not rewrite Installation media, Quotations or Warranty cache");
-const beforeQuotaState = JSON.stringify({ orders: state.orders, productionJobs: state.productionJobs });
 const beforeQuotaStorage = [storageKeys.orders, storageKeys.productionJobs].map((key) => localStorage.getItem(key));
+const productionQuotaIndexedDB = globalThis.indexedDB;
+const productionQuotaFetch = globalThis.fetch;
+globalThis.indexedDB = memoryIndexedDB();
+globalThis.fetch = async () => { throw new Error("Simulated offline cloud"); };
 localStorage.setItem = (key, value) => {
   if (key === storageKeys.productionJobs) throw new Error("The quota has been exceeded.");
   originalStorageSet(key, value);
 };
 const quotaStatus = await markProductionStatus(productionJob.id, "completed");
 localStorage.setItem = originalStorageSet;
-assert(quotaStatus.ok === false && quotaStatus.localSaved === false && quotaStatus.cloudOk === false,
-  "Q: quota failure must not claim either local or cloud success");
-assert(JSON.stringify({ orders: state.orders, productionJobs: state.productionJobs }) === beforeQuotaState
-  && [storageKeys.orders, storageKeys.productionJobs].every((key, index) => localStorage.getItem(key) === beforeQuotaStorage[index]),
-  "Q: quota failure must roll back exact Order/Production state without changing counts or statuses");
-assert(persistOrderConversionLocally().savedCollections.length === 0,
-  "Q: unchanged workflow collections must not consume localStorage quota again");
+assert(quotaStatus.ok && quotaStatus.localSaved && quotaStatus.localCacheFull && quotaStatus.cloudOk === false,
+  "Q: Production status must retain an IndexedDB recovery copy when localStorage is full and cloud sync fails");
+state.orders = loadJson(storageKeys.orders, []);
+state.productionJobs = loadJson(storageKeys.productionJobs, []);
+assert([storageKeys.orders, storageKeys.productionJobs].every((key, index) => localStorage.getItem(key) === beforeQuotaStorage[index]),
+  "Q: localStorage quota failure must leave the previous browser cache untouched");
+await hydrateOrderConversionCache();
+assert(state.productionJobs.find((job) => job.id === productionJob.id)?.status === "completed"
+  && state.orders.find((order) => order.id === productionOrder.id)?.productionStatus === "completed",
+  "Q: IndexedDB recovery must restore the exact Production and Order status after refresh");
+globalThis.indexedDB = productionQuotaIndexedDB;
+globalThis.fetch = productionQuotaFetch;
+assert(persistOrderConversionLocally(["orders", "productionJobs"]).ok,
+  "Q: recovered Production state must remain writable when localStorage space is available again");
 const productionCacheBeforeHydration = localStorage.getItem(storageKeys.productionJobs);
 let identicalCacheWrites = 0;
 localStorage.setItem = (key, value) => {
@@ -1726,6 +1736,34 @@ const persistedWorkflow = {
 };
 assert(persistedWorkflow.orders.find((order) => order.id === syncOrder.id).productionStatus === "completed", "X: synchronized Order Production status must survive refresh storage");
 assert(persistedWorkflow.productionJobs.find((job) => job.orderId === syncOrder.id).status === "completed", "X: synchronized Production Job status must survive refresh storage");
+
+resetWorkflowState();
+const quotaSendQuote = validQuote("SYNC-QUOTA-SEND", "Quota Send Customer");
+quotaSendQuote.status = "won";
+state.quotations = [quotaSendQuote];
+const quotaSendConversion = await convertQuoteToOrder(quotaSendQuote.id);
+const sendQuotaIndexedDB = globalThis.indexedDB;
+const sendQuotaFetch = globalThis.fetch;
+const sendQuotaSetItem = localStorage.setItem;
+globalThis.indexedDB = memoryIndexedDB();
+globalThis.fetch = async () => { throw new Error("Simulated offline cloud"); };
+localStorage.setItem = (key, value) => {
+  if ([storageKeys.orders, storageKeys.productionJobs].includes(key)) throw new Error("The quota has been exceeded.");
+  sendQuotaSetItem.call(localStorage, key, value);
+};
+const quotaSend = await sendOrderToProduction(quotaSendConversion.order.id);
+localStorage.setItem = sendQuotaSetItem;
+assert(quotaSend.ok && quotaSend.localCacheFull && !quotaSend.cloudOk
+  && state.orders.find((order) => order.id === quotaSendConversion.order.id)?.status === "Sent to Production",
+"X: Send to Production must retain an IndexedDB recovery copy when localStorage is full and cloud sync fails");
+state.orders = loadJson(storageKeys.orders, []);
+state.productionJobs = loadJson(storageKeys.productionJobs, []);
+await hydrateOrderConversionCache();
+assert(state.orders.find((order) => order.id === quotaSendConversion.order.id)?.status === "Sent to Production"
+  && state.productionJobs.some((job) => job.orderId === quotaSendConversion.order.id),
+"X: Send to Production recovery copy must restore the exact Order and Production link after refresh");
+globalThis.indexedDB = sendQuotaIndexedDB;
+globalThis.fetch = sendQuotaFetch;
 
 resetWorkflowState();
 state.currentUser = { userId: "boss-test", username: "boss-test", name: "Boss Test", role: "Boss", active: true };
