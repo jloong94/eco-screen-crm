@@ -76,6 +76,7 @@ async function scan(job, source) {
           await commentControl.click({timeout: 2000}).catch(() => {});
           await page.waitForTimeout(1000);
         }
+        if (job.platform === "facebook") await expandFacebookComments(page);
         const result = await page.evaluate(collectPublicComments, [job.platform, job.maximum - job.comments.length]);
         if (result.error) {
           if (/登录|验证/.test(result.error)) throw new Error(result.error);
@@ -102,6 +103,31 @@ async function scan(job, source) {
     job.status = job.cancelled ? "stopped" : "blocked";
     job.message = /[\u3400-\u9fff]/.test(error.message) ? error.message : "浏览器无法完成读取，请检查页面后重试。";
   } finally { active = null; job.finishedAt = Date.now(); }
+}
+
+async function expandFacebookComments(page) {
+  const controls = page.locator('button, [role="button"]');
+  const openingPatterns = [/^\s*\d+[,.\d]*\s+comments?\s*$/i, /view\s+(?:all\s+)?comments?/i, /查看(?:全部)?评论/, /查看(?:全部)?留言/];
+  for (const pattern of openingPatterns) {
+    const control = controls.filter({hasText: pattern}).first();
+    if (await control.isVisible().catch(() => false)) {
+      await control.click({timeout: 2000}).catch(() => {});
+      await page.waitForTimeout(800);
+      break;
+    }
+  }
+  const sortControl = controls.filter({hasText: /most relevant|最相关/i}).first();
+  if (await sortControl.isVisible().catch(() => false)) {
+    await sortControl.click({timeout: 2000}).catch(() => {});
+    const allComments = page.getByRole("menuitem").filter({hasText: /all comments|所有评论|全部评论/i}).first();
+    if (await allComments.isVisible().catch(() => false)) await allComments.click({timeout: 2000}).catch(() => {});
+  }
+  for (let round = 0; round < 3; round++) {
+    const more = controls.filter({hasText: /view more comments|more comments|查看更多评论|更多评论|查看更多留言|更多留言/i}).first();
+    if (!await more.isVisible().catch(() => false)) break;
+    await more.click({timeout: 2000}).catch(() => {});
+    await page.waitForTimeout(800);
+  }
 }
 
 function scanWindow({sourceUrl, maximum, nonce, scriptNonce}) {
