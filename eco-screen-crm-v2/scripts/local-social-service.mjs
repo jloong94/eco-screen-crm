@@ -122,8 +122,9 @@ const server = http.createServer(async (req, res) => {
     return replyHtml(res, 200, scanWindow({sourceUrl: source.url, maximum, nonce, scriptNonce}), scriptNonce);
   }
   const requestOrigin = req.headers.origin || "";
-  if (![origin, localOrigin].includes(requestOrigin)) return reply(res, 403, {error: "Forbidden"});
-  res.setHeader("Access-Control-Allow-Origin", requestOrigin);
+  const localSameOrigin = !requestOrigin && req.headers.host === `localhost:${port}` && req.headers["sec-fetch-site"] === "same-origin";
+  if (!localSameOrigin && ![origin, localOrigin].includes(requestOrigin)) return reply(res, 403, {error: "Forbidden"});
+  if (requestOrigin) res.setHeader("Access-Control-Allow-Origin", requestOrigin);
   res.setHeader("Vary", "Origin");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
