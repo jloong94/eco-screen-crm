@@ -28,7 +28,7 @@ const { identity, supabase } = await import('../src/session.js');
 identity.companyId = '11111111-1111-4111-8111-111111111111';
 identity.user = { authUserId: 'test-user', userId: 'boss1', role: 'Boss' };
 supabase.auth.getSession = async () => ({ data: { session: { access_token: 'test-user-jwt' } }, error: null });
-const { storageKeys, loadJson } = await import('../src/storage.js');
+const { storageKeys, loadJson, loadOrderConversionCache, saveOrderConversionCache } = await import('../src/storage.js');
 
 const {
   applyCloudSnapshot,
@@ -2008,6 +2008,57 @@ assert(installationJobsForUser({ userId: "installer-exact-a", role: "Installer" 
 
 const resent = await sendInstallationToInstaller(pendingInstallation.id);
 assert(resent.ok, "Z5: editing or recall must not auto-send, but a later explicit send must be allowed");
+
+const installationQuotaState = {
+  orders: structuredClone(state.orders),
+  installationJobs: structuredClone(state.installationJobs),
+  currentUser: state.currentUser,
+  role: state.role
+};
+const installationQuotaSetItem = localStorage.setItem;
+const installationQuotaIndexedDB = globalThis.indexedDB;
+const quotaWriteKeys = [];
+globalThis.indexedDB = memoryIndexedDB();
+await saveOrderConversionCache({
+  quotations: [{ id: "quotation-recovery-must-survive" }],
+  productionJobs: [{ id: "production-recovery-must-survive" }]
+});
+const quotaSecretary = state.users.find((user) => user.userId === "secretary-test");
+const quotaOrder = { ...dispatchOrder, id: "order-secretary-installation-quota", orderNo: "SO2607299", orderNumber: "SO2607299" };
+const quotaInstallation = { ...createInstallationJobFromOrder(quotaOrder), id: "installation-secretary-quota" };
+state.currentUser = quotaSecretary;
+state.role = "Secretary";
+state.orders = [quotaOrder];
+state.installationJobs = [quotaInstallation];
+localStorage.setItem = (key, value) => {
+  quotaWriteKeys.push(key);
+  if ([storageKeys.orders, storageKeys.installationJobs].includes(key)) throw new Error("The quota has been exceeded.");
+  installationQuotaSetItem.call(localStorage, key, value);
+};
+const quotaArrangement = await saveInstallationArrangement(quotaInstallation.id, {
+  installationDate: "2026-07-30",
+  installationTime: "09:00",
+  assignedInstallerId: "installer-exact-a",
+  address: "Quota-safe address"
+});
+assert(quotaArrangement.ok && quotaArrangement.localCacheFull && state.installationJobs[0].status === "ready_to_send",
+  "Z5A: Secretary arrangement must retain a durable recovery copy when localStorage is full");
+const quotaDispatch = await sendInstallationToInstaller(quotaInstallation.id);
+assert(quotaDispatch.ok && quotaDispatch.localCacheFull && state.installationJobs[0].status === "sent_to_installer",
+  "Z5A: Secretary Send to Installer must succeed through durable recovery when localStorage is full");
+const quotaRecovery = await loadOrderConversionCache();
+assert(quotaRecovery.orders?.[0]?.id === quotaOrder.id && quotaRecovery.installationJobs?.[0]?.status === "sent_to_installer"
+  && quotaRecovery.quotations?.[0]?.id === "quotation-recovery-must-survive"
+  && quotaRecovery.productionJobs?.[0]?.id === "production-recovery-must-survive",
+"Z5A: targeted Installation recovery must merge with, not overwrite, other pending workflow recovery data");
+assert(!quotaWriteKeys.includes(storageKeys.quotations) && !quotaWriteKeys.includes(storageKeys.productionJobs) && !quotaWriteKeys.includes(storageKeys.warrantyCards),
+  "Z5A: Installation arrangement and dispatch must not rewrite unrelated workflow collections");
+localStorage.setItem = installationQuotaSetItem;
+globalThis.indexedDB = installationQuotaIndexedDB;
+state.orders = installationQuotaState.orders;
+state.installationJobs = installationQuotaState.installationJobs;
+state.currentUser = installationQuotaState.currentUser;
+state.role = installationQuotaState.role;
 state.installationJobs = state.installationJobs.map((job) => job.id === pendingInstallation.id ? {
   ...job,
   status: "completed",

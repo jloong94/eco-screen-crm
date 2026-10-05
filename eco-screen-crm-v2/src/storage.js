@@ -59,7 +59,13 @@ export async function saveOrderConversionCache(snapshot) {
   try {
     await new Promise((resolve, reject) => {
       const transaction = db.transaction("snapshots", "readwrite");
-      transaction.objectStore("snapshots").put(snapshot, orderConversionCacheKey());
+      const store = transaction.objectStore("snapshots");
+      const request = store.get(orderConversionCacheKey());
+      request.onsuccess = () => {
+        const current = request.result && typeof request.result === "object" ? request.result : {};
+        store.put({ ...current, ...snapshot }, orderConversionCacheKey());
+      };
+      request.onerror = () => reject(request.error || new Error("IndexedDB order conversion read failed."));
       transaction.oncomplete = resolve;
       transaction.onerror = () => reject(transaction.error || new Error("IndexedDB order conversion save failed."));
       transaction.onabort = () => reject(transaction.error || new Error("IndexedDB order conversion save aborted."));

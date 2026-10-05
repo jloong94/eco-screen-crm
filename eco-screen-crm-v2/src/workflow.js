@@ -7920,6 +7920,7 @@ function downloadOrderActionBackup(plan) {
 
 async function commitOrderActionPlan(plan, messages) {
   const previousState = snapshotOrderWorkflowState();
+  const collections = Array.isArray(plan.collections) && plan.collections.length ? plan.collections : undefined;
   let localCommitted = false;
   try {
     state.quotations = plan.nextState.quotations;
@@ -7927,7 +7928,7 @@ async function commitOrderActionPlan(plan, messages) {
     state.productionJobs = plan.nextState.productionJobs;
     state.installationJobs = plan.nextState.installationJobs;
     state.warrantyCards = plan.nextState.warrantyCards;
-    const localSave = await persistOrderConversionDurably();
+    const localSave = await persistOrderConversionDurably(collections);
     if (!localSave.ok) {
       restoreConversionState(previousState);
       renderWorkflowModules();
@@ -7936,7 +7937,7 @@ async function commitOrderActionPlan(plan, messages) {
     localCommitted = true;
     const recoveryMessage = localSave.cacheFull ? " Browser cache is full; a durable recovery copy is retained." : "";
     showWorkflowMessage(`${messages.local}${recoveryMessage}`, localSave.cacheFull ? "warning" : "info");
-    const cloudSync = await syncOrderConversionCollections();
+    const cloudSync = await syncOrderConversionCollections(collections);
     renderWorkflowModules();
     if (!cloudSync.ok && !cloudSync.localOnly) {
       const message = `${messages.cloudFailure}: ${cloudSync.reason}.${recoveryMessage}`;
@@ -8999,12 +9000,18 @@ function exactInstallerUser(installerId) {
 }
 
 function installationMutationPlan(action, jobId, changes, overrides = {}) {
+  const collections = [
+    "installationJobs",
+    ...(Object.hasOwn(overrides, "orders") ? ["orders"] : []),
+    ...(Object.hasOwn(overrides, "warrantyCards") ? ["warrantyCards"] : [])
+  ];
   return {
     ok: true,
     action,
     jobId,
     orderId: "",
     changes,
+    collections,
     nextState: {
       quotations: state.quotations,
       orders: overrides.orders || state.orders,
