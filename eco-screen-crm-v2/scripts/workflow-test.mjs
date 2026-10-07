@@ -158,6 +158,7 @@ const {
   quotationArchiveEligibility,
   quotationProjectName,
   quotationListRowHtml,
+  quotationMatchesSearch,
   quotationsForTab,
   restoreQuotation,
   saveQuote
@@ -215,6 +216,20 @@ function memoryIndexedDB() {
 assert(isBossOrAdmin("Boss") && isBossOrAdmin(" boss ") && isBossOrAdmin("ADMIN") && isBossOrAdmin(" Admin "), "Boss/Admin recognition must ignore case and surrounding whitespace");
 assert(!isBossOrAdmin("Sales") && !isBossOrAdmin(""), "Non-Boss/Admin roles must remain restricted");
 assert(canDuplicateQuotation("Boss") && canDuplicateQuotation(" admin ") && canDuplicateQuotation("SECRETARY") && !canDuplicateQuotation("Sales"), "Duplicate Quotation must be restricted to normalized Boss/Admin/Secretary roles");
+
+const quotationPhoneSearchRecord = {
+  id: "quote-phone-search",
+  quoteNumber: "ESQ-2026-0094",
+  quotationNo: "ESQ-2026-0094",
+  customer: { name: "Search Customer", phone: "012-345 6789", address: "Search Address" },
+  projectName: "Search Project"
+};
+assert(quotationMatchesSearch(quotationPhoneSearchRecord, "esq20260094")
+  && quotationMatchesSearch(quotationPhoneSearchRecord, "Search Customer")
+  && quotationMatchesSearch(quotationPhoneSearchRecord, "0123456789")
+  && quotationMatchesSearch(quotationPhoneSearchRecord, "012-345 6789")
+  && !quotationMatchesSearch(quotationPhoneSearchRecord, "0199999999"),
+"Quotation search must match ESQ, customer and normalized phone without exposing unrelated records");
 
 function resetWorkflowState() {
   state.quotations = [];

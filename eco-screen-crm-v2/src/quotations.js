@@ -51,6 +51,7 @@ import { isActiveOrderRecord, isActiveWorkflowRecord, normalizeWorkflowStatus } 
 const quotationTabs = ["quoted", "follow_up", "won", "lost"];
 const quotationArchiveStatuses = new Set(["quoted", "follow_up", "lost"]);
 let activeQuotationTab = "quoted";
+let quotationSearch = "";
 
 const copiedItemFields = [
   "productId", "productName", "category", "calculationType", "minimumSqft",
@@ -591,18 +592,63 @@ export function renderQuotationList() {
   const cloudIsLoading = state.cloud.status === "Checking cloud...";
   const visibleTabs = isBossOrAdmin() ? [...quotationTabs, "deleted_archived"] : quotationTabs;
   if (!visibleTabs.includes(activeQuotationTab)) activeQuotationTab = "quoted";
-  const rows = quotationsForTab(activeQuotationTab);
+  const searchQuery = String(quotationSearch || "").trim();
+  const rows = searchQuery
+    ? state.quotations.filter((quote) => {
+      if (!isBossOrAdmin() && (quote.isArchived === true || normalizeWorkflowStatus(quote.status) === "deleted_archived")) return false;
+      return quotationMatchesSearch(quote, searchQuery);
+    })
+    : quotationsForTab(activeQuotationTab);
   list.innerHTML = `
+    <section class="order-tools quotation-search-tools">
+      <div class="form-grid compact">
+        <label>${t("Search Quotation Number / Customer / Phone")}<input data-quotation-search value="${escapeHtml(quotationSearch)}" placeholder="${t("ESQ number, customer or phone")}" /></label>
+      </div>
+      <div class="actions">
+        <button class="btn primary" type="button" data-quotation-search-action="search">${t("Search")}</button>
+        <button class="btn" type="button" data-quotation-search-action="clear">${t("Clear Search")}</button>
+      </div>
+      ${searchQuery ? `<p class="muted-text">${t("Quotation search results")}: <strong>${rows.length}</strong></p>` : ""}
+    </section>
     <div class="filter-tabs" aria-label="${t("Quotation status")}">
       ${visibleTabs.map((status) => `<button class="filter-tab ${activeQuotationTab === status ? "active" : ""}" type="button" data-quotation-tab="${status}">${status === "deleted_archived" ? t("Deleted Quotations") : statusLabel(status)} (${quotationsForTab(status).length})</button>`).join("")}
     </div>
     ${rows.length
-      ? rows.map((quote) => quotationListRowHtml(quote, cloudIsLoading, activeQuotationTab)).join("")
-      : `<p class="muted-text">${t("No saved quotations yet.")}</p>`}
+      ? rows.map((quote) => quotationListRowHtml(
+        quote,
+        cloudIsLoading,
+        searchQuery
+          ? (quote.isArchived === true || normalizeWorkflowStatus(quote.status) === "deleted_archived" ? "deleted_archived" : normalizeStatus(quote.status))
+          : activeQuotationTab
+      )).join("")
+      : `<p class="muted-text">${t(searchQuery ? "No quotation matches your search." : "No saved quotations yet.")}</p>`}
   `;
+  const searchInput = list.querySelector("[data-quotation-search]");
+  const applyQuotationSearch = () => {
+    quotationSearch = String(searchInput?.value || "");
+    renderQuotationList();
+  };
+  searchInput?.addEventListener("input", () => {
+    quotationSearch = searchInput.value;
+    renderQuotationList();
+    const nextInput = list.querySelector("[data-quotation-search]");
+    nextInput?.focus();
+    nextInput?.setSelectionRange?.(nextInput.value.length, nextInput.value.length);
+  });
+  searchInput?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    applyQuotationSearch();
+  });
+  list.querySelector('[data-quotation-search-action="search"]')?.addEventListener("click", applyQuotationSearch);
+  list.querySelector('[data-quotation-search-action="clear"]')?.addEventListener("click", () => {
+    quotationSearch = "";
+    renderQuotationList();
+  });
   list.querySelectorAll("[data-quotation-tab]").forEach((button) => {
     button.addEventListener("click", () => {
       activeQuotationTab = visibleTabs.includes(button.dataset.quotationTab) ? button.dataset.quotationTab : "quoted";
+      quotationSearch = "";
       renderQuotationList();
     });
   });
@@ -646,6 +692,28 @@ export function renderQuotationList() {
   list.querySelectorAll("[data-restore-quote]").forEach((button) => {
     button.addEventListener("click", () => openRestoreQuotationPrompt(button.dataset.restoreQuote));
   });
+}
+
+function normalizeQuotationSearch(value) {
+  return String(value ?? "").trim().toLowerCase().replace(/[\s-]+/g, "");
+}
+
+export function quotationMatchesSearch(quote, query) {
+  const needle = normalizeQuotationSearch(query);
+  if (!needle) return true;
+  return [
+    getQuotationDisplayNo(quote),
+    quote.quoteNumber,
+    quote.quotationNo,
+    quote.quoteNo,
+    quote.customer?.name,
+    quote.customerName,
+    quote.customer?.phone,
+    quote.phone,
+    quotationProjectName(quote),
+    quote.siteAddress,
+    quote.customer?.address
+  ].some((value) => normalizeQuotationSearch(value).includes(needle));
 }
 
 export function quotationsForTab(tab, quotations = state.quotations) {
