@@ -34,6 +34,8 @@ let activeScanController = null;
 let scanMessage = "";
 let scanSourceUrl = "";
 let scanMaximum = "50";
+let metaInboxLoaded = false;
+let metaInboxLoading = false;
 
 export function renderSocialLeadMinerPage() {
   const leads = socialLeadRows();
@@ -59,9 +61,12 @@ export function renderSocialLeadMinerPage() {
       </div>
 
       <section class="card social-scan-card">
-        <details><summary>连接自己的 Facebook 专页（可选）</summary><div class="meta-page-connect">
-          <div><strong>Facebook 专页自动连接</strong><span id="metaPageStatus">正在检查授权状态…</span></div>
-          <button class="btn primary" id="metaPageConnectButton" type="button" hidden>连接 Facebook 专页</button>
+        <details open><summary>自家 Facebook 专页自动获客</summary><div class="meta-page-connect">
+          <div><strong>新评论自动筛选</strong><span id="metaPageStatus">正在检查授权状态…</span></div>
+          <div class="actions">
+            <button class="btn primary" id="metaPageConnectButton" type="button" hidden>连接 Facebook 专页</button>
+            <button class="btn" id="metaPageSyncButton" type="button" hidden>同步新评论</button>
+          </div>
         </div></details>
         <div class="social-simple-notice">
           <strong>${t("How to find customers")}</strong>
@@ -130,9 +135,13 @@ export function renderSocialLeadMinerPage() {
 
 export function attachSocialLeadMinerEvents(renderShell) {
   if (!isBossOrAdmin()) return;
-  void loadMetaPageStatus();
+  void loadMetaPageStatus(renderShell);
   void loadLocalCollectorStatus();
   document.querySelector("#metaPageConnectButton")?.addEventListener("click", () => window.location.assign("/api/meta/oauth/start"));
+  document.querySelector("#metaPageSyncButton")?.addEventListener("click", () => {
+    metaInboxLoaded = false;
+    void syncMetaWebhookLeads(renderShell, true);
+  });
   document.querySelector("#socialStartScanButton")?.addEventListener("click", () => startDirectScan(renderShell));
   document.querySelector("#socialSourceUrl")?.addEventListener("input", event => { scanSourceUrl = event.target.value; detectSourcePlatform(); });
   document.querySelector("#socialMaximumLeads")?.addEventListener("change", event => { scanMaximum = event.target.value; });
@@ -475,6 +484,7 @@ function handleLeadAction(event, renderShell) {
     lead.status = "Rejected";
   } else return;
   lead.updatedAt = new Date().toISOString();
+  if (lead.acquisitionSource === "facebook_page_webhook") void updateMetaLeadStatus(lead);
   void persistSocialLeads();
   renderShell();
 }
@@ -632,9 +642,10 @@ function loadLocalCollectorStatus() {
   status.classList.remove("error-text");
 }
 
-async function loadMetaPageStatus() {
+async function loadMetaPageStatus(renderShell) {
   const status = document.querySelector("#metaPageStatus");
   const button = document.querySelector("#metaPageConnectButton");
+  const syncButton = document.querySelector("#metaPageSyncButton");
   try {
     const response = await fetch("/api/meta/status", { credentials: "same-origin" });
     const payload = await response.json();
@@ -644,8 +655,15 @@ async function loadMetaPageStatus() {
       return;
     }
     if (payload.connected) {
-      if (status) status.textContent = `已连接：${payload.pageName || "Facebook Page"}。贴上该专页的贴文链接即可读取已收到的公开评论。`;
-      if (button) button.hidden = true;
+      if (status) status.textContent = payload.webhookSubscribed
+        ? `已开启：${payload.pageName || "Facebook Page"}。新公开评论会自动筛选，HOT/WARM 会进入待联系名单。`
+        : `已连接：${payload.pageName || "Facebook Page"}，但自动接收尚未开启。请重新授权 Facebook 专页。`;
+      if (button) {
+        button.hidden = payload.webhookSubscribed;
+        button.textContent = "重新授权 Facebook 专页";
+      }
+      if (syncButton) syncButton.hidden = !payload.webhookSubscribed;
+      if (payload.webhookSubscribed) void syncMetaWebhookLeads(renderShell);
       return;
     }
     if (status) status.textContent = "尚未授权 Facebook 专页。";
@@ -653,6 +671,77 @@ async function loadMetaPageStatus() {
   } catch {
     if (status) status.textContent = "暂时无法检查 Facebook 授权状态。";
   }
+}
+
+async function syncMetaWebhookLeads(renderShell, force = false) {
+  if (metaInboxLoading || (metaInboxLoaded && !force)) return;
+  metaInboxLoading = true;
+  const status = document.querySelector("#metaPageStatus");
+  try {
+    const response = await fetch("/api/meta/leads", { credentials: "same-origin" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || "暂时无法同步 Facebook 新客户。");
+    const imported = mergeMetaWebhookLeads(payload.leads || []);
+    metaInboxLoaded = true;
+    if (imported > 0) {
+      await persistSocialLeads();
+      scanMessage = `Facebook 已新增 ${imported} 位公开互动客户；HOT/WARM 已放入待联系名单。`;
+      renderShell();
+      return;
+    }
+    if (status && force) status.textContent = "Facebook 已同步，目前没有新的公开询价评论。";
+  } catch (error) {
+    if (status) status.textContent = error?.message || "暂时无法同步 Facebook 新客户。";
+  } finally {
+    metaInboxLoading = false;
+  }
+}
+
+function mergeMetaWebhookLeads(rows) {
+  const existing = socialLeadRows();
+  let imported = 0;
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const normalized = normalizeProviderComment(row, { platform: "facebook", acquisitionSource: "facebook_page_webhook" });
+    if (!normalized.username || !normalized.comment || !normalized.sourceUrl) continue;
+    const current = existing.find((lead) =>
+      (row.providerCommentId && lead.providerCommentId === row.providerCommentId)
+      || leadDuplicateKey(lead) === leadDuplicateKey(normalized)
+    );
+    if (current) {
+      current.providerCommentId ||= row.providerCommentId || "";
+      current.acquisitionSource ||= "facebook_page_webhook";
+      continue;
+    }
+    const fallback = scoreSocialLead({ ...normalized, id: row.id, status: row.status }, {});
+    existing.unshift({
+      ...fallback,
+      providerCommentId: row.providerCommentId || "",
+      intentScore: Number.isFinite(Number(row.intentScore)) ? Number(row.intentScore) : fallback.intentScore,
+      intentLevel: row.intentLevel || fallback.intentLevel,
+      intentReason: row.intentReason || fallback.intentReason,
+      estimatedNeed: row.estimatedNeed || fallback.estimatedNeed,
+      estimatedLocation: row.estimatedLocation || fallback.estimatedLocation,
+      suggestedMessages: outreachMessages({
+        need: row.estimatedNeed || fallback.estimatedNeed,
+        location: row.estimatedLocation || fallback.estimatedLocation
+      }),
+      status: statuses.has(row.status) ? row.status : fallback.status,
+      acquisitionSource: "facebook_page_webhook"
+    });
+    imported += 1;
+  }
+  state.socialLeads = existing;
+  return imported;
+}
+
+async function updateMetaLeadStatus(lead) {
+  if (!lead?.id || !["Queued", "Contacted", "Rejected"].includes(lead.status)) return;
+  await fetch("/api/meta/leads", {
+    method: "PATCH",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: lead.id, status: lead.status.toLowerCase() })
+  }).catch(() => {});
 }
 function outreachMessages({ need, location }) {
   const area = location && location !== "Not stated" ? ` in ${location}` : "";

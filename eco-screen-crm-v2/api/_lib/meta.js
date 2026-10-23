@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 
-const META_SCOPES = ["pages_show_list", "pages_read_engagement", "pages_read_user_content"];
+const META_SCOPES = ["pages_show_list", "pages_read_engagement", "pages_read_user_content", "pages_manage_metadata"];
 
 export function metaConfig() {
   const values = {
@@ -13,7 +13,8 @@ export function metaConfig() {
     webhookVerifyToken: process.env.META_WEBHOOK_VERIFY_TOKEN || "",
     appUrl: (process.env.PUBLIC_APP_URL || "").replace(/\/$/, ""),
     supabaseUrl: (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").replace(/\/$/, ""),
-    supabaseKey: process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || ""
+    supabaseKey: process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.CRM_V2_SERVER_KEY || "",
+    companyId: process.env.CRM_V2_COMPANY_ID || ""
   };
   const required = {
     META_APP_ID: values.appId,
@@ -90,6 +91,16 @@ export async function graph(config, path, token, init = {}) {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok || payload.error) throw new Error(payload.error?.message || `Meta Graph API failed (${response.status}).`);
   return payload;
+}
+
+export async function subscribePageWebhook(config, pageId, pageToken) {
+  const result = await graph(
+    config,
+    `${encodeURIComponent(pageId)}/subscribed_apps?subscribed_fields=feed`,
+    pageToken,
+    { method: "POST" }
+  );
+  return result?.success === true;
 }
 
 export async function exchangeCode(config, code) {

@@ -1,4 +1,4 @@
-import { cookie, cookies, exchangeCode, graph, metaConfig, sealPageConnection, sendJson, sessionCookie, verifyState } from "../../_lib/meta.js";
+import { cookie, cookies, exchangeCode, graph, metaConfig, sealPageConnection, sendJson, sessionCookie, subscribePageWebhook, verifyState } from "../../_lib/meta.js";
 
 export default async function handler(req, res) {
   if (req.method !== "GET") return sendJson(res, 405, { code: "METHOD_NOT_ALLOWED" });
@@ -15,7 +15,21 @@ export default async function handler(req, res) {
     const pages = accounts.data || [];
     const page = config.pageId ? pages.find((item) => String(item.id) === config.pageId) : pages.length === 1 ? pages[0] : null;
     if (!page?.access_token) return sendJson(res, 403, { code: "PAGE_SELECTION_REQUIRED", message: pages.length ? "该账号管理多个专页，请先配置 META_PAGE_ID。" : "该 Meta 账号没有可授权的 Facebook 专页。", pages: pages.map(({ id, name }) => ({ id, name })) });
-    const connection = sealPageConnection(config, { pageId: String(page.id), pageName: page.name || "Facebook Page", accessToken: page.access_token, connectedAt: new Date().toISOString() });
+    let webhookSubscribed = false;
+    let webhookSubscriptionError = "";
+    try {
+      webhookSubscribed = await subscribePageWebhook(config, String(page.id), page.access_token);
+    } catch (error) {
+      webhookSubscriptionError = error?.message || "Meta Page webhook subscription failed.";
+    }
+    const connection = sealPageConnection(config, {
+      pageId: String(page.id),
+      pageName: page.name || "Facebook Page",
+      accessToken: page.access_token,
+      connectedAt: new Date().toISOString(),
+      webhookSubscribed,
+      webhookSubscriptionError
+    });
     res.setHeader("Set-Cookie", [cookie("meta_admin_session", sessionCookie(config, String(page.id)), 30 * 86400), cookie("meta_page_connection", connection, 30 * 86400), cookie("meta_oauth_state", "", 0)]);
     res.statusCode = 302;
     res.setHeader("Location", `${config.appUrl}/?meta=connected`);

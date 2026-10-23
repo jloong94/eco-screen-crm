@@ -35,6 +35,7 @@ const {
   validateTikTokVideoUrl
 } = await import("../src/socialProviders.js");
 const { canAccessPage, rolePages } = await import("../src/permissions.js");
+const socialSource = await (await import("node:fs/promises")).readFile("src/socialLeadMiner.js", "utf8");
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -132,5 +133,8 @@ assert(secondImport.leads.length === 0 && secondImport.duplicates === 1, "Duplic
 
 assert(rolePages.Boss.includes("social-lead-miner") && rolePages.Admin.includes("social-lead-miner"), "Boss and Admin must receive the module permission");
 assert(!canAccessPage("Sales", "social-lead-miner") && !canAccessPage("Installer", "social-lead-miner"), "Operational roles must not see social leads by default");
+assert(socialSource.includes('/api/meta/leads'), "The Social Lead Miner must load automatic Facebook Page leads from the server queue");
+assert(socialSource.includes('facebook_page_webhook'), "Facebook Page interactions must remain distinguishable from manually supplied data");
+assert(socialSource.includes('HOT/WARM 已放入待联系名单'), "The simple Chinese UI must explain automatic qualification clearly");
 
 console.log("Social Lead Miner tests passed");
