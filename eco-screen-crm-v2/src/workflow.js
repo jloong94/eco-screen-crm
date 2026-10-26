@@ -8060,7 +8060,7 @@ export async function updateOrderNumber(orderId, rawOrderNumber, options = {}) {
       ? updateOrderReferenceFields(card, orderId, oldNormalized, nextOrderNumber, now)
       : card);
 
-    const localSave = persistOrderConversionLocally();
+    const localSave = await persistOrderConversionDurably();
     if (!localSave.ok) {
       restoreConversionState(previousState);
       renderOrders();
@@ -8071,17 +8071,18 @@ export async function updateOrderNumber(orderId, rawOrderNumber, options = {}) {
     if (orderSearch.highlightId === orderId || normalizeRefNo(orderSearch.orderNumber) === oldNormalized) {
       orderSearch = { ...orderSearch, orderNumber: nextOrderNumber, highlightId: orderId };
     }
-    showWorkflowMessage(`Order number saved locally as ${nextOrderNumber}. Syncing cloud...`, "info");
+    const recoveryMessage = localSave.cacheFull ? " Browser cache is full; a durable recovery copy is retained." : "";
+    showWorkflowMessage(`Order number saved locally as ${nextOrderNumber}.${recoveryMessage} Syncing cloud...`, localSave.cacheFull ? "warning" : "info");
 
     const cloudSync = await syncOrderConversionCollections();
     renderOrders();
     if (!cloudSync.ok && !cloudSync.localOnly) {
       const message = `Order number updated locally to ${nextOrderNumber}, but cloud sync failed: ${cloudSync.reason}`;
       showWorkflowMessage(message, "warning");
-      return { ok: true, orderNumber: nextOrderNumber, cloudOk: false, message };
+      return { ok: true, orderNumber: nextOrderNumber, cloudOk: false, localCacheFull: localSave.cacheFull, message };
     }
-    showWorkflowMessage(`Order number updated to ${nextOrderNumber}`, "success");
-    return { ok: true, orderNumber: nextOrderNumber, cloudOk: !cloudSync.localOnly, localOnly: cloudSync.localOnly };
+    showWorkflowMessage(`Order number updated to ${nextOrderNumber}.${recoveryMessage}`, localSave.cacheFull ? "warning" : "success");
+    return { ok: true, orderNumber: nextOrderNumber, cloudOk: !cloudSync.localOnly, localOnly: cloudSync.localOnly, localCacheFull: localSave.cacheFull };
   } catch (error) {
     console.error("Update order number failed", error);
     if (!localCommitted) {

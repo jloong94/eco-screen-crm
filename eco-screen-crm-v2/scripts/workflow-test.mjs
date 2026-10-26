@@ -625,6 +625,24 @@ assert(findOrderByNumber(oldOrderNumber) === null, "H: old order number should n
 const persistedRenamedOrder = JSON.parse(localStorage.getItem(storageKeys.orders) || "[]").find((order) => order.id === stableOrderId);
 assert(persistedRenamedOrder?.orderNo === "SO2607001", "H: changed number should survive a storage reload");
 
+globalThis.indexedDB = memoryIndexedDB();
+const numberStorageSetItem = localStorage.setItem.bind(localStorage);
+localStorage.setItem = (key, value) => {
+  if (key === storageKeys.orders) throw new Error("The quota has been exceeded.");
+  numberStorageSetItem(key, value);
+};
+const quotaNumberUpdate = await updateOrderNumber(stableOrderId, "SO2607004", { confirmChange: false });
+assert(quotaNumberUpdate.ok && quotaNumberUpdate.localCacheFull && state.orders[0].orderNo === "SO2607004",
+  "H: order number edit must survive a full localStorage cache");
+state.orders = loadJson(storageKeys.orders, []);
+await hydrateOrderConversionCache();
+assert(state.orders[0].orderNo === "SO2607004" && state.quotations[0].orderNo === "SO2607004",
+  "H: durable recovery must restore the edited order number and linked quotation after refresh");
+localStorage.setItem = numberStorageSetItem;
+globalThis.indexedDB = originalIndexedDB;
+const restoredNumber = await updateOrderNumber(stableOrderId, "SO2607001", { confirmChange: false });
+assert(restoredNumber.ok && state.orders[0].orderNo === "SO2607001", "H: order number should remain editable after cache recovery");
+
 state.orders = [...state.orders, {
   id: "duplicate-order",
   orderNo: "SO2607002",
