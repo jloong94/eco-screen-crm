@@ -92,7 +92,7 @@ export function canScheduleInstallation() {
 }
 
 export function canCompleteInstallation() {
-  return isBossOrAdmin() || role() === "Installer";
+  return isBossOrAdmin() || ["Installer", "Secretary"].includes(role());
 }
 
 export function canViewPrice() {

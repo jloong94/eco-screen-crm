@@ -3681,7 +3681,7 @@ function installationJobCardHtml(job) {
         <button class="btn primary" type="button" data-print-installation="${job.id}">${t("Print Installation Sheet")}</button>
         <button class="btn" type="button" data-whatsapp-installation="${job.id}">${t("WhatsApp Customer")}</button>
         ${canReportInstallationIssue(job) ? `<button class="btn" type="button" data-report-installation-issue="${escapeHtml(job.id)}">${t("Report Installation Problem")}</button>` : ""}
-        ${canScheduleInstallation() && !["sent_to_installer", "completed"].includes(stage) ? `<button class="btn primary" type="button" data-preview-installation-send="${job.id}">${t("Send to Installer")}</button>` : ""}
+        ${canDispatchInstallationJob(job) && !["sent_to_installer", "completed"].includes(stage) ? `<button class="btn primary" type="button" data-preview-installation-send="${job.id}">${t("Send to Installer")}</button>` : ""}
         ${isBossOrAdmin() && stage === "sent_to_installer" ? `<button class="btn danger" type="button" data-open-installation-recall="${job.id}">${t("Recall from Installer")}</button>` : ""}
         ${canCompleteInstallationJob(job) && stage === "sent_to_installer" ? `<button class="btn" type="button" data-complete-installation="${job.id}">${t("Complete Installation")}</button>` : ""}
         ${job.completionOutcome === "touch_up" && canCompleteInstallationJob(job) ? `<button class="btn" type="button" data-mark-touchup-completed="${job.id}">${t("Mark Touch Up Completed")}</button>` : ""}
@@ -3766,11 +3766,20 @@ function installationDispatchSummaryHtml(job, order) {
   return `<div class="installation-assigned-summary"><span>${t("Customer")}<strong>${escapeHtml(order?.customer?.name || job.customer?.name || "-")}</strong></span><span>${t("SO Number")}<strong>${escapeHtml(getOrderDisplayNo(order || job) || "-")}</strong></span><span>${t("Date / Time")}<strong>${escapeHtml([job.installationDate, job.installationTime].filter(Boolean).join(" ") || "-")}</strong></span><span>${t("Assigned Installer")}<strong>${escapeHtml(job.assignedInstallerName || "-")}</strong></span><span>${t("Address")}<strong>${escapeHtml(job.address || job.customer?.address || "-")}</strong></span><span>${t("Phone")}<strong>${escapeHtml(job.phone || job.customer?.phone || "-")}</strong></span><span>${t("Remarks")}<strong>${escapeHtml(job.installationRemarks || job.installerRemark || "-")}</strong></span></div>`;
 }
 
-function canCompleteInstallationJob(job) {
-  if (isBossOrAdmin()) return true;
+export function canCompleteInstallationJob(job) {
+  if (isBossOrAdmin() || normalizeText(role()) === "secretary") return true;
   return normalizeText(role()) === "installer"
     && String(state.currentUser?.userId || "") === String(job.assignedInstallerId || "")
     && ["sent_to_installer", "completed"].includes(String(job.status || "").toLowerCase());
+}
+
+function canDispatchInstallationJob(job) {
+  if (canScheduleInstallation()) return true;
+  return normalizeText(role()) === "installer"
+    && state.currentUser?.active !== false
+    && String(state.currentUser?.userId || "").trim()
+    && String(state.currentUser.userId).trim() === String(job?.assignedInstallerId || "").trim()
+    && installationDispatchStage(job) === "ready_to_send";
 }
 
 function canGenerateWarrantyCard() {
@@ -8732,7 +8741,7 @@ export async function saveInstallerSelfArrangement(jobId, values = {}, options =
   if (options.downloadBackup !== false && !downloadOrderActionBackup(plan)) return failInstallationAction("Full JSON backup download failed. Installation was not arranged.");
   const result = await commitOrderActionPlan(plan, {
     local: "Your Installation arrangement was saved locally. Syncing cloud...",
-    success: "This job is assigned to you and is Ready to Send. The office must still dispatch it.",
+    success: "This job is assigned to you and is Ready to Send. Use Send to Installer to start the installation.",
     cloudFailure: "Your Installation arrangement was saved locally but cloud sync failed"
   });
   return { ...result, jobId: exactJobId, status: "ready_to_send", assignedInstallerId: installerId };
@@ -8787,6 +8796,8 @@ export async function saveInstallationArrangement(jobId, values = {}) {
 }
 
 function previewInstallationDispatch(jobId) {
+  const job = state.installationJobs.find((row) => String(row.id || "") === String(jobId || ""));
+  if (!canDispatchInstallationJob(job)) return failInstallationAction("Permission denied: only the assigned Installer or office can send this Installation.");
   const validation = validateInstallationDispatch(jobId);
   if (!validation.ok) return failInstallationAction(validation.message);
   installationDispatchPreviewId = String(jobId);
@@ -8808,7 +8819,8 @@ async function confirmInstallationDispatch(jobId, button) {
 }
 
 export async function sendInstallationToInstaller(jobId) {
-  if (!canScheduleInstallation()) return failInstallationAction("Permission denied: only Boss, Admin or Secretary can send Installation.");
+  const jobToSend = state.installationJobs.find((row) => String(row.id || "") === String(jobId || ""));
+  if (!canDispatchInstallationJob(jobToSend)) return failInstallationAction("Permission denied: only the assigned Installer or office can send this Installation.");
   const validation = validateInstallationDispatch(jobId);
   if (!validation.ok) return failInstallationAction(validation.message);
   const { job, order, installer } = validation;
@@ -8848,7 +8860,11 @@ function validateInstallationDispatch(jobId) {
   if (!exactJobId || !job) return { ok: false, message: "The exact Installation stable ID was not found." };
   if (!isActiveWorkflowRecord(job)) return { ok: false, message: "Archived or cancelled Installation records cannot be sent." };
   if (!String(job.installationDate || "").trim()) return { ok: false, message: "Select an installation date before sending." };
-  const installer = exactInstallerUser(job.assignedInstallerId);
+  const installer = exactInstallerUser(job.assignedInstallerId)
+    || (normalizeText(role()) === "installer"
+      && state.currentUser?.active !== false
+      && String(state.currentUser?.userId || "").trim() === String(job.assignedInstallerId || "").trim()
+      ? state.currentUser : null);
   if (!installer) return { ok: false, message: "Select an active Installer by exact staff/user ID before sending." };
   const order = state.orders.find((row) => String(row.id || "") === String(job.orderId || "") && isActiveOrderRecord(row));
   if (!order) return { ok: false, message: "The exact related active Order could not be identified." };

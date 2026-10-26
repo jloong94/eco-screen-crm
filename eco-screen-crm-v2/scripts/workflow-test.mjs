@@ -133,6 +133,7 @@ const {
   recallInstallationFromInstaller,
   saveInstallationArrangement,
   saveInstallerSelfArrangement,
+  canCompleteInstallationJob,
   scanProductionDispatchIntegrity,
   scanWorkflowIntegrity,
   scanCoveredOrderReferences,
@@ -183,7 +184,7 @@ const {
   uniqueActiveOrders,
   uniqueActiveProductionJobs
 } = await import("../src/workflowIntegrity.js");
-const { canAccessPage, canDuplicateQuotation, isBossOrAdmin } = await import("../src/permissions.js");
+const { canAccessPage, canCompleteInstallation, canDuplicateQuotation, isBossOrAdmin } = await import("../src/permissions.js");
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -2241,11 +2242,31 @@ const otherBefore = structuredClone(state.installationJobs.find((job) => job.id 
 const stealBlocked = await saveInstallerSelfArrangement(otherArrangeJob.id, { installationDate: "2026-09-09" }, { downloadBackup: false });
 assert(!stealBlocked.ok && JSON.stringify(state.installationJobs.find((job) => job.id === otherArrangeJob.id)) === JSON.stringify(otherBefore),
 "Z5C: an Installer must not take or mutate a job already assigned to another exact Installer ID");
-const sentBefore = structuredClone(savedSelfJob);
-state.installationJobs = state.installationJobs.map((job) => job.id === savedSelfJob.id ? { ...job, status: "sent_to_installer", dispatchStatus: "sent" } : job);
+state.installationJobs = state.installationJobs.map((job) => job.id === otherArrangeJob.id
+  ? { ...job, installationDate: "2026-09-09", status: "ready_to_send", dispatchStatus: "ready" } : job);
+const otherReadyBefore = structuredClone(state.installationJobs.find((job) => job.id === otherArrangeJob.id));
+const otherDispatchBlocked = await sendInstallationToInstaller(otherArrangeJob.id);
+assert(!otherDispatchBlocked.ok && JSON.stringify(state.installationJobs.find((job) => job.id === otherArrangeJob.id)) === JSON.stringify(otherReadyBefore),
+"Z5C: an Installer must not dispatch another Installer's ready job");
+const selfDispatched = await sendInstallationToInstaller(savedSelfJob.id);
+const sentSelfJob = state.installationJobs.find((job) => job.id === savedSelfJob.id);
+assert(selfDispatched.ok && sentSelfJob.status === "sent_to_installer" && sentSelfJob.assignedInstallerId === selfArrangeInstaller.userId
+  && state.orders[0].installationStatus === "sent_to_installer" && state.orders[0].status === "Sent to Installer",
+"Z5C: an Installer must dispatch their own ready job and update the linked Order before staff directory hydration");
+assert(canCompleteInstallation() && canCompleteInstallationJob(sentSelfJob)
+  && !canCompleteInstallationJob({ ...sentSelfJob, assignedInstallerId: otherArrangeInstaller.userId }),
+"Z5C: an Installer can complete only their own dispatched installation");
 const sentSelfBlocked = await saveInstallerSelfArrangement(savedSelfJob.id, { installationDate: "2026-09-10" }, { downloadBackup: false });
-assert(!sentSelfBlocked.ok && state.installationJobs.find((job) => job.id === savedSelfJob.id).installationDate === sentBefore.installationDate,
+assert(!sentSelfBlocked.ok && state.installationJobs.find((job) => job.id === savedSelfJob.id).installationDate === sentSelfJob.installationDate,
 "Z5C: self-arrangement must not alter a sent Installation");
+state.currentUser = { userId: "secretary-installation", role: "Secretary", active: true };
+state.role = "Secretary";
+assert(canCompleteInstallation() && canCompleteInstallationJob(sentSelfJob),
+"Z5C: Secretary can complete a dispatched installation");
+state.currentUser = { userId: "sales-installation", role: "Sales", active: true };
+state.role = "Sales";
+assert(!canCompleteInstallation() && !canCompleteInstallationJob(sentSelfJob),
+"Z5C: Sales retains no installation completion permission");
 Object.assign(state, selfArrangePreviousState);
 
 const issueBoss = { userId: "boss-installation-issue", username: "boss-issue", name: "Boss Issue", role: "Boss", active: true };
