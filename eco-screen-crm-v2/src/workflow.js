@@ -3716,6 +3716,7 @@ function installerSelfArrangementHtml(job) {
       <label class="wide">${t("Installation Remarks")}<textarea rows="2" data-installer-self-field="installationRemarks">${escapeHtml(job.installationRemarks || job.installerRemark || "")}</textarea></label>
     </div>
     <button class="btn primary" type="button" data-save-installer-self-arrangement="${escapeHtml(job.id)}">${t("Arrange for Me")}</button>
+    <p class="muted-text" data-installer-self-status aria-live="polite"></p>
   </section>`;
 }
 
@@ -7927,7 +7928,7 @@ function downloadOrderActionBackup(plan) {
   }
 }
 
-async function commitOrderActionPlan(plan, messages) {
+async function commitOrderActionPlan(plan, messages, options = {}) {
   const previousState = snapshotOrderWorkflowState();
   const collections = Array.isArray(plan.collections) && plan.collections.length ? plan.collections : undefined;
   let localCommitted = false;
@@ -7939,6 +7940,18 @@ async function commitOrderActionPlan(plan, messages) {
     state.warrantyCards = plan.nextState.warrantyCards;
     const localSave = await persistOrderConversionDurably(collections);
     if (!localSave.ok) {
+      if (options.cloudRecovery) {
+        showWorkflowMessage("Browser storage is unavailable. Saving Installation to cloud...", "warning");
+        const cloudSync = await syncOrderConversionCollections(collections);
+        if (cloudSync.ok && !cloudSync.localOnly) {
+          renderWorkflowModules();
+          showWorkflowMessage(`${messages.success} Saved to cloud; browser storage is full.`, "warning");
+          return { ok: true, cloudOk: true, localCacheFull: true, changes: plan.changes, orderId: plan.orderId };
+        }
+        restoreConversionState(previousState);
+        renderWorkflowModules();
+        return failOrderUpdate(`Installation was not saved: browser storage is unavailable and cloud sync failed. ${cloudSync.reason || "Please retry online."}`);
+      }
       restoreConversionState(previousState);
       renderWorkflowModules();
       return failOrderUpdate(`Local transaction failed: ${localSave.reason}`);
@@ -8686,15 +8699,35 @@ function saveInstallationArrangementFromPanel(jobId, button) {
   });
 }
 
-function saveInstallerSelfArrangementFromPanel(jobId, button) {
+async function saveInstallerSelfArrangementFromPanel(jobId, button) {
   const panel = button.closest("[data-installer-self-arrangement]");
   if (!panel) return failInstallationAction("Installer arrangement form is unavailable.");
   const read = (field) => panel.querySelector(`[data-installer-self-field="${field}"]`)?.value || "";
-  return saveInstallerSelfArrangement(jobId, {
+  const values = {
     installationDate: read("installationDate"),
     installationTime: read("installationTime"),
     installationRemarks: read("installationRemarks")
-  });
+  };
+  button.disabled = true;
+  button.textContent = t("Saving...");
+  panel.querySelector("[data-installer-self-status]").textContent = t("Saving...");
+  let result;
+  try {
+    result = await saveInstallerSelfArrangement(jobId, values);
+  } catch (error) {
+    result = failInstallationAction(`Installation was not saved: ${error.message || "Unknown error"}`);
+  }
+  const currentPanel = [...document.querySelectorAll("[data-installer-self-arrangement]")]
+    .find((element) => element.dataset.installerSelfArrangement === String(jobId));
+  if (currentPanel) {
+    currentPanel.querySelector("[data-installer-self-status]").textContent = t(result.ok
+      ? "Installation arranged. You can now send it to Installer."
+      : result.message || "Installation was not saved.");
+    const currentButton = currentPanel.querySelector("[data-save-installer-self-arrangement]");
+    currentButton.disabled = false;
+    currentButton.textContent = t("Arrange for Me");
+  }
+  return result;
 }
 
 export async function saveInstallerSelfArrangement(jobId, values = {}, options = {}) {
@@ -8738,13 +8771,13 @@ export async function saveInstallerSelfArrangement(jobId, values = {}, options =
     installationJobs: state.installationJobs.map((row) => String(row.id || "") === exactJobId ? updatedJob : row),
     orders: state.orders.map((row) => String(row.id || "") === String(order.id) ? updatedOrder : row)
   });
-  if (options.downloadBackup !== false && !downloadOrderActionBackup(plan)) return failInstallationAction("Full JSON backup download failed. Installation was not arranged.");
+  if (options.downloadBackup === true && !downloadOrderActionBackup(plan)) return failInstallationAction("Full JSON backup download failed. Installation was not arranged.");
   const result = await commitOrderActionPlan(plan, {
     local: "Your Installation arrangement was saved locally. Syncing cloud...",
     success: "This job is assigned to you and is Ready to Send. Use Send to Installer to start the installation.",
     cloudFailure: "Your Installation arrangement was saved locally but cloud sync failed"
-  });
-  return { ...result, jobId: exactJobId, status: "ready_to_send", assignedInstallerId: installerId };
+  }, { cloudRecovery: true });
+  return result.ok ? { ...result, jobId: exactJobId, status: "ready_to_send", assignedInstallerId: installerId } : result;
 }
 
 export async function saveInstallationArrangement(jobId, values = {}) {
