@@ -507,6 +507,7 @@ const zh = {
   "Required Items / Checklist": "所需项目或检查表",
   "Save Arrangement": "保存安排",
   "Arrange for Me": "由我安排",
+  "Load 20 more installation jobs": "再显示 20 条安装单",
   "Installation arranged. You can now send it to Installer.": "安装日期已安排。现在可以发送给安装员。",
   "Installation was not saved.": "安装安排未保存。",
   "All active Installation jobs are visible. You may claim an unassigned job and arrange its date.": "全部有效安装工作均可查看。您可以认领未分配的工作并安排日期。",

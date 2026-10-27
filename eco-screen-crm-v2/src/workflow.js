@@ -147,6 +147,7 @@ let installationDateGroupFilter = "";
 let installationDateFrom = "";
 let installationDateTo = "";
 let installationIssueJobId = "";
+let installationVisibleCount = 20;
 let schedulingProductionFilter = "";
 let schedulingInstallationFilter = "";
 let schedulingArrangementJobId = "";
@@ -183,6 +184,7 @@ export function resetWorkflowNavigationState(page) {
     installationDateFrom = "";
     installationDateTo = "";
     installationIssueJobId = "";
+    installationVisibleCount = 20;
   }
   if (page === "scheduling") {
     schedulingProductionFilter = "";
@@ -3190,6 +3192,7 @@ function renderInstallationJobs() {
   const list = document.querySelector("#installationList");
   if (!list) return;
   const activeJobs = installationJobsForCurrentView();
+  const visibleJobs = activeJobs.slice(0, installationVisibleCount);
   const diagnostics = installationDispatchDiagnostics();
   const installerView = normalizeText(role()) === "installer";
   list.innerHTML = `
@@ -3203,9 +3206,18 @@ function renderInstallationJobs() {
       <span>${t("Completed")}<strong>${diagnostics.completed}</strong></span>
       <span>${t("Missing assignedInstallerId")}<strong>${diagnostics.missingAssignedInstallerId}</strong></span>
     </section>` : ""}
-    ${activeJobs.length ? activeJobs.map((job) => installationJobCardHtml(job)).join("") : `<p class="muted-text">${t(installationSearch || installationStatusFilter ? "No matching installation jobs." : "No installation jobs yet.")}</p>`}
+    ${activeJobs.length ? visibleJobs.map((job) => installationJobCardHtml(job)).join("") : `<p class="muted-text">${t(installationSearch || installationStatusFilter ? "No matching installation jobs." : "No installation jobs yet.")}</p>`}
+    ${activeJobs.length > visibleJobs.length ? `<div class="actions"><button class="btn" type="button" data-load-more-installations>${t("Load 20 more installation jobs")} (${visibleJobs.length}/${activeJobs.length})</button></div>` : ""}
   `;
   if (activeCompletionJobId) setupSignatureCanvas(activeCompletionJobId);
+}
+
+function revealInstallationJob(jobId) {
+  const index = installationJobsForCurrentView().findIndex((job) => String(job.id) === String(jobId));
+  if (index >= installationVisibleCount) {
+    installationVisibleCount = Math.ceil((index + 1) / 20) * 20;
+    renderInstallationJobs();
+  }
 }
 
 export function installationJobsForUser(user = state.currentUser) {
@@ -3294,6 +3306,7 @@ export function installationJobMatchesDateRange(job = {}, dateFrom = installatio
 }
 
 export function setInstallationDateRange(dateFrom = "", dateTo = "") {
+  installationVisibleCount = 20;
   installationDateFrom = malaysiaCalendarDate(dateFrom);
   installationDateTo = malaysiaCalendarDate(dateTo);
   if (installationDateFrom && installationDateTo && installationDateFrom > installationDateTo) {
@@ -3319,16 +3332,19 @@ function installationJobsForUserFromSource(user = state.currentUser, source = st
 }
 
 export function setInstallationSearch(value = "") {
+  installationVisibleCount = 20;
   installationSearch = String(value || "");
   return installationSearch;
 }
 
 function setInstallationStatusFilter(value = "") {
+  installationVisibleCount = 20;
   installationStatusFilter = ["pending", "completed"].includes(String(value || "")) ? String(value) : "";
   return installationStatusFilter;
 }
 
 function setInstallationDateGroupFilter(value = "") {
+  installationVisibleCount = 20;
   const normalized = String(value || "");
   installationDateGroupFilter = ["unscheduled", "today", "tomorrow", "upcoming", "completed"].includes(normalized) ? normalized : "";
   return installationDateGroupFilter;
@@ -3557,9 +3573,10 @@ function installationSchedulingCardHtml(job) {
   </article>`;
 }
 
-function openSchedulingRecordPage(page, selector) {
+function openSchedulingRecordPage(page, selector, installationId = "") {
   const navigation = document.querySelector?.(`[data-page="${page}"]`);
   navigation?.click();
+  if (installationId) revealInstallationJob(installationId);
   setTimeout(() => document.querySelector?.(selector)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
 }
 
@@ -3590,7 +3607,7 @@ function handleSchedulingClick(event) {
   }
   const installationId = event.target.dataset.schedulingOpenInstallation;
   if (installationId) {
-    openSchedulingRecordPage("installation", `[data-installation-card="${CSS.escape(installationId)}"]`);
+    openSchedulingRecordPage("installation", `[data-installation-card="${CSS.escape(installationId)}"]`, installationId);
     return;
   }
   const arrangeId = event.target.dataset.schedulingArrangeInstallation;
@@ -4024,6 +4041,7 @@ function openQuickInstallation(jobId, previewSend = false) {
   const navigation = document.querySelector?.('[data-page="installation"]');
   if (!navigation) return failInstallationAction("You do not have permission to access Installation.");
   navigation.click();
+  revealInstallationJob(exactJobId);
   setTimeout(() => {
     if (previewSend) previewInstallationDispatch(exactJobId);
     document.querySelector?.(`[data-installation-card="${exactJobId}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -8505,6 +8523,11 @@ export async function markProductionStatus(jobId, status) {
 }
 
 function handleInstallationClick(event) {
+  if (event.target.closest?.("[data-load-more-installations]")) {
+    installationVisibleCount += 20;
+    renderInstallationJobs();
+    return;
+  }
   const searchAction = event.target.dataset.installationSearchAction;
   if (searchAction === "search") {
     const input = event.target.closest("#installationList")?.querySelector("[data-installer-installation-search]");
@@ -8676,6 +8699,7 @@ function openWarrantyInstallation(cardId) {
   const navigation = document.querySelector?.('[data-page="installation"]');
   if (navigation && state.currentPage !== "installation") navigation.click();
   else renderInstallationJobs();
+  revealInstallationJob(installation.id);
   setTimeout(() => {
     document.querySelector?.(`[data-installation-card="${installation.id}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
     showWorkflowMessage(`Installation opened: ${installation.installationNumber || installation.id}`, "success");
