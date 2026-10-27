@@ -2289,11 +2289,17 @@ const mobileCloud = Object.fromEntries(["users", "customers", "products", "quota
   .map((collection) => [collection, []]));
 mobileCloud.orders = structuredClone(state.orders);
 mobileCloud.installationJobs = structuredClone(state.installationJobs);
+let mobileCloudReads = 0;
 globalThis.fetch = async (url, options = {}) => {
   const collection = new URL(String(url), "https://crm.test").searchParams.get("collection");
   if (options.method === "POST") {
     mobileCloud[collection] = JSON.parse(options.body).data;
     return { ok: true, status: 200, json: async () => ({ ok: true }), text: async () => "" };
+  }
+  if (collection === "all") {
+    mobileCloudReads += 1;
+    const rows = Object.entries(mobileCloud).map(([name, data]) => ({ collection: name, data, updated_at: "2026-09-01T00:00:00.000Z" }));
+    return { ok: true, status: 200, json: async () => rows, text: async () => JSON.stringify(rows) };
   }
   const rows = mobileCloud[collection]?.length ? [{ collection, data: mobileCloud[collection], updated_at: "2026-09-01T00:00:00.000Z" }] : [];
   return { ok: true, status: 200, json: async () => rows, text: async () => JSON.stringify(rows) };
@@ -2305,6 +2311,7 @@ localStorage.setItem = (key, value) => {
 };
 const mobileArrangement = await saveInstallerSelfArrangement(selfArrangeJob.id, { installationDate: "2026-09-08", installationTime: "09:30" });
 assert(mobileArrangement.ok && mobileArrangement.cloudOk && mobileArrangement.localCacheFull
+  && mobileCloudReads === 1
   && mobileCloud.installationJobs.find((job) => job.id === selfArrangeJob.id)?.status === "ready_to_send"
   && mobileCloud.orders.find((order) => order.id === selfArrangeOrder.id)?.installationStatus === "ready_to_send",
 "Z5C: Installer arrangement must save both exact cloud records when mobile browser storage and IndexedDB are unavailable");

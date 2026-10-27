@@ -131,11 +131,45 @@ export async function saveData(collection, data, options = {}) {
 export async function syncFromCloud() {
   const configurationIssue = cloudConfigurationIssue();
   if (configurationIssue) return { ok: false, reason: configurationIssue, data: {}, meta: {} };
+  if (identity.mode === 'pin') {
+    try {
+      const response = await fetch('/api/staff-data?collection=all', { headers: await authenticatedHeaders() });
+      if (response.ok) {
+        const rows = await response.json();
+        if (!Array.isArray(rows) || rows.some((row) => !row || !cloudCollections.includes(row.collection) || !Array.isArray(row.data))) {
+          return { ok: false, reason: 'Invalid staff data response.', data: {}, meta: {} };
+        }
+        const byCollection = new Map(rows.map((row) => [row.collection, row]));
+        const data = {};
+        const meta = {};
+        for (const collection of cloudCollections) {
+          const row = byCollection.get(collection);
+          data[collection] = row?.data || [];
+          meta[collection] = { updatedAt: row?.updated_at || '', count: data[collection].length, found: Boolean(row) };
+        }
+        return { ok: true, data, meta };
+      }
+      if (![400, 404, 413].includes(response.status)) {
+        const error = await httpFailure(response, 'load');
+        return { ok: false, reason: error.reason, data: {}, meta: {} };
+      }
+    } catch (error) {
+      return { ok: false, reason: safeRequestFailure(error, 'load'), data: {}, meta: {} };
+    }
+  }
   const data = {};
   const meta = {};
   const failures = [];
-  for (const collection of cloudCollections) {
-    const row = await loadData(collection);
+  const results = new Array(cloudCollections.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(3, cloudCollections.length) }, async () => {
+    while (next < cloudCollections.length) {
+      const index = next++;
+      results[index] = await loadData(cloudCollections[index]);
+    }
+  }));
+  for (const [index, collection] of cloudCollections.entries()) {
+    const row = results[index];
     if (row.ok) {
       data[collection] = row.data;
       meta[collection] = { updatedAt: row.updatedAt, count: row.data.length, found: row.found };
