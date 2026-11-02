@@ -37,6 +37,7 @@ import {
 } from "./workflow.js";
 import {
   COLOR_VALUES,
+  POWDERCOAT_COLOR_VALUES,
   OPENING_DIRECTION_VALUES,
   colorLabel,
   normalizeColor,
@@ -59,7 +60,7 @@ const copiedItemFields = [
   "width", "height", "quantity", "measurements", "color", "trackType",
   "trackOpening", "meshType", "meshMaterial", "material", "installType",
   "trackSize", "handleHeight", "handlePosition", "installationLocation",
-  "openingDirection", "powdercoat", "powdercoatRate", "hollowProductId", "hollowName", "hollowRate", "lock", "description",
+  "openingDirection", "powdercoat", "powdercoatColor", "powdercoatRate", "hollowProductId", "hollowName", "hollowRate", "lock", "description",
   "label", "remark", "remarks", "unitPrice", "manualFinalPrice",
   "priceAdjustmentRemark", "discount", "discountType"
 ];
@@ -192,6 +193,11 @@ function hollowOptions(item) {
   return `<option value="" ${item.hollowProductId ? "" : "selected"}>${t("No")}</option>${legacy}${products.map((product) => `<option value="${escapeHtml(product.id)}" ${item.hollowProductId === product.id ? "selected" : ""}>${escapeHtml(product.name)} (${money(product.ratePerSqft ?? product.sellingPrice)}/${t("Sqft")})</option>`).join("")}`;
 }
 
+function powdercoatColorOptions(value) {
+  const unknown = value ? "" : `<option value="" selected>${t("Not stated")}</option>`;
+  return unknown + canonicalSelectOptions(POWDERCOAT_COLOR_VALUES, value, normalizeColor, colorLabel);
+}
+
 function selectOptions(options, selectedValue) {
   return options.map((option) => `<option value="${option}" ${option === selectedValue ? "selected" : ""}>${statusLabel(option)}</option>`).join("");
 }
@@ -275,6 +281,7 @@ function itemCardHtml(item, index) {
             <option value="true" ${item.powdercoat ? "selected" : ""}>${t("Yes")}</option>
           </select>
         </label>
+        ${item.powdercoat ? fieldSelect(t("Powdercoat Color"), item.id, "powdercoatColor", powdercoatColorOptions(item.powdercoatColor)) : ""}
         ${fieldSelect(t("Hollow"), item.id, "hollowProductId", hollowOptions(item))}
         <label>${t("Manual Final Price")}
           <input inputmode="decimal" data-item-id="${item.id}" data-field="manualFinalPrice" value="${escapeHtml(item.manualFinalPrice ?? "")}" placeholder="${t("Optional final RM")}" />
@@ -339,6 +346,12 @@ function updateItemFromEvent(event) {
   if (field === "powdercoat") {
     item.powdercoat = event.target.value === "true";
     item.powdercoatRate = Number(item.powdercoatRate || 0.08);
+    item.powdercoatColor = item.powdercoat
+      ? item.powdercoatColor || (POWDERCOAT_COLOR_VALUES.includes(normalizeColor(item.color)) ? normalizeColor(item.color) : "white")
+      : "";
+    renderItemCards();
+  } else if (field === "powdercoatColor") {
+    item.powdercoatColor = normalizeColor(event.target.value);
   } else if (field === "hollowProductId") {
     const product = state.products.find((row) => row.id === event.target.value && row.category === "Hollow");
     item.hollowProductId = product?.id || "";
@@ -1146,6 +1159,7 @@ function quoteItemDetailLinesHtml(item) {
     [t("Track Type"), item.trackType || item.trackOpening],
     [t("Mesh / Net Type"), meshValue(item)],
     [t("Powdercoat / Powercoat"), item.powdercoat ? `${t("Yes")} (${money(powdercoatAmount(item))})` : ""],
+    [t("Powdercoat Color"), item.powdercoat && item.powdercoatColor ? colorLabel(item.powdercoatColor) : ""],
     [t("Hollow"), item.hollowProductId ? `${item.hollowName || item.hollowProductId} (${money(hollowAmount(item))})` : ""]
   ];
   return details.filter(([, value]) => value).map(([label, value]) => `<small>${label}: ${escapeHtml(value)}</small>`).join("") || `<small>${t("Color")}: -</small>`;

@@ -283,6 +283,9 @@ const zh = {
   "Double Open": "对开",
   White: "白色",
   Grey: "灰色",
+  Black: "黑色",
+  Brown: "棕色",
+  Champagne: "香槟色",
   Legacy: "旧值",
   Website: "网站",
   "Quotation Date": "报价日期",
@@ -317,6 +320,7 @@ const zh = {
   "Reason for price adjustment": "价格调整原因",
   "Site note, special request": "现场备注或特别要求",
   "Powdercoat 8%": "喷粉 8%",
+  "Powdercoat Color": "喷粉颜色",
   Hollow: "方管",
   "Eco Screen CRM V2 - Mobile Production": "Eco Screen CRM V2 - 移动生产",
   "Module navigation": "功能导航",
@@ -1001,6 +1005,7 @@ export function missingChineseTranslations(keys = []) {
 
 export const OPENING_DIRECTION_VALUES = Object.freeze(["close_left", "close_right", "close_down", "double_open"]);
 export const COLOR_VALUES = Object.freeze(["white", "grey"]);
+export const POWDERCOAT_COLOR_VALUES = Object.freeze(["white", "grey", "black", "brown", "champagne"]);
 
 const openingDirectionAliases = new Map([
   ["close_left", "close_left"],
@@ -1040,7 +1045,16 @@ const colorAliases = new Map([
   ["grey", "grey"],
   ["gray", "grey"],
   ["灰", "grey"],
-  ["灰色", "grey"]
+  ["灰色", "grey"],
+  ["black", "black"],
+  ["黑", "black"],
+  ["黑色", "black"],
+  ["brown", "brown"],
+  ["棕", "brown"],
+  ["棕色", "brown"],
+  ["champagne", "champagne"],
+  ["香槟", "champagne"],
+  ["香槟色", "champagne"]
 ]);
 
 function normalizedChoiceKey(value) {
@@ -1080,7 +1094,7 @@ export function openingDirectionLabel(value) {
 
 export function colorLabel(value) {
   const normalized = normalizeColor(value);
-  const labels = { white: "White", grey: "Grey" };
+  const labels = { white: "White", grey: "Grey", black: "Black", brown: "Brown", champagne: "Champagne" };
   return labels[normalized] ? t(labels[normalized]) : legacyLabel(value);
 }
 

@@ -3938,7 +3938,7 @@ function itemsSummary(items = []) {
   return `<div class="mini-table">${items.map((item) => `
     <div>
       <strong>${item.productName}</strong>
-      <span>${item.width || 0} x ${item.height || 0} | ${t("Quantity")} ${item.quantity || 0} | ${t("Unit Price")}: ${money(item.unitPrice)} | ${t("Line Total")}: ${money(lineTotal(item))} | ${t("Color")}: ${colorLabel(item.color)} | ${t("Install Type / Inside Outside")}: ${t(item.installType || "-")} | ${t("Installation Location")}: ${item.installationLocation || "-"} | ${t("Opening Direction")}: ${openingDirectionLabel(item.openingDirection)} | ${t("Track Size")}: ${item.trackSize || "-"} | ${t("Handle Height")}: ${item.handleHeight || "-"} | ${t("Track Type")}: ${t(item.trackType || item.trackOpening || "-")} | ${t("Mesh / Net Type")}: ${t(meshValue(item) || "-")} | ${t("Powdercoat / Powercoat")}: ${item.powdercoat ? `${t("Yes")} ${money(powdercoatAmount(item))}` : t("No")} | ${t("Hollow")}: ${item.hollowProductId ? item.hollowName || item.hollowProductId : t("No")} | ${item.remark || "-"}</span>
+      <span>${item.width || 0} x ${item.height || 0} | ${t("Quantity")} ${item.quantity || 0} | ${t("Unit Price")}: ${money(item.unitPrice)} | ${t("Line Total")}: ${money(lineTotal(item))} | ${t("Color")}: ${colorLabel(item.color)} | ${t("Install Type / Inside Outside")}: ${t(item.installType || "-")} | ${t("Installation Location")}: ${item.installationLocation || "-"} | ${t("Opening Direction")}: ${openingDirectionLabel(item.openingDirection)} | ${t("Track Size")}: ${item.trackSize || "-"} | ${t("Handle Height")}: ${item.handleHeight || "-"} | ${t("Track Type")}: ${t(item.trackType || item.trackOpening || "-")} | ${t("Mesh / Net Type")}: ${t(meshValue(item) || "-")} | ${t("Powdercoat / Powercoat")}: ${item.powdercoat ? `${t("Yes")} ${money(powdercoatAmount(item))}${item.powdercoatColor ? ` (${colorLabel(item.powdercoatColor)})` : ""}` : t("No")} | ${t("Hollow")}: ${item.hollowProductId ? item.hollowName || item.hollowProductId : t("No")} | ${item.remark || "-"}</span>
     </div>
   `).join("")}</div>`;
 }
@@ -7746,7 +7746,7 @@ function amendmentUnsafeProductFieldsChanged(fields = []) {
 }
 
 function amendmentItemPayload(items = []) {
-  const fields = ["id", "productId", "productName", "category", "calculationType", "minimumSqft", "width", "height", "measurements", "quantity", "color", "openingDirection", "installationLocation", "installType", "trackSize", "trackType", "trackOpening", "meshType", "meshMaterial", "material", "handleHeight", "lock", "unitPrice", "manualFinalPrice", "priceAdjustmentRemark", "discount", "discountType", "powdercoat", "powdercoatRate", "hollowProductId", "hollowName", "hollowRate", "remark", "remarks"];
+  const fields = ["id", "productId", "productName", "category", "calculationType", "minimumSqft", "width", "height", "measurements", "quantity", "color", "openingDirection", "installationLocation", "installType", "trackSize", "trackType", "trackOpening", "meshType", "meshMaterial", "material", "handleHeight", "lock", "unitPrice", "manualFinalPrice", "priceAdjustmentRemark", "discount", "discountType", "powdercoat", "powdercoatColor", "powdercoatRate", "hollowProductId", "hollowName", "hollowRate", "remark", "remarks"];
   return (Array.isArray(items) ? items : []).map((item) => Object.fromEntries(fields.map((field) => [field, item?.[field] ?? ""])));
 }
 
@@ -10028,7 +10028,7 @@ export function productionSheetPrintHtml(job = {}, order = {}, company = state.c
 function productionSheetItemRow(item = {}) {
   const lock = item.lock || item.lockType || item.lockOption || item.lockRemark || "-";
   return `<tr data-production-item-row>
-    <td>${escapeHtml(item.productName || "-")}${item.hollowProductId ? `<br><small>${t("Hollow")}: ${escapeHtml(item.hollowName || item.hollowProductId)}</small>` : ""}</td><td>${escapeHtml(item.installationLocation || "-")}</td>
+    <td>${escapeHtml(item.productName || "-")}${item.hollowProductId ? `<br><small>${t("Hollow")}: ${escapeHtml(item.hollowName || item.hollowProductId)}</small>` : ""}${item.powdercoat && item.powdercoatColor ? `<br><small>${t("Powdercoat Color")}: ${escapeHtml(colorLabel(item.powdercoatColor))}</small>` : ""}</td><td>${escapeHtml(item.installationLocation || "-")}</td>
     <td>${escapeHtml(`${item.width || 0} x ${item.height || 0}`)}</td><td>${escapeHtml(item.quantity || 0)}</td>
     <td>${escapeHtml(colorLabel(item.color))}</td><td>${escapeHtml(t(item.installType || "-"))}</td>
     <td>${escapeHtml(openingDirectionLabel(item.openingDirection))}</td><td>${escapeHtml(item.trackSize || "-")}</td>
@@ -10103,7 +10103,7 @@ function customerBlock(customer) {
 
 function printItemsTable(items, showPrice) {
   return `<table><thead><tr><th>${t("Product")}</th><th>${t("Installation Location")}</th><th>${t("Size")}</th><th>${t("Quantity")}</th><th>${t("Color")}</th><th>${t("Install Type / Inside Outside")}</th><th>${t("Opening Direction")}</th><th>${t("Track Size")}</th><th>${t("Handle Height")}</th><th>${t("Track Type")}</th><th>${t("Mesh / Net Type")}</th><th>${t("Powdercoat / Powercoat")}</th><th>${t("Remark")}</th>${showPrice ? `<th>${t("Unit Price")}</th><th>${t("Total")}</th>` : ""}</tr></thead><tbody>
-    ${items.map((item) => `<tr><td>${item.productName}${item.hollowProductId ? `<br><small>${t("Hollow")}: ${item.hollowName || item.hollowProductId}</small>` : ""}</td><td>${item.installationLocation || "-"}</td><td>${item.width || 0} x ${item.height || 0}</td><td>${item.quantity || 0}</td><td>${colorLabel(item.color)}</td><td>${t(item.installType || "-")}</td><td>${openingDirectionLabel(item.openingDirection)}</td><td>${item.trackSize || "-"}</td><td>${item.handleHeight || "-"}</td><td>${t(item.trackType || item.trackOpening || "-")}</td><td>${t(meshValue(item) || "-")}</td><td>${item.powdercoat ? `${t("Yes")} ${money(powdercoatAmount(item))}` : t("No")}</td><td>${item.remark || "-"}</td>${showPrice ? `<td>${money(item.unitPrice)}</td><td>${money(lineTotal(item))}${priceAdjustmentPrintNote(item)}</td>` : ""}</tr>`).join("")}
+    ${items.map((item) => `<tr><td>${item.productName}${item.hollowProductId ? `<br><small>${t("Hollow")}: ${item.hollowName || item.hollowProductId}</small>` : ""}</td><td>${item.installationLocation || "-"}</td><td>${item.width || 0} x ${item.height || 0}</td><td>${item.quantity || 0}</td><td>${colorLabel(item.color)}</td><td>${t(item.installType || "-")}</td><td>${openingDirectionLabel(item.openingDirection)}</td><td>${item.trackSize || "-"}</td><td>${item.handleHeight || "-"}</td><td>${t(item.trackType || item.trackOpening || "-")}</td><td>${t(meshValue(item) || "-")}</td><td>${item.powdercoat ? `${t("Yes")} ${money(powdercoatAmount(item))}${item.powdercoatColor ? ` (${colorLabel(item.powdercoatColor)})` : ""}` : t("No")}</td><td>${item.remark || "-"}</td>${showPrice ? `<td>${money(item.unitPrice)}</td><td>${money(lineTotal(item))}${priceAdjustmentPrintNote(item)}</td>` : ""}</tr>`).join("")}
   </tbody></table>`;
 }
 

@@ -297,6 +297,13 @@ assert(Math.abs(lineTotal(defaultPriceItem) - (11 * 125.5 + hollowAmount(default
   "Pricing: selected Hollow adds to the quotation line total");
 assert(itemWithCalculatedTotals(defaultPriceItem).hollowProductId === "hollow-1x2",
   "Pricing: selected Hollow persists in calculated items");
+defaultPriceItem.powdercoat = true;
+defaultPriceItem.powdercoatColor = "black";
+const blackPowdercoatTotal = lineTotal(defaultPriceItem);
+defaultPriceItem.powdercoatColor = "champagne";
+assert(lineTotal(defaultPriceItem) === blackPowdercoatTotal
+  && itemWithCalculatedTotals(defaultPriceItem).powdercoatColor === "champagne",
+  "Pricing: powdercoat color persists without changing the original 8% price");
 defaultPriceItem.manualFinalPrice = "800";
 assert(lineTotal(defaultPriceItem) === 800, "Pricing: manual final price should override the calculated line total");
 
@@ -2827,6 +2834,9 @@ const productionPrintHtml = productionSheetPrintHtml(productionPrintJob, product
 const hollowProductionHtml = productionSheetPrintHtml({ ...productionPrintJob, items: [{ ...productionPrintItems[0], hollowProductId: "hollow-1x2", hollowName: "Hollow 1x2", hollowRate: 10 }] }, productionPrintOrder);
 assert(hollowProductionHtml.includes("Hollow: Hollow 1x2"),
   "Production Sheet: selected Hollow specification must be visible to production staff");
+const powdercoatProductionHtml = productionSheetPrintHtml({ ...productionPrintJob, items: [{ ...productionPrintItems[0], powdercoat: true, powdercoatColor: "black" }] }, productionPrintOrder);
+assert(powdercoatProductionHtml.includes("Powdercoat Color: Black"),
+  "Production Sheet: selected powdercoat color must be visible to production staff");
 assert(productionPrintHtml.includes('class="production-sheet"')
   && productionPrintHtml.includes('data-production-job-id="production-print-exact"')
   && productionPrintHtml.includes('data-order-id="order-production-print-exact"'),

@@ -431,6 +431,7 @@ export function makeQuoteItem(productId) {
     installationLocation: "",
     openingDirection: "close_left",
     powdercoat: false,
+    powdercoatColor: "",
     powdercoatRate: 0.08,
     powdercoatAmount: 0,
     hollowProductId: "",
