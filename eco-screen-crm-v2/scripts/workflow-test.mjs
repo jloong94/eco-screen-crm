@@ -156,6 +156,7 @@ const {
   archiveQuotation,
   duplicateQuotation,
   quoteDocumentHtml,
+  renderItemCards,
   quotationArchiveEligibility,
   quotationProjectName,
   quotationListRowHtml,
@@ -279,6 +280,21 @@ runtimeEnv.VITE_SUPABASE_URL = "";
 runtimeEnv.VITE_SUPABASE_ANON_KEY = "";
 
 const defaultPriceItem = makeQuoteItem();
+const originalDocument = globalThis.document;
+const originalCurrentQuote = state.currentQuote;
+const itemContainer = { innerHTML: "", hidden: true };
+const itemCounter = { textContent: "" };
+globalThis.document = { querySelector: (selector) => selector === "#quoteItems" ? itemContainer : selector === "#itemsCount" ? itemCounter : null };
+state.currentQuote = { items: [{ ...defaultPriceItem, installationLocation: "Kitchen" }] };
+renderItemCards();
+assert(itemContainer.innerHTML.includes('value="Kitchen" selected') && itemContainer.innerHTML.includes('value="Other"'),
+  "Quotation: Installation Location offers preset choices");
+state.currentQuote.items[0].installationLocation = "Customer's staircase";
+renderItemCards();
+assert(itemContainer.innerHTML.includes('value="Other" selected') && itemContainer.innerHTML.includes("Customer&#039;s staircase"),
+  "Quotation: existing custom installation locations remain editable");
+state.currentQuote = originalCurrentQuote;
+globalThis.document = originalDocument;
 assert(Number(defaultPriceItem.unitPrice) > 0, "Pricing: selecting/defaulting a product should provide its selling price");
 defaultPriceItem.width = "1000";
 defaultPriceItem.height = "1000";

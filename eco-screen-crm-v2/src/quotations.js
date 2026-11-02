@@ -52,6 +52,7 @@ import { isActiveOrderRecord, isActiveWorkflowRecord, normalizeWorkflowStatus } 
 
 const quotationTabs = ["quoted", "follow_up", "won", "lost"];
 const quotationArchiveStatuses = new Set(["quoted", "follow_up", "lost"]);
+const installationLocations = ["Living", "Bedroom", "Kitchen", "Bathroom", "Balcony", "Dining Room"];
 let activeQuotationTab = "quoted";
 let quotationSearch = "";
 
@@ -198,6 +199,11 @@ function powdercoatColorOptions(value) {
   return unknown + canonicalSelectOptions(POWDERCOAT_COLOR_VALUES, value, normalizeColor, colorLabel);
 }
 
+function installationLocationOptions(value) {
+  const choice = installationLocations.includes(value) ? value : value ? "Other" : "";
+  return `<option value="" ${choice ? "" : "selected"}>${t("Select location")}</option>${installationLocations.map((location) => `<option value="${location}" ${choice === location ? "selected" : ""}>${t(location)}</option>`).join("")}<option value="Other" ${choice === "Other" ? "selected" : ""}>${t("Other Location")}</option>`;
+}
+
 function selectOptions(options, selectedValue) {
   return options.map((option) => `<option value="${option}" ${option === selectedValue ? "selected" : ""}>${statusLabel(option)}</option>`).join("");
 }
@@ -268,7 +274,8 @@ function itemCardHtml(item, index) {
         ${fieldInput(t("Quantity"), item.id, "quantity", item.quantity, "1", "numeric")}
         ${fieldSelect(t("Color"), item.id, "color", canonicalSelectOptions(COLOR_VALUES, item.color || "white", normalizeColor, colorLabel))}
         ${fieldSelect(t("Install Type / Inside Outside"), item.id, "installType", selectOptions(["Inside install", "Outside install", "Not sure / To confirm"], item.installType || "Not sure / To confirm"))}
-        ${fieldInput(t("Installation Location"), item.id, "installationLocation", item.installationLocation, t("Living"))}
+        ${fieldSelect(t("Installation Location"), item.id, "installationLocationChoice", installationLocationOptions(item.installationLocation))}
+        ${item.installationLocation && !installationLocations.includes(item.installationLocation) ? fieldInput(t("Other Location"), item.id, "installationLocation", item.installationLocation === "Other" ? "" : item.installationLocation, t("Enter installation location")) : ""}
         ${fieldSelect(t("Opening Direction"), item.id, "openingDirection", canonicalSelectOptions(OPENING_DIRECTION_VALUES, item.openingDirection || "close_left", normalizeOpeningDirection, openingDirectionLabel))}
         ${fieldSelect(t("Track Type"), item.id, "trackType", trackTypeOptions(item))}
         ${fieldInput(t("Track Size"), item.id, "trackSize", item.trackSize, "25mm")}
@@ -352,6 +359,11 @@ function updateItemFromEvent(event) {
     renderItemCards();
   } else if (field === "powdercoatColor") {
     item.powdercoatColor = normalizeColor(event.target.value);
+  } else if (field === "installationLocationChoice") {
+    item.installationLocation = event.target.value === "Other" ? "Other" : event.target.value;
+    renderItemCards();
+  } else if (field === "installationLocation") {
+    item.installationLocation = event.target.value || "Other";
   } else if (field === "hollowProductId") {
     const product = state.products.find((row) => row.id === event.target.value && row.category === "Hollow");
     item.hollowProductId = product?.id || "";
