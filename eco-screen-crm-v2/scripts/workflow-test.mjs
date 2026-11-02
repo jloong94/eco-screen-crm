@@ -289,6 +289,8 @@ state.currentQuote = { items: [{ ...defaultPriceItem, installationLocation: "Kit
 renderItemCards();
 assert(itemContainer.innerHTML.includes('value="Kitchen" selected') && itemContainer.innerHTML.includes('value="Other"'),
   "Quotation: Installation Location offers preset choices");
+assert(itemContainer.innerHTML.includes('data-field="installationLocation" value="Kitchen"'),
+  "Quotation: preset locations remain directly editable");
 assert(["Master", "Bedroom 1", "Bedroom 4", "Bathroom 1", "Bathroom 4", "Yard", "1ft Room", "2ft Room"].every((location) => itemContainer.innerHTML.includes(`value="${location}"`)),
   "Quotation: requested room and numbered bathroom choices are available");
 state.currentQuote.items[0].installationLocation = "Customer's staircase";

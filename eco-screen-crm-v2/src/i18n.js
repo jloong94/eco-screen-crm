@@ -295,6 +295,7 @@ const zh = {
   "2ft Room": "2ft 房间",
   "Other Location": "其他位置",
   "Enter installation location": "填写安装位置",
+  "Location (editable)": "位置（可自行填写）",
   "Select location": "选择位置",
   "Opening Direction": "开向",
   "Handle Position": "把手位置",

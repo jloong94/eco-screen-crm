@@ -279,7 +279,7 @@ function itemCardHtml(item, index) {
         ${fieldSelect(t("Color"), item.id, "color", canonicalSelectOptions(COLOR_VALUES, item.color || "white", normalizeColor, colorLabel))}
         ${fieldSelect(t("Install Type / Inside Outside"), item.id, "installType", selectOptions(["Inside install", "Outside install", "Not sure / To confirm"], item.installType || "Not sure / To confirm"))}
         ${fieldSelect(t("Installation Location"), item.id, "installationLocationChoice", installationLocationOptions(item.installationLocation))}
-        ${item.installationLocation && !installationLocations.includes(item.installationLocation) ? fieldInput(t("Other Location"), item.id, "installationLocation", item.installationLocation === "Other" ? "" : item.installationLocation, t("Enter installation location")) : ""}
+        ${fieldInput(t("Location (editable)"), item.id, "installationLocation", item.installationLocation === "Other" ? "" : item.installationLocation, t("Enter installation location"))}
         ${fieldSelect(t("Opening Direction"), item.id, "openingDirection", canonicalSelectOptions(OPENING_DIRECTION_VALUES, item.openingDirection || "close_left", normalizeOpeningDirection, openingDirectionLabel))}
         ${fieldSelect(t("Track Type"), item.id, "trackType", trackTypeOptions(item))}
         ${fieldInput(t("Track Size"), item.id, "trackSize", item.trackSize, "25mm")}
@@ -364,10 +364,15 @@ function updateItemFromEvent(event) {
   } else if (field === "powdercoatColor") {
     item.powdercoatColor = normalizeColor(event.target.value);
   } else if (field === "installationLocationChoice") {
-    item.installationLocation = event.target.value === "Other" ? "Other" : event.target.value;
-    renderItemCards();
+    item.installationLocation = event.target.value === "Other" ? "" : event.target.value;
+    const locationInput = document.querySelector(`[data-item-id="${item.id}"][data-field="installationLocation"]`);
+    if (locationInput) locationInput.value = item.installationLocation;
+    if (event.target.value === "Other") locationInput?.focus();
   } else if (field === "installationLocation") {
-    item.installationLocation = event.target.value || "Other";
+    item.installationLocation = event.target.value;
+    const locationChoice = document.querySelector(`[data-item-id="${item.id}"][data-field="installationLocationChoice"]`);
+    if (locationChoice) locationChoice.value = installationLocations.includes(item.installationLocation)
+      ? item.installationLocation : item.installationLocation ? "Other" : "";
   } else if (field === "hollowProductId") {
     const product = state.products.find((row) => row.id === event.target.value && row.category === "Hollow");
     item.hollowProductId = product?.id || "";
