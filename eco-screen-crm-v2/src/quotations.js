@@ -52,7 +52,11 @@ import { isActiveOrderRecord, isActiveWorkflowRecord, normalizeWorkflowStatus } 
 
 const quotationTabs = ["quoted", "follow_up", "won", "lost"];
 const quotationArchiveStatuses = new Set(["quoted", "follow_up", "lost"]);
-const installationLocations = ["Living", "Bedroom", "Kitchen", "Bathroom", "Balcony", "Dining Room"];
+const installationLocations = [
+  "Living", "Dining Room", "Master", "Bedroom", "Bedroom 1", "Bedroom 2", "Bedroom 3", "Bedroom 4",
+  "Kitchen", "Bathroom", "Bathroom 1", "Bathroom 2", "Bathroom 3", "Bathroom 4",
+  "Balcony", "Yard", "1ft Room", "2ft Room"
+];
 let activeQuotationTab = "quoted";
 let quotationSearch = "";
 
@@ -201,7 +205,7 @@ function powdercoatColorOptions(value) {
 
 function installationLocationOptions(value) {
   const choice = installationLocations.includes(value) ? value : value ? "Other" : "";
-  return `<option value="" ${choice ? "" : "selected"}>${t("Select location")}</option>${installationLocations.map((location) => `<option value="${location}" ${choice === location ? "selected" : ""}>${t(location)}</option>`).join("")}<option value="Other" ${choice === "Other" ? "selected" : ""}>${t("Other Location")}</option>`;
+  return `<option value="" ${choice ? "" : "selected"}>${t("Select location")}</option>${installationLocations.map((location) => `<option value="${location}" ${choice === location ? "selected" : ""}>${t(location === "Dining Room" ? "Dining" : location)}</option>`).join("")}<option value="Other" ${choice === "Other" ? "selected" : ""}>${t("Other Location")}</option>`;
 }
 
 function selectOptions(options, selectedValue) {
