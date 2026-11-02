@@ -37,8 +37,12 @@ export function powdercoatAmount(item) {
   return isPowdercoatSelected(item) ? baseLineTotal(item) * toNumber(item.powdercoatRate || 0.08) : 0;
 }
 
+export function hollowAmount(item) {
+  return item.hollowProductId ? actualSqft(item) * toNumber(item.hollowRate) * toNumber(item.quantity) : 0;
+}
+
 export function autoCalculatedPrice(item) {
-  return baseLineTotal(item) + powdercoatAmount(item);
+  return baseLineTotal(item) + powdercoatAmount(item) + hollowAmount(item);
 }
 
 export function hasManualFinalPrice(item) {
@@ -52,13 +56,15 @@ export function lineTotal(item) {
 export function itemWithCalculatedTotals(item) {
   const base = baseLineTotal(item);
   const powdercoat = powdercoatAmount(item);
-  const autoPrice = base + powdercoat;
+  const hollow = hollowAmount(item);
+  const autoPrice = base + powdercoat + hollow;
   return {
     ...item,
     powdercoat: isPowdercoatSelected(item),
     powdercoatRate: toNumber(item.powdercoatRate || 0.08),
     baseLineTotal: base,
     powdercoatAmount: powdercoat,
+    hollowAmount: hollow,
     autoCalculatedPrice: autoPrice,
     manualFinalPrice: item.manualFinalPrice ?? "",
     priceAdjustmentRemark: item.priceAdjustmentRemark || "",

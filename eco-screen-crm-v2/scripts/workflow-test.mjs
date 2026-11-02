@@ -44,7 +44,7 @@ const {
 state.language = "en";
 
 const { mergeRows, safeSyncWithCloud } = await import("../src/cloudSync.js");
-const { lineTotal } = await import("../src/calculations.js");
+const { actualSqft, hollowAmount, itemWithCalculatedTotals, lineTotal } = await import("../src/calculations.js");
 const {
   archiveDuplicateGroup,
   archiveProductionDuplicateGroup,
@@ -287,6 +287,16 @@ defaultPriceItem.minimumSqft = 0;
 defaultPriceItem.unitPrice = "125.50";
 const customUnitPriceTotal = lineTotal(defaultPriceItem);
 assert(customUnitPriceTotal > 0, "Pricing: manually edited unit price should calculate a line total");
+defaultPriceItem.minimumSqft = 11;
+defaultPriceItem.hollowProductId = "hollow-1x2";
+defaultPriceItem.hollowName = "Hollow 1x2";
+defaultPriceItem.hollowRate = 10;
+assert(Math.abs(hollowAmount(defaultPriceItem) - actualSqft(defaultPriceItem) * 10) < 0.000001,
+  "Pricing: Hollow uses its original sqft rate without the main product minimum");
+assert(Math.abs(lineTotal(defaultPriceItem) - (11 * 125.5 + hollowAmount(defaultPriceItem))) < 0.000001,
+  "Pricing: selected Hollow adds to the quotation line total");
+assert(itemWithCalculatedTotals(defaultPriceItem).hollowProductId === "hollow-1x2",
+  "Pricing: selected Hollow persists in calculated items");
 defaultPriceItem.manualFinalPrice = "800";
 assert(lineTotal(defaultPriceItem) === 800, "Pricing: manual final price should override the calculated line total");
 
@@ -2814,6 +2824,9 @@ const productionPrintHtml = productionSheetPrintHtml(productionPrintJob, product
   companyName: "Eco Screen Sdn Bhd",
   companyPhone: "0195763499"
 }, productionPrintSource);
+const hollowProductionHtml = productionSheetPrintHtml({ ...productionPrintJob, items: [{ ...productionPrintItems[0], hollowProductId: "hollow-1x2", hollowName: "Hollow 1x2", hollowRate: 10 }] }, productionPrintOrder);
+assert(hollowProductionHtml.includes("Hollow: Hollow 1x2"),
+  "Production Sheet: selected Hollow specification must be visible to production staff");
 assert(productionPrintHtml.includes('class="production-sheet"')
   && productionPrintHtml.includes('data-production-job-id="production-print-exact"')
   && productionPrintHtml.includes('data-order-id="order-production-print-exact"'),

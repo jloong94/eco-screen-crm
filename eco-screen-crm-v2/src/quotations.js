@@ -19,6 +19,7 @@ import {
   baseLineTotal,
   chargeableSqft,
   hasManualFinalPrice,
+  hollowAmount,
   itemWithCalculatedTotals,
   lineTotal,
   money,
@@ -58,7 +59,7 @@ const copiedItemFields = [
   "width", "height", "quantity", "measurements", "color", "trackType",
   "trackOpening", "meshType", "meshMaterial", "material", "installType",
   "trackSize", "handleHeight", "handlePosition", "installationLocation",
-  "openingDirection", "powdercoat", "powdercoatRate", "lock", "description",
+  "openingDirection", "powdercoat", "powdercoatRate", "hollowProductId", "hollowName", "hollowRate", "lock", "description",
   "label", "remark", "remarks", "unitPrice", "manualFinalPrice",
   "priceAdjustmentRemark", "discount", "discountType"
 ];
@@ -176,10 +177,19 @@ export function addItem() {
 }
 
 function productOptions(selectedId) {
-  const options = activeProducts();
+  const options = activeProducts().filter((product) => product.category !== "Hollow");
   const selected = state.products.find((product) => product.id === selectedId);
   if (selected && !options.some((product) => product.id === selected.id)) options.push(selected);
   return options.map((product) => `<option value="${product.id}" ${product.id === selectedId ? "selected" : ""}>${escapeHtml(product.name)}${product.active === false ? ` (${t("Inactive")})` : ""}</option>`).join("");
+}
+
+function hollowOptions(item) {
+  const products = state.products.filter((product) => product.category === "Hollow" && product.active !== false);
+  const selected = state.products.find((product) => product.id === item.hollowProductId);
+  if (selected && !products.some((product) => product.id === selected.id)) products.push(selected);
+  const legacy = item.hollowProductId && !products.some((product) => product.id === item.hollowProductId)
+    ? `<option value="${escapeHtml(item.hollowProductId)}" selected>${escapeHtml(item.hollowName || item.hollowProductId)}</option>` : "";
+  return `<option value="" ${item.hollowProductId ? "" : "selected"}>${t("No")}</option>${legacy}${products.map((product) => `<option value="${escapeHtml(product.id)}" ${item.hollowProductId === product.id ? "selected" : ""}>${escapeHtml(product.name)} (${money(product.ratePerSqft ?? product.sellingPrice)}/${t("Sqft")})</option>`).join("")}`;
 }
 
 function selectOptions(options, selectedValue) {
@@ -265,6 +275,7 @@ function itemCardHtml(item, index) {
             <option value="true" ${item.powdercoat ? "selected" : ""}>${t("Yes")}</option>
           </select>
         </label>
+        ${fieldSelect(t("Hollow"), item.id, "hollowProductId", hollowOptions(item))}
         <label>${t("Manual Final Price")}
           <input inputmode="decimal" data-item-id="${item.id}" data-field="manualFinalPrice" value="${escapeHtml(item.manualFinalPrice ?? "")}" placeholder="${t("Optional final RM")}" />
         </label>
@@ -281,6 +292,8 @@ function itemCardHtml(item, index) {
           <strong data-line-id="${item.id}" data-line-field="base">${money(baseLineTotal(item))}</strong>
           <span>${t("Powdercoat 8%")}</span>
           <strong data-line-id="${item.id}" data-line-field="powdercoat">${money(powdercoatAmount(item))}</strong>
+          <span>${t("Hollow")}</span>
+          <strong data-line-id="${item.id}" data-line-field="hollow">${money(hollowAmount(item))}</strong>
           <span>${t("Auto Calculated Price")}</span>
           <strong data-line-id="${item.id}" data-line-field="auto">${money(autoCalculatedPrice(item))}</strong>
           <span>${t("Line Total")}</span>
@@ -326,6 +339,11 @@ function updateItemFromEvent(event) {
   if (field === "powdercoat") {
     item.powdercoat = event.target.value === "true";
     item.powdercoatRate = Number(item.powdercoatRate || 0.08);
+  } else if (field === "hollowProductId") {
+    const product = state.products.find((row) => row.id === event.target.value && row.category === "Hollow");
+    item.hollowProductId = product?.id || "";
+    item.hollowName = product?.name || "";
+    item.hollowRate = Number(product?.ratePerSqft ?? product?.sellingPrice ?? 0);
   } else if (field === "color") {
     item.color = normalizeColor(event.target.value);
   } else if (field === "openingDirection") {
@@ -344,12 +362,14 @@ function updateLineCalculation(item) {
   const area = document.querySelector(`[data-line-id="${item.id}"][data-line-field="area"]`);
   const base = document.querySelector(`[data-line-id="${item.id}"][data-line-field="base"]`);
   const powdercoat = document.querySelector(`[data-line-id="${item.id}"][data-line-field="powdercoat"]`);
+  const hollow = document.querySelector(`[data-line-id="${item.id}"][data-line-field="hollow"]`);
   const auto = document.querySelector(`[data-line-id="${item.id}"][data-line-field="auto"]`);
   const total = document.querySelector(`[data-line-id="${item.id}"][data-line-field="total"]`);
   item.autoCalculatedPrice = autoCalculatedPrice(item);
   if (area) area.textContent = chargeableSqft(item).toFixed(2);
   if (base) base.textContent = money(baseLineTotal(item));
   if (powdercoat) powdercoat.textContent = money(powdercoatAmount(item));
+  if (hollow) hollow.textContent = money(hollowAmount(item));
   if (auto) auto.textContent = money(autoCalculatedPrice(item));
   if (total) total.textContent = money(lineTotal(item));
 }
@@ -392,6 +412,9 @@ function duplicateQuoteItem(sourceItem = {}, { copyPrices, copyRemarks }) {
     item.discount = 0;
     item.discountType = "";
     item.powdercoatRate = 0;
+    item.hollowProductId = "";
+    item.hollowName = "";
+    item.hollowRate = 0;
   }
   if (!copyRemarks) {
     item.remark = "";
@@ -1122,7 +1145,8 @@ function quoteItemDetailLinesHtml(item) {
     [t("Handle Height"), item.handleHeight],
     [t("Track Type"), item.trackType || item.trackOpening],
     [t("Mesh / Net Type"), meshValue(item)],
-    [t("Powdercoat / Powercoat"), item.powdercoat ? `${t("Yes")} (${money(powdercoatAmount(item))})` : ""]
+    [t("Powdercoat / Powercoat"), item.powdercoat ? `${t("Yes")} (${money(powdercoatAmount(item))})` : ""],
+    [t("Hollow"), item.hollowProductId ? `${item.hollowName || item.hollowProductId} (${money(hollowAmount(item))})` : ""]
   ];
   return details.filter(([, value]) => value).map(([label, value]) => `<small>${label}: ${escapeHtml(value)}</small>`).join("") || `<small>${t("Color")}: -</small>`;
 }

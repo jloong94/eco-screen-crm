@@ -317,6 +317,7 @@ const zh = {
   "Reason for price adjustment": "价格调整原因",
   "Site note, special request": "现场备注或特别要求",
   "Powdercoat 8%": "喷粉 8%",
+  Hollow: "方管",
   "Eco Screen CRM V2 - Mobile Production": "Eco Screen CRM V2 - 移动生产",
   "Module navigation": "功能导航",
   "Sync Now": "立即同步",
