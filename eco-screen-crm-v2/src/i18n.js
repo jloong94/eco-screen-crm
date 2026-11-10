@@ -344,6 +344,7 @@ const zh = {
   "Powdercoat 8%": "喷粉 8%",
   "Powdercoat Color": "喷粉颜色",
   Hollow: "方管",
+  "Hollow Pieces": "方管支数",
   "Eco Screen CRM V2 - Mobile Production": "Eco Screen CRM V2 - 移动生产",
   "Module navigation": "功能导航",
   "Sync Now": "立即同步",

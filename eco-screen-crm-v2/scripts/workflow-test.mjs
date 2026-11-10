@@ -297,6 +297,11 @@ state.currentQuote.items[0].installationLocation = "Customer's staircase";
 renderItemCards();
 assert(itemContainer.innerHTML.includes('value="Other" selected') && itemContainer.innerHTML.includes("Customer&#039;s staircase"),
   "Quotation: existing custom installation locations remain editable");
+state.currentQuote.items[0].hollowProductId = "hollow-1x2";
+state.currentQuote.items[0].hollowPieces = 4;
+renderItemCards();
+assert(itemContainer.innerHTML.includes('data-field="hollowPieces"') && itemContainer.innerHTML.includes('value="4" selected'),
+  "Quotation: selected Hollow offers one through four pieces");
 state.currentQuote = originalCurrentQuote;
 globalThis.document = originalDocument;
 assert(Number(defaultPriceItem.unitPrice) > 0, "Pricing: selecting/defaulting a product should provide its selling price");
@@ -313,10 +318,16 @@ defaultPriceItem.hollowName = "Hollow 1x2";
 defaultPriceItem.hollowRate = 10;
 assert(Math.abs(hollowAmount(defaultPriceItem) - actualSqft(defaultPriceItem) * 10) < 0.000001,
   "Pricing: Hollow uses its original sqft rate without the main product minimum");
+defaultPriceItem.hollowPieces = 3;
+assert(Math.abs(hollowAmount(defaultPriceItem) - actualSqft(defaultPriceItem) * 10 * 3) < 0.000001,
+  "Pricing: three Hollow pieces triple the original Hollow amount");
 assert(Math.abs(lineTotal(defaultPriceItem) - (11 * 125.5 + hollowAmount(defaultPriceItem))) < 0.000001,
   "Pricing: selected Hollow adds to the quotation line total");
-assert(itemWithCalculatedTotals(defaultPriceItem).hollowProductId === "hollow-1x2",
-  "Pricing: selected Hollow persists in calculated items");
+assert(itemWithCalculatedTotals(defaultPriceItem).hollowProductId === "hollow-1x2"
+  && itemWithCalculatedTotals(defaultPriceItem).hollowPieces === 3,
+  "Pricing: selected Hollow specification and piece count persist in calculated items");
+assert(Math.abs(hollowAmount({ ...defaultPriceItem, hollowPieces: undefined }) - actualSqft(defaultPriceItem) * 10) < 0.000001,
+  "Pricing: existing Hollow items without a piece count remain one piece");
 defaultPriceItem.powdercoat = true;
 defaultPriceItem.powdercoatColor = "black";
 const blackPowdercoatTotal = lineTotal(defaultPriceItem);
@@ -2851,9 +2862,9 @@ const productionPrintHtml = productionSheetPrintHtml(productionPrintJob, product
   companyName: "Eco Screen Sdn Bhd",
   companyPhone: "0195763499"
 }, productionPrintSource);
-const hollowProductionHtml = productionSheetPrintHtml({ ...productionPrintJob, items: [{ ...productionPrintItems[0], hollowProductId: "hollow-1x2", hollowName: "Hollow 1x2", hollowRate: 10 }] }, productionPrintOrder);
-assert(hollowProductionHtml.includes("Hollow: Hollow 1x2"),
-  "Production Sheet: selected Hollow specification must be visible to production staff");
+const hollowProductionHtml = productionSheetPrintHtml({ ...productionPrintJob, items: [{ ...productionPrintItems[0], hollowProductId: "hollow-1x2", hollowName: "Hollow 1x2", hollowRate: 10, hollowPieces: 3 }] }, productionPrintOrder);
+assert(hollowProductionHtml.includes("Hollow: Hollow 1x2 × 3"),
+  "Production Sheet: selected Hollow specification and piece count must be visible to production staff");
 const powdercoatProductionHtml = productionSheetPrintHtml({ ...productionPrintJob, items: [{ ...productionPrintItems[0], powdercoat: true, powdercoatColor: "black" }] }, productionPrintOrder);
 assert(powdercoatProductionHtml.includes("Powdercoat Color: Black"),
   "Production Sheet: selected powdercoat color must be visible to production staff");

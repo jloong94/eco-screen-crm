@@ -37,8 +37,13 @@ export function powdercoatAmount(item) {
   return isPowdercoatSelected(item) ? baseLineTotal(item) * toNumber(item.powdercoatRate || 0.08) : 0;
 }
 
+export function hollowPieceCount(item) {
+  const count = Number(item.hollowPieces);
+  return Number.isInteger(count) && count >= 1 && count <= 4 ? count : 1;
+}
+
 export function hollowAmount(item) {
-  return item.hollowProductId ? actualSqft(item) * toNumber(item.hollowRate) * toNumber(item.quantity) : 0;
+  return item.hollowProductId ? actualSqft(item) * toNumber(item.hollowRate) * toNumber(item.quantity) * hollowPieceCount(item) : 0;
 }
 
 export function autoCalculatedPrice(item) {
@@ -64,6 +69,7 @@ export function itemWithCalculatedTotals(item) {
     powdercoatRate: toNumber(item.powdercoatRate || 0.08),
     baseLineTotal: base,
     powdercoatAmount: powdercoat,
+    hollowPieces: hollowPieceCount(item),
     hollowAmount: hollow,
     autoCalculatedPrice: autoPrice,
     manualFinalPrice: item.manualFinalPrice ?? "",

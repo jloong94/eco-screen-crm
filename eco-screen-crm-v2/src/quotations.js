@@ -20,6 +20,7 @@ import {
   chargeableSqft,
   hasManualFinalPrice,
   hollowAmount,
+  hollowPieceCount,
   itemWithCalculatedTotals,
   lineTotal,
   money,
@@ -65,7 +66,7 @@ const copiedItemFields = [
   "width", "height", "quantity", "measurements", "color", "trackType",
   "trackOpening", "meshType", "meshMaterial", "material", "installType",
   "trackSize", "handleHeight", "handlePosition", "installationLocation",
-  "openingDirection", "powdercoat", "powdercoatColor", "powdercoatRate", "hollowProductId", "hollowName", "hollowRate", "lock", "description",
+  "openingDirection", "powdercoat", "powdercoatColor", "powdercoatRate", "hollowProductId", "hollowName", "hollowRate", "hollowPieces", "lock", "description",
   "label", "remark", "remarks", "unitPrice", "manualFinalPrice",
   "priceAdjustmentRemark", "discount", "discountType"
 ];
@@ -294,6 +295,7 @@ function itemCardHtml(item, index) {
         </label>
         ${item.powdercoat ? fieldSelect(t("Powdercoat Color"), item.id, "powdercoatColor", powdercoatColorOptions(item.powdercoatColor)) : ""}
         ${fieldSelect(t("Hollow"), item.id, "hollowProductId", hollowOptions(item))}
+        ${item.hollowProductId ? fieldSelect(t("Hollow Pieces"), item.id, "hollowPieces", [1, 2, 3, 4].map((count) => `<option value="${count}" ${hollowPieceCount(item) === count ? "selected" : ""}>${count}</option>`).join("")) : ""}
         <label>${t("Manual Final Price")}
           <input inputmode="decimal" data-item-id="${item.id}" data-field="manualFinalPrice" value="${escapeHtml(item.manualFinalPrice ?? "")}" placeholder="${t("Optional final RM")}" />
         </label>
@@ -378,6 +380,10 @@ function updateItemFromEvent(event) {
     item.hollowProductId = product?.id || "";
     item.hollowName = product?.name || "";
     item.hollowRate = Number(product?.ratePerSqft ?? product?.sellingPrice ?? 0);
+    item.hollowPieces = hollowPieceCount(item);
+    renderItemCards();
+  } else if (field === "hollowPieces") {
+    item.hollowPieces = Number(event.target.value);
   } else if (field === "color") {
     item.color = normalizeColor(event.target.value);
   } else if (field === "openingDirection") {
@@ -449,6 +455,7 @@ function duplicateQuoteItem(sourceItem = {}, { copyPrices, copyRemarks }) {
     item.hollowProductId = "";
     item.hollowName = "";
     item.hollowRate = 0;
+    item.hollowPieces = 1;
   }
   if (!copyRemarks) {
     item.remark = "";
@@ -1181,7 +1188,7 @@ function quoteItemDetailLinesHtml(item) {
     [t("Mesh / Net Type"), meshValue(item)],
     [t("Powdercoat / Powercoat"), item.powdercoat ? `${t("Yes")} (${money(powdercoatAmount(item))})` : ""],
     [t("Powdercoat Color"), item.powdercoat && item.powdercoatColor ? colorLabel(item.powdercoatColor) : ""],
-    [t("Hollow"), item.hollowProductId ? `${item.hollowName || item.hollowProductId} (${money(hollowAmount(item))})` : ""]
+    [t("Hollow"), item.hollowProductId ? `${item.hollowName || item.hollowProductId} × ${hollowPieceCount(item)} (${money(hollowAmount(item))})` : ""]
   ];
   return details.filter(([, value]) => value).map(([label, value]) => `<small>${label}: ${escapeHtml(value)}</small>`).join("") || `<small>${t("Color")}: -</small>`;
 }

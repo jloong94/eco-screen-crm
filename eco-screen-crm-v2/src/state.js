@@ -437,6 +437,7 @@ export function makeQuoteItem(productId) {
     hollowProductId: "",
     hollowName: "",
     hollowRate: 0,
+    hollowPieces: 1,
     baseLineTotal: 0,
     lineTotal: 0,
     remark: "",
