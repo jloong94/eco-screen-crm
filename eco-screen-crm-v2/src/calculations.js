@@ -43,7 +43,12 @@ export function hollowPieceCount(item) {
 }
 
 export function hollowAmount(item) {
-  return item.hollowProductId ? actualSqft(item) * toNumber(item.hollowRate) * toNumber(item.quantity) * hollowPieceCount(item) : 0;
+  if (!item.hollowProductId) return 0;
+  const rate = toNumber(item.hollowRate);
+  const pieces = hollowPieceCount(item);
+  return item.hollowPricingUnit === "piece"
+    ? rate * pieces
+    : actualSqft(item) * rate * toNumber(item.quantity) * pieces;
 }
 
 export function autoCalculatedPrice(item) {

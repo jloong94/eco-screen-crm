@@ -7747,7 +7747,7 @@ function amendmentUnsafeProductFieldsChanged(fields = []) {
 }
 
 function amendmentItemPayload(items = []) {
-  const fields = ["id", "productId", "productName", "category", "calculationType", "minimumSqft", "width", "height", "measurements", "quantity", "color", "openingDirection", "installationLocation", "installType", "trackSize", "trackType", "trackOpening", "meshType", "meshMaterial", "material", "handleHeight", "lock", "unitPrice", "manualFinalPrice", "priceAdjustmentRemark", "discount", "discountType", "powdercoat", "powdercoatColor", "powdercoatRate", "hollowProductId", "hollowName", "hollowRate", "hollowPieces", "remark", "remarks"];
+  const fields = ["id", "productId", "productName", "category", "calculationType", "minimumSqft", "width", "height", "measurements", "quantity", "color", "openingDirection", "installationLocation", "installType", "trackSize", "trackType", "trackOpening", "meshType", "meshMaterial", "material", "handleHeight", "lock", "unitPrice", "manualFinalPrice", "priceAdjustmentRemark", "discount", "discountType", "powdercoat", "powdercoatColor", "powdercoatRate", "hollowProductId", "hollowName", "hollowRate", "hollowPieces", "hollowPricingUnit", "remark", "remarks"];
   return (Array.isArray(items) ? items : []).map((item) => Object.fromEntries(fields.map((field) => [field, item?.[field] ?? ""])));
 }
 

@@ -302,6 +302,10 @@ state.currentQuote.items[0].hollowPieces = 4;
 renderItemCards();
 assert(itemContainer.innerHTML.includes('data-field="hollowPieces"') && itemContainer.innerHTML.includes('value="4" selected'),
   "Quotation: selected Hollow offers one through four pieces");
+state.currentQuote.items[0].hollowPricingUnit = undefined;
+renderItemCards();
+assert(itemContainer.innerHTML.includes('data-apply-hollow-price='),
+  "Quotation: a saved Hollow item can explicitly switch to the corrected per-piece price");
 state.currentQuote = originalCurrentQuote;
 globalThis.document = originalDocument;
 assert(Number(defaultPriceItem.unitPrice) > 0, "Pricing: selecting/defaulting a product should provide its selling price");
@@ -316,18 +320,24 @@ defaultPriceItem.minimumSqft = 11;
 defaultPriceItem.hollowProductId = "hollow-1x2";
 defaultPriceItem.hollowName = "Hollow 1x2";
 defaultPriceItem.hollowRate = 10;
-assert(Math.abs(hollowAmount(defaultPriceItem) - actualSqft(defaultPriceItem) * 10) < 0.000001,
-  "Pricing: Hollow uses its original sqft rate without the main product minimum");
+assert(hollowAmount(defaultPriceItem) === 10,
+  "Pricing: one Hollow piece costs exactly its saved unit price");
+assert(hollowAmount({ ...defaultPriceItem, hollowPieces: 2 }) === 20
+  && hollowAmount({ ...defaultPriceItem, hollowPieces: 4 }) === 40,
+  "Pricing: two and four Hollow pieces cost exactly two and four unit prices");
 defaultPriceItem.hollowPieces = 3;
-assert(Math.abs(hollowAmount(defaultPriceItem) - actualSqft(defaultPriceItem) * 10 * 3) < 0.000001,
-  "Pricing: three Hollow pieces triple the original Hollow amount");
+assert(hollowAmount(defaultPriceItem) === 30
+  && hollowAmount({ ...defaultPriceItem, width: 3000, quantity: 4 }) === 30,
+  "Pricing: three Hollow pieces cost three unit prices regardless of size or product quantity");
 assert(Math.abs(lineTotal(defaultPriceItem) - (11 * 125.5 + hollowAmount(defaultPriceItem))) < 0.000001,
   "Pricing: selected Hollow adds to the quotation line total");
 assert(itemWithCalculatedTotals(defaultPriceItem).hollowProductId === "hollow-1x2"
   && itemWithCalculatedTotals(defaultPriceItem).hollowPieces === 3,
   "Pricing: selected Hollow specification and piece count persist in calculated items");
-assert(Math.abs(hollowAmount({ ...defaultPriceItem, hollowPieces: undefined }) - actualSqft(defaultPriceItem) * 10) < 0.000001,
-  "Pricing: existing Hollow items without a piece count remain one piece");
+assert(hollowAmount({ ...defaultPriceItem, hollowPieces: undefined }) === 10,
+  "Pricing: new Hollow items without a piece count remain one piece");
+assert(Math.abs(hollowAmount({ ...defaultPriceItem, hollowPricingUnit: undefined }) - actualSqft(defaultPriceItem) * 10 * 3) < 0.000001,
+  "Pricing: saved Hollow quotes without a pricing unit retain their original amount");
 defaultPriceItem.powdercoat = true;
 defaultPriceItem.powdercoatColor = "black";
 const blackPowdercoatTotal = lineTotal(defaultPriceItem);

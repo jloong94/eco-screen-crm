@@ -66,7 +66,7 @@ const copiedItemFields = [
   "width", "height", "quantity", "measurements", "color", "trackType",
   "trackOpening", "meshType", "meshMaterial", "material", "installType",
   "trackSize", "handleHeight", "handlePosition", "installationLocation",
-  "openingDirection", "powdercoat", "powdercoatColor", "powdercoatRate", "hollowProductId", "hollowName", "hollowRate", "hollowPieces", "lock", "description",
+  "openingDirection", "powdercoat", "powdercoatColor", "powdercoatRate", "hollowProductId", "hollowName", "hollowRate", "hollowPieces", "hollowPricingUnit", "lock", "description",
   "label", "remark", "remarks", "unitPrice", "manualFinalPrice",
   "priceAdjustmentRemark", "discount", "discountType"
 ];
@@ -107,7 +107,7 @@ export function attachQuotationEvents() {
   document.querySelector("#pdfQuoteButton").addEventListener("click", printQuote);
   document.querySelector("#quoteItems").addEventListener("input", updateItemFromEvent);
   document.querySelector("#quoteItems").addEventListener("change", updateItemFromEvent);
-  document.querySelector("#quoteItems").addEventListener("click", removeItemFromEvent);
+  document.querySelector("#quoteItems").addEventListener("click", handleItemClick);
 }
 
 function updateQuoteHeaderFromEvent(event) {
@@ -196,7 +196,7 @@ function hollowOptions(item) {
   if (selected && !products.some((product) => product.id === selected.id)) products.push(selected);
   const legacy = item.hollowProductId && !products.some((product) => product.id === item.hollowProductId)
     ? `<option value="${escapeHtml(item.hollowProductId)}" selected>${escapeHtml(item.hollowName || item.hollowProductId)}</option>` : "";
-  return `<option value="" ${item.hollowProductId ? "" : "selected"}>${t("No")}</option>${legacy}${products.map((product) => `<option value="${escapeHtml(product.id)}" ${item.hollowProductId === product.id ? "selected" : ""}>${escapeHtml(product.name)} (${money(product.ratePerSqft ?? product.sellingPrice)}/${t("Sqft")})</option>`).join("")}`;
+  return `<option value="" ${item.hollowProductId ? "" : "selected"}>${t("No")}</option>${legacy}${products.map((product) => `<option value="${escapeHtml(product.id)}" ${item.hollowProductId === product.id ? "selected" : ""}>${escapeHtml(product.name)} (${money(product.sellingPrice ?? product.ratePerSqft)}/${t("Piece")})</option>`).join("")}`;
 }
 
 function powdercoatColorOptions(value) {
@@ -296,6 +296,7 @@ function itemCardHtml(item, index) {
         ${item.powdercoat ? fieldSelect(t("Powdercoat Color"), item.id, "powdercoatColor", powdercoatColorOptions(item.powdercoatColor)) : ""}
         ${fieldSelect(t("Hollow"), item.id, "hollowProductId", hollowOptions(item))}
         ${item.hollowProductId ? fieldSelect(t("Hollow Pieces"), item.id, "hollowPieces", [1, 2, 3, 4].map((count) => `<option value="${count}" ${hollowPieceCount(item) === count ? "selected" : ""}>${count}</option>`).join("")) : ""}
+        ${item.hollowProductId && item.hollowPricingUnit !== "piece" ? `<button class="btn" type="button" data-apply-hollow-price="${item.id}">${t("Apply per-piece Hollow price")}</button>` : ""}
         <label>${t("Manual Final Price")}
           <input inputmode="decimal" data-item-id="${item.id}" data-field="manualFinalPrice" value="${escapeHtml(item.manualFinalPrice ?? "")}" placeholder="${t("Optional final RM")}" />
         </label>
@@ -379,11 +380,14 @@ function updateItemFromEvent(event) {
     const product = state.products.find((row) => row.id === event.target.value && row.category === "Hollow");
     item.hollowProductId = product?.id || "";
     item.hollowName = product?.name || "";
-    item.hollowRate = Number(product?.ratePerSqft ?? product?.sellingPrice ?? 0);
+    item.hollowRate = Number(product?.sellingPrice ?? product?.ratePerSqft ?? 0);
     item.hollowPieces = hollowPieceCount(item);
+    item.hollowPricingUnit = "piece";
     renderItemCards();
   } else if (field === "hollowPieces") {
     item.hollowPieces = Number(event.target.value);
+    item.hollowPricingUnit = "piece";
+    renderItemCards();
   } else if (field === "color") {
     item.color = normalizeColor(event.target.value);
   } else if (field === "openingDirection") {
@@ -414,7 +418,17 @@ function updateLineCalculation(item) {
   if (total) total.textContent = money(lineTotal(item));
 }
 
-function removeItemFromEvent(event) {
+function handleItemClick(event) {
+  const upgradeId = event.target.dataset.applyHollowPrice;
+  if (upgradeId) {
+    const item = ensureCurrentQuote().items.find((row) => row.id === upgradeId);
+    if (!item?.hollowProductId) return;
+    item.hollowPricingUnit = "piece";
+    renderItemCards();
+    updateQuoteSummary();
+    setSaveStatus("Hollow price updated. Save the quotation to keep this change.", "info");
+    return;
+  }
   const id = event.target.dataset.removeItem;
   if (!id) return;
   const quote = ensureCurrentQuote();
@@ -456,6 +470,7 @@ function duplicateQuoteItem(sourceItem = {}, { copyPrices, copyRemarks }) {
     item.hollowName = "";
     item.hollowRate = 0;
     item.hollowPieces = 1;
+    item.hollowPricingUnit = "piece";
   }
   if (!copyRemarks) {
     item.remark = "";
