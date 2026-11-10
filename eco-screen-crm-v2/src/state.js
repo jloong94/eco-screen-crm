@@ -438,6 +438,8 @@ export function makeQuoteItem(productId) {
     hollowName: "",
     hollowRate: 0,
     hollowPieces: 1,
+    hollowWidthPieces: null,
+    hollowHeightPieces: null,
     hollowPricingUnit: "piece",
     baseLineTotal: 0,
     lineTotal: 0,

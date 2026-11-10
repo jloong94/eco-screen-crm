@@ -169,6 +169,7 @@ const {
   COLOR_VALUES,
   OPENING_DIRECTION_VALUES,
   colorLabel,
+  hollowDirectionLabel,
   missingChineseTranslations,
   normalizeColor,
   normalizeOpeningDirection,
@@ -302,6 +303,9 @@ state.currentQuote.items[0].hollowPieces = 4;
 renderItemCards();
 assert(itemContainer.innerHTML.includes('data-field="hollowPieces"') && itemContainer.innerHTML.includes('value="4" selected'),
   "Quotation: selected Hollow offers one through four pieces");
+assert(itemContainer.innerHTML.includes('data-field="hollowWidthPieces"')
+  && itemContainer.innerHTML.includes('data-field="hollowHeightPieces"'),
+  "Quotation: Hollow pieces can be allocated to width and height");
 state.currentQuote.items[0].hollowPricingUnit = undefined;
 renderItemCards();
 assert(itemContainer.innerHTML.includes('data-apply-hollow-price='),
@@ -329,6 +333,14 @@ defaultPriceItem.hollowPieces = 3;
 assert(hollowAmount(defaultPriceItem) === 30
   && hollowAmount({ ...defaultPriceItem, width: 3000, quantity: 4 }) === 30,
   "Pricing: three Hollow pieces cost three unit prices regardless of size or product quantity");
+defaultPriceItem.hollowWidthPieces = 2;
+defaultPriceItem.hollowHeightPieces = 1;
+assert(hollowDirectionLabel(defaultPriceItem).includes("Width × 2 (1000 mm)")
+  && hollowDirectionLabel(defaultPriceItem).includes("Height × 1 (1000 mm)")
+  && hollowAmount(defaultPriceItem) === 30,
+  "Hollow direction: two width pieces and one height piece keep the same three-piece price");
+assert(hollowDirectionLabel({ ...defaultPriceItem, hollowWidthPieces: undefined, hollowHeightPieces: undefined }) === "Not stated",
+  "Hollow direction: existing quotes without direction do not invent one");
 assert(Math.abs(lineTotal(defaultPriceItem) - (11 * 125.5 + hollowAmount(defaultPriceItem))) < 0.000001,
   "Pricing: selected Hollow adds to the quotation line total");
 assert(itemWithCalculatedTotals(defaultPriceItem).hollowProductId === "hollow-1x2"
@@ -2872,9 +2884,10 @@ const productionPrintHtml = productionSheetPrintHtml(productionPrintJob, product
   companyName: "Eco Screen Sdn Bhd",
   companyPhone: "0195763499"
 }, productionPrintSource);
-const hollowProductionHtml = productionSheetPrintHtml({ ...productionPrintJob, items: [{ ...productionPrintItems[0], hollowProductId: "hollow-1x2", hollowName: "Hollow 1x2", hollowRate: 10, hollowPieces: 3 }] }, productionPrintOrder);
-assert(hollowProductionHtml.includes("Hollow: Hollow 1x2 × 3"),
-  "Production Sheet: selected Hollow specification and piece count must be visible to production staff");
+const hollowProductionHtml = productionSheetPrintHtml({ ...productionPrintJob, items: [{ ...productionPrintItems[0], hollowProductId: "hollow-1x2", hollowName: "Hollow 1x2", hollowRate: 10, hollowPieces: 3, hollowWidthPieces: 2, hollowHeightPieces: 1 }] }, productionPrintOrder);
+assert(hollowProductionHtml.includes("Hollow: Hollow 1x2 × 3")
+  && hollowProductionHtml.includes("Width × 2 (1234 mm), Height × 1 (2345 mm)"),
+  "Production Sheet: Hollow width and height allocation must be visible to production staff");
 const powdercoatProductionHtml = productionSheetPrintHtml({ ...productionPrintJob, items: [{ ...productionPrintItems[0], powdercoat: true, powdercoatColor: "black" }] }, productionPrintOrder);
 assert(powdercoatProductionHtml.includes("Powdercoat Color: Black"),
   "Production Sheet: selected powdercoat color must be visible to production staff");

@@ -41,6 +41,7 @@ import {
   POWDERCOAT_COLOR_VALUES,
   OPENING_DIRECTION_VALUES,
   colorLabel,
+  hollowDirectionLabel,
   normalizeColor,
   normalizeOpeningDirection,
   normalizeStatus,
@@ -66,7 +67,7 @@ const copiedItemFields = [
   "width", "height", "quantity", "measurements", "color", "trackType",
   "trackOpening", "meshType", "meshMaterial", "material", "installType",
   "trackSize", "handleHeight", "handlePosition", "installationLocation",
-  "openingDirection", "powdercoat", "powdercoatColor", "powdercoatRate", "hollowProductId", "hollowName", "hollowRate", "hollowPieces", "hollowPricingUnit", "lock", "description",
+  "openingDirection", "powdercoat", "powdercoatColor", "powdercoatRate", "hollowProductId", "hollowName", "hollowRate", "hollowPieces", "hollowWidthPieces", "hollowHeightPieces", "hollowPricingUnit", "lock", "description",
   "label", "remark", "remarks", "unitPrice", "manualFinalPrice",
   "priceAdjustmentRemark", "discount", "discountType"
 ];
@@ -199,6 +200,11 @@ function hollowOptions(item) {
   return `<option value="" ${item.hollowProductId ? "" : "selected"}>${t("No")}</option>${legacy}${products.map((product) => `<option value="${escapeHtml(product.id)}" ${item.hollowProductId === product.id ? "selected" : ""}>${escapeHtml(product.name)} (${money(product.sellingPrice ?? product.ratePerSqft)}/${t("Piece")})</option>`).join("")}`;
 }
 
+function hollowDirectionOptions(item, value) {
+  const count = hollowPieceCount(item);
+  return `<option value="" ${value == null ? "selected" : ""}>${t("Not stated")}</option>${Array.from({ length: count + 1 }, (_, index) => `<option value="${index}" ${value === index ? "selected" : ""}>${index}</option>`).join("")}`;
+}
+
 function powdercoatColorOptions(value) {
   const unknown = value ? "" : `<option value="" selected>${t("Not stated")}</option>`;
   return unknown + canonicalSelectOptions(POWDERCOAT_COLOR_VALUES, value, normalizeColor, colorLabel);
@@ -296,6 +302,8 @@ function itemCardHtml(item, index) {
         ${item.powdercoat ? fieldSelect(t("Powdercoat Color"), item.id, "powdercoatColor", powdercoatColorOptions(item.powdercoatColor)) : ""}
         ${fieldSelect(t("Hollow"), item.id, "hollowProductId", hollowOptions(item))}
         ${item.hollowProductId ? fieldSelect(t("Hollow Pieces"), item.id, "hollowPieces", [1, 2, 3, 4].map((count) => `<option value="${count}" ${hollowPieceCount(item) === count ? "selected" : ""}>${count}</option>`).join("")) : ""}
+        ${item.hollowProductId ? fieldSelect(t("Hollow along Width"), item.id, "hollowWidthPieces", hollowDirectionOptions(item, item.hollowWidthPieces)) : ""}
+        ${item.hollowProductId ? fieldSelect(t("Hollow along Height"), item.id, "hollowHeightPieces", hollowDirectionOptions(item, item.hollowHeightPieces)) : ""}
         ${item.hollowProductId && item.hollowPricingUnit !== "piece" ? `<button class="btn" type="button" data-apply-hollow-price="${item.id}">${t("Apply per-piece Hollow price")}</button>` : ""}
         <label>${t("Manual Final Price")}
           <input inputmode="decimal" data-item-id="${item.id}" data-field="manualFinalPrice" value="${escapeHtml(item.manualFinalPrice ?? "")}" placeholder="${t("Optional final RM")}" />
@@ -383,10 +391,20 @@ function updateItemFromEvent(event) {
     item.hollowRate = Number(product?.sellingPrice ?? product?.ratePerSqft ?? 0);
     item.hollowPieces = hollowPieceCount(item);
     item.hollowPricingUnit = "piece";
+    if (!product) item.hollowWidthPieces = item.hollowHeightPieces = null;
     renderItemCards();
   } else if (field === "hollowPieces") {
     item.hollowPieces = Number(event.target.value);
     item.hollowPricingUnit = "piece";
+    if (Number(item.hollowWidthPieces) + Number(item.hollowHeightPieces) !== item.hollowPieces) {
+      item.hollowWidthPieces = item.hollowHeightPieces = null;
+    }
+    renderItemCards();
+  } else if (field === "hollowWidthPieces" || field === "hollowHeightPieces") {
+    const chosen = event.target.value === "" ? null : Number(event.target.value);
+    const other = chosen === null ? null : hollowPieceCount(item) - chosen;
+    item.hollowWidthPieces = field === "hollowWidthPieces" ? chosen : other;
+    item.hollowHeightPieces = field === "hollowHeightPieces" ? chosen : other;
     renderItemCards();
   } else if (field === "color") {
     item.color = normalizeColor(event.target.value);
@@ -470,6 +488,8 @@ function duplicateQuoteItem(sourceItem = {}, { copyPrices, copyRemarks }) {
     item.hollowName = "";
     item.hollowRate = 0;
     item.hollowPieces = 1;
+    item.hollowWidthPieces = null;
+    item.hollowHeightPieces = null;
     item.hollowPricingUnit = "piece";
   }
   if (!copyRemarks) {
@@ -1203,7 +1223,8 @@ function quoteItemDetailLinesHtml(item) {
     [t("Mesh / Net Type"), meshValue(item)],
     [t("Powdercoat / Powercoat"), item.powdercoat ? `${t("Yes")} (${money(powdercoatAmount(item))})` : ""],
     [t("Powdercoat Color"), item.powdercoat && item.powdercoatColor ? colorLabel(item.powdercoatColor) : ""],
-    [t("Hollow"), item.hollowProductId ? `${item.hollowName || item.hollowProductId} × ${hollowPieceCount(item)} (${money(hollowAmount(item))})` : ""]
+    [t("Hollow"), item.hollowProductId ? `${item.hollowName || item.hollowProductId} × ${hollowPieceCount(item)} (${money(hollowAmount(item))})` : ""],
+    [t("Hollow Direction"), item.hollowProductId ? hollowDirectionLabel(item) : ""]
   ];
   return details.filter(([, value]) => value).map(([label, value]) => `<small>${label}: ${escapeHtml(value)}</small>`).join("") || `<small>${t("Color")}: -</small>`;
 }

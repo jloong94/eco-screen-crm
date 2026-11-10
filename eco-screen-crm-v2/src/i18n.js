@@ -345,6 +345,11 @@ const zh = {
   "Powdercoat Color": "喷粉颜色",
   Hollow: "方管",
   "Hollow Pieces": "方管支数",
+  "Hollow along Width": "沿宽度的方管支数",
+  "Hollow along Height": "沿高度的方管支数",
+  "Hollow Direction": "方管方向",
+  Width: "宽度",
+  Height: "高度",
   Piece: "支",
   "Apply per-piece Hollow price": "改用方管按支计价",
   "Hollow price updated. Save the quotation to keep this change.": "方管价格已更新；请保存报价以保留更改。",
@@ -1122,6 +1127,19 @@ export function colorLabel(value) {
   const normalized = normalizeColor(value);
   const labels = { white: "White", grey: "Grey", black: "Black", brown: "Brown", champagne: "Champagne" };
   return labels[normalized] ? t(labels[normalized]) : legacyLabel(value);
+}
+
+export function hollowDirectionLabel(item = {}) {
+  const pieces = Number(item.hollowPieces) || 1;
+  const width = Number(item.hollowWidthPieces);
+  const height = Number(item.hollowHeightPieces);
+  if (item.hollowWidthPieces == null || item.hollowHeightPieces == null
+    || !Number.isInteger(width) || !Number.isInteger(height)
+    || width < 0 || height < 0 || width + height !== pieces) return t("Not stated");
+  const parts = [];
+  if (width) parts.push(`${t("Width")} × ${width}${item.width ? ` (${item.width} mm)` : ""}`);
+  if (height) parts.push(`${t("Height")} × ${height}${item.height ? ` (${item.height} mm)` : ""}`);
+  return parts.join(", ");
 }
 
 export function languageName(code = state.language) {
